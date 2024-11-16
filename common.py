@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import pyautogui
 import Quartz
+import cmath
 from datetime import datetime
 
 # Preserve the original print function
@@ -11,7 +12,11 @@ coor_dict = {}
 
 # Load the button templates (for multiple buttons)
 resource_map = {
+    # Main Run
     "RunButton": "pics/throwbutton.png",
+    "Replace": "pics/replace.png",
+    "NoMore": "pics/no_more.png",
+    # Visit
     "VisitMain": "pics/visiting_main.png",
     "VisitFriend": "pics/friend_list.png",
     "VisitComplete": "pics/visiting_complete.png",
@@ -19,13 +24,20 @@ resource_map = {
     "VisitBack": "pics/visit_back.png",
     "CardButton": "pics/card_button.png",
     "Roll": "pics/rolling.png",
+    "CatHouse": "pics/cat_house.png",
+    # Guess
     "Guess": "pics/guess.png",
     "GuessL": "pics/guess_left.png",
     "GuessR": "pics/guess_right.png",
-    "CatHouse": "pics/cat_house.png",
-    "Replace": "pics/replace.png",
-    "NoMore": "pics/no_more.png"
+    # Fight
+    "TaskMain": "pics/task_main.png",
+    "FightMain": "pics/fight_main.png",
+    "FightEntry": "pics/fight_entry.png",
+    "FightButton": "pics/fight_button.png",
+    "FightSkip": "pics/fight_skip.png",
 }
+
+but_list = {}
 
 
 # Define a new print function with a timestamp
@@ -39,6 +51,18 @@ def get_center(but):
         location = pyautogui.locateOnScreen(resource_map[but], confidence=0.8)
         coor_dict[but] = pyautogui.center(location)
     return coor_dict[but]
+
+def get_all(but, sft):
+    if but not in but_list:
+        matches = list(pyautogui.locateAllOnScreen(resource_map[but], confidence=0.8))
+        coors = []
+        prev = None
+        for match in matches:
+            if prev is None or abs(prev.top - match.top) > 20:
+                prev = match
+                coors.append(pyautogui.center(match))
+        but_list[but] = coors
+    return but_list[but]
 
 
 def get_scaling_factor():
