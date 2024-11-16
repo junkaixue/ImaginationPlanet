@@ -21,6 +21,7 @@ class MainRun:
 
 
     def visiting(self):
+        self.visits += 1
         for i in range(1, 500):
             btl = find_button()
             if "Roll" in btl:
@@ -82,7 +83,7 @@ class MainRun:
                 time.sleep(2)
                 continue
             elif "VisitMain" in bts:
-                print("Visiting!")
+                print("Visiting! This is " + str(self.visits) + " visit!")
                 center = get_center("VisitFriend")
                 click_at(center.x / self.sft, center.y / self.sft)
                 self.find_cat_house()

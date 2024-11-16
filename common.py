@@ -47,7 +47,7 @@ def print(*args, **kwargs):
 
 
 def get_center(but):
-    if but == "VisitButton" or but not in coor_dict:  # sometime scroll can change the pos
+    if but == "CatHouse" or but not in coor_dict:  # sometime scroll can change the pos
         location = pyautogui.locateOnScreen(resource_map[but], confidence=0.8)
         coor_dict[but] = pyautogui.center(location)
     return coor_dict[but]
