@@ -35,4 +35,4 @@ def move_to(x, y):
 #    click_at(1200, 800)
 #    time.sleep(2)
     
-click_at(1214,810)
+# click_at(1214,810)

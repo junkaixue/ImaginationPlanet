@@ -105,6 +105,3 @@ class MainRun:
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(0.5)
 
-if __name__ == '__main__':
-    r = MainRun()
-    r.run()
