@@ -35,6 +35,11 @@ resource_map = {
     "FightEntry": "pics/fight_entry.png",
     "FightButton": "pics/fight_button.png",
     "FightSkip": "pics/fight_skip.png",
+    "TicketRunout": "pics/ticket_runout.png",
+
+    # Common
+    "CancelBuy": "pics/cancel_button.png",
+    "Exit": "pics/exit.png",
 }
 
 but_list = {}
@@ -47,7 +52,7 @@ def print(*args, **kwargs):
 
 
 def get_center(but):
-    if but == "CatHouse" or but not in coor_dict:  # sometime scroll can change the pos
+    if but == "CatHouse" or but == "Exit" or but not in coor_dict:  # sometime scroll can change the pos
         location = pyautogui.locateOnScreen(resource_map[but], confidence=0.8)
         coor_dict[but] = pyautogui.center(location)
     return coor_dict[but]
