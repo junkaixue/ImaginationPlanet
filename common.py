@@ -23,6 +23,8 @@ resource_map = {
     "VisitButton": "pics/visiting_button.png",
     "VisitBack": "pics/visit_back.png",
     "CardButton": "pics/card_button.png",
+    "CatCard": "pics/cat_card.png",
+    "BackVisit": "pics/back_normal_visit.png",
     "Roll": "pics/rolling.png",
     "CatHouse": "pics/cat_house.png",
     # Guess

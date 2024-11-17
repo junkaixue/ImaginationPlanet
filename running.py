@@ -1,3 +1,5 @@
+import time
+
 from common import *
 from click import *
 
@@ -21,6 +23,8 @@ class MainRun:
 
 
     def visiting(self):
+        time.sleep(2)
+        self.grab_cat()
         self.visits += 1
         for i in range(1, 500):
             btl = find_button()
@@ -65,13 +69,27 @@ class MainRun:
         # print(f"Image found at: {center.y}")
         click_at((vc.x / self.sft), (lc.y / self.sft))
 
-
     def grab_cat(self):
         card_button = get_center("CardButton")
         click_at(card_button.x / self.sft, card_button.y / self.sft)
         print("Found card button at " + str(card_button.x / self.sft) + " " + str(card_button.y / self.sft))
         time.sleep(1)
         click_at(self.rb.x / self.sft, self.rb.y / self.sft)  # open card
+        time.sleep(1)
+        if "CatCard" in find_button():
+            cc = get_center("CatCard")
+            # Move the cursor to the starting point
+            pyautogui.moveTo(cc.x / self.sft, cc.y / self.sft, duration=0.5)
+            # Drag the cursor to the destination point
+            pyautogui.dragTo(cc.x / self.sft, cc.y / self.sft - 200, duration=1, button='left')
+            time.sleep(1)
+            click_at(cc.x / self.sft, cc.y / self.sft - 200)
+            time.sleep(1)
+            bv = get_center("BackVisit")
+            click_at(bv.x / self.sft, bv.y / self.sft)
+        time.sleep(1)
+
+
 
 
     def run(self):
@@ -86,6 +104,9 @@ class MainRun:
                 print("Visiting! This is " + str(self.visits) + " visit!")
                 center = get_center("VisitFriend")
                 click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
                 self.find_cat_house()
                 self.visiting()
                 time.sleep(1)
@@ -97,11 +118,15 @@ class MainRun:
                 time.sleep(1)
                 continue
             elif "NoMore" in bts:
-                print("This RUN is DONE!!")
+                print("This RUN is DONE!! Total " + str(self.visits) + " visits!")
                 exit(0)
             else:
                 self.count += 1
-                print("Keep running! Spend " + str(self.count) + " dices")
+                print("Keep running! This is " + str(self.count) + " clicks")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(0.5)
 
+
+if __name__ == '__main__':
+    r = MainRun()
+    r.grab_cat()
