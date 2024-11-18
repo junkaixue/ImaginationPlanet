@@ -46,6 +46,11 @@ class MainRun:
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 return
+            elif "VisitBusy" in btl:
+                print("Visit busy!")
+                center = get_center("Confirm", "Visit")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
             else:
                 print("Keep visiting!")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
