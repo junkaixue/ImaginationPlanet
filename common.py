@@ -39,6 +39,7 @@ visit_map = {
     "Roll": "pics/rolling.png",
     "CatHouse": "pics/cat_house.png",
     "Timeout": "pics/timeout.png",
+    "VisitBusy": "pics/visit_busy.png",
     "Confirm": "pics/confirm.png",
 }
 
