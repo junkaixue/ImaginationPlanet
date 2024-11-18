@@ -6,23 +6,24 @@ from common import *
 class Fight:
     sft = 0.0
     total = 0
+    map_scope = "Fight"
 
     def __init__(self):
         self.sft = get_scaling_factor()
 
     def go_to_fight(self):
         while True:
-            if "TaskMain" in find_button():
+            if "TaskMain" in find_button("Fight"):
                 print("Found Task Main")
-                tm = get_center("TaskMain")
+                tm = get_center("TaskMain", self.map_scope)
                 click_at(tm.x / self.sft, tm.y / self.sft)
                 time.sleep(2)
                 # go to fight main
-                fm = get_center("FightMain")
+                fm = get_center("FightMain", self.map_scope)
                 click_at(fm.x / self.sft, fm.y / self.sft)
                 time.sleep(2)
                 # go to fight entry
-                fe = get_center("FightEntry")
+                fe = get_center("FightEntry", self.map_scope)
                 click_at(fe.x / self.sft, fe.y / self.sft)
                 return
             else:
@@ -30,7 +31,7 @@ class Fight:
                 time.sleep(1)
 
     def start_fight(self):
-        ft = get_all("FightButton", self.sft)
+        ft = get_all("FightButton", "Fight", self.sft)
         sk = None
         while not self.check_ticket_runout():
             i = 1
@@ -41,9 +42,9 @@ class Fight:
                     return
                 print("Fight " + str(i) + " slot")
                 click_at(b.x / self.sft, b.y / self.sft)
-                time.sleep(10)
+                time.sleep(12)
                 if sk is None:
-                    sk = get_center("FightSkip")
+                    sk = get_center("FightSkip", self.map_scope)
                 click_at(sk.x / self.sft, sk.y / self.sft)
                 time.sleep(2)
                 click_at(sk.x / self.sft, sk.y / self.sft)
@@ -54,7 +55,7 @@ class Fight:
         print("Tickets running out!")
 
     def check_ticket_runout(self):
-        if "TicketRunout" not in find_button():
+        if "TicketRunout" not in find_button("Fight"):
             return False
         return True
 
@@ -69,12 +70,12 @@ class Fight:
     def exit_fight(self):
         print("Exiting fight...")
         if self.check_ticket_runout():
-            cc = get_center("CancelBuy")
+            cc = get_center("CancelBuy", self.map_scope)
             click_at(cc.x / self.sft, cc.y / self.sft)
             time.sleep(1)
 
-        while "Exit" in find_button():
-            bt = get_center("Exit")
+        while "Exit" in find_button("Fight"):
+            bt = get_center("Exit", self.map_scope)
             click_at(bt.x / self.sft, bt.y / self.sft)
             time.sleep(1)
         print("Exited fight...")

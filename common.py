@@ -11,26 +11,38 @@ original_print = print
 coor_dict = {}
 
 # Load the button templates (for multiple buttons)
-resource_map = {
+main_map = {
     # Main Run
     "RunButton": "pics/throwbutton.png",
     "Replace": "pics/replace.png",
     "NoMore": "pics/no_more.png",
-    # Visit
+
+    # Guess
+    "Guess": "pics/guess.png",
+    "GuessL": "pics/guess_left.png",
+    "GuessR": "pics/guess_right.png",
+
+    # Visit Main
     "VisitMain": "pics/visiting_main.png",
+}
+
+visit_map = {
+    # Visit
     "VisitFriend": "pics/friend_list.png",
     "VisitComplete": "pics/visiting_complete.png",
     "VisitButton": "pics/visiting_button.png",
     "VisitBack": "pics/visit_back.png",
     "CardButton": "pics/card_button.png",
+    "CardMode": "pics/card_mode.png",
     "CatCard": "pics/cat_card.png",
     "BackVisit": "pics/back_normal_visit.png",
     "Roll": "pics/rolling.png",
     "CatHouse": "pics/cat_house.png",
-    # Guess
-    "Guess": "pics/guess.png",
-    "GuessL": "pics/guess_left.png",
-    "GuessR": "pics/guess_right.png",
+    "Timeout": "pics/timeout.png",
+    "Confirm": "pics/confirm.png",
+}
+
+fight_map = {
     # Fight
     "TaskMain": "pics/task_main.png",
     "FightMain": "pics/fight_main.png",
@@ -38,10 +50,22 @@ resource_map = {
     "FightButton": "pics/fight_button.png",
     "FightSkip": "pics/fight_skip.png",
     "TicketRunout": "pics/ticket_runout.png",
+    "CancelBuy": "pics/cancel_button.png",
+    "Exit": "pics/exit.png",
+}
 
+common_map = {
     # Common
     "CancelBuy": "pics/cancel_button.png",
     "Exit": "pics/exit.png",
+    "Confirm": "pics/confirm.png",
+}
+
+resource_map = {
+    "Main" : main_map,
+    "Fight" : fight_map,
+    "Visit" : visit_map,
+    "Common" : common_map,
 }
 
 but_list = {}
@@ -53,15 +77,15 @@ def print(*args, **kwargs):
     original_print(f'[{timestamp}]', *args, **kwargs)
 
 
-def get_center(but):
+def get_center(but, map_scope):
     if but == "CatHouse" or but == "Exit" or but not in coor_dict:  # sometime scroll can change the pos
-        location = pyautogui.locateOnScreen(resource_map[but], confidence=0.8)
+        location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=0.8)
         coor_dict[but] = pyautogui.center(location)
     return coor_dict[but]
 
-def get_all(but, sft):
+def get_all(but, map_scope, sft):
     if but not in but_list:
-        matches = list(pyautogui.locateAllOnScreen(resource_map[but], confidence=0.8))
+        matches = list(pyautogui.locateAllOnScreen(resource_map[map_scope][but], confidence=0.8))
         coors = []
         prev = None
         for match in matches:
@@ -93,7 +117,7 @@ def get_scaling_factor():
     return scaling_factor
 
 
-def find_button():
+def find_button(map_scope):
     # Take a screenshot
     screenshot = pyautogui.screenshot()
     screen = np.array(screenshot)
@@ -101,7 +125,7 @@ def find_button():
 
     bts = []
 
-    for button_name, template_path in resource_map.items():
+    for button_name, template_path in resource_map[map_scope].items():
         template = cv2.imread(template_path, 0)
         if template is None:
             print(f"Error: Unable to load '{template_path}'.")
