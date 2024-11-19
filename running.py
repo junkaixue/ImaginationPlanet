@@ -39,18 +39,18 @@ class MainRun:
                 print("Complete Rolling!")
             elif "VisitComplete" in btl:
                 print("Complete visiting!")
-                cc = get_center("VisitBack", "Visit")
+                cc = get_center("VisitBack", "Single")
                 click_at(cc.x / self.sft, cc.y / self.sft)
                 break
             elif "Timeout" in btl:
                 print("Visit timeout!")
-                center = get_center("Confirm", "Visit")
+                center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 return
             elif "VisitBusy" in btl:
                 print("Visit busy!")
-                center = get_center("Confirm", "Visit")
+                center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
             else:
@@ -60,34 +60,34 @@ class MainRun:
 
 
     def guess(self):
-        l = get_center("GuessL", "Main")
-        click_at(l.x / self.sft, l.y / self.sft)
+       # l = get_center("GuessL", "Main")
+        click_at(self.rb.x / self.sft - 50, self.rb.y / self.sft)
         time.sleep(1)
-        r = get_center("GuessR", "Main")
-        click_at(r.x / self.sft, r.y / self.sft)
+        #r = get_center("GuessR", "Main")
+        click_at(self.rb.x / self.sft + 50, self.rb.y / self.sft)
 
 
     def find_cat_house(self):
         click_at(1200, 500)
         pyautogui.scroll(10)  # Make it top
         while True:
-            if "CatHouse" not in find_button("Visit"):
+            if not single_find("CatHouse"):
                 pyautogui.scroll(-2)
                 continue
             else:
                 break
 
-        lc = get_center("CatHouse", "Visit")
-        vc = get_center("VisitButton", "Visit")
+        lc = get_center("CatHouse", "Single")
+        vc = get_center("VisitButton", "Single")
         # print(f"Image found at: {center.y}")
         click_at((vc.x / self.sft), (lc.y / self.sft))
 
     def grab_cat(self):
-        while "CardButton" not in find_button("Visit"):
+        while not single_find("CardButton"):
             print("Card Button is not found!")
             time.sleep(1)
-        while "CardMode" not in find_button("Visit"):
-            card_button = get_center("CardButton", "Visit")
+        while not single_find("CardMode"):
+            card_button = get_center("CardButton", "Single")
             click_at(card_button.x / self.sft, card_button.y / self.sft)
             print("Found card button at " + str(card_button.x / self.sft) + " " + str(card_button.y / self.sft))
             time.sleep(1)
@@ -95,8 +95,8 @@ class MainRun:
             time.sleep(1)
         print("Card already opened!")
         time.sleep(1)
-        if "CatCard" in find_button("Visit"):
-            cc = get_center("CatCard", "Visit")
+        if single_find("CatCard"):
+            cc = get_center("CatCard", "Single")
             # Move the cursor to the starting point
             pyautogui.moveTo(cc.x / self.sft, cc.y / self.sft, duration=0.5)
             # Drag the cursor to the destination point
@@ -104,7 +104,7 @@ class MainRun:
             time.sleep(8)
         click_at(self.rb.x / self.sft, self.rb.y / self.sft - 300)
         time.sleep(2)
-        bv = get_center("BackVisit", "Visit")
+        bv = get_center("BackVisit", "Single")
         click_at(bv.x / self.sft, bv.y / self.sft)
         time.sleep(1)
 
@@ -118,7 +118,7 @@ class MainRun:
                 continue
             elif "VisitMain" in bts:
                 print("Visiting! This is " + str(self.visits) + " visit!")
-                center = get_center("VisitFriend", "Visit")
+                center = get_center("VisitFriend", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 click_at(center.x / self.sft, center.y / self.sft)

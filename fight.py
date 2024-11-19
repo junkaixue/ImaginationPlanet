@@ -6,14 +6,14 @@ from common import *
 class Fight:
     sft = 0.0
     total = 0
-    map_scope = "Fight"
+    map_scope = "Single"
 
     def __init__(self):
         self.sft = get_scaling_factor()
 
     def go_to_fight(self):
         while True:
-            if "TaskMain" in find_button("Fight"):
+            if single_find("TaskMain"):
                 print("Found Task Main")
                 tm = get_center("TaskMain", self.map_scope)
                 click_at(tm.x / self.sft, tm.y / self.sft)
@@ -31,9 +31,9 @@ class Fight:
                 time.sleep(1)
 
     def start_fight(self):
-        ft = get_all("FightButton", "Fight", self.sft)
         sk = None
         while not self.check_ticket_runout():
+            ft = get_all("FightButton", "Fight", self.sft)
             i = 1
             print ("Total: " + str(len(ft)) + " slots")
             for b in ft:
@@ -55,7 +55,7 @@ class Fight:
         print("Tickets running out!")
 
     def check_ticket_runout(self):
-        if "TicketRunout" not in find_button("Fight"):
+        if not single_find("TicketRunout"):
             return False
         return True
 
@@ -74,7 +74,7 @@ class Fight:
             click_at(cc.x / self.sft, cc.y / self.sft)
             time.sleep(1)
 
-        while "Exit" in find_button("Fight"):
+        while single_find("Exit"):
             bt = get_center("Exit", self.map_scope)
             click_at(bt.x / self.sft, bt.y / self.sft)
             time.sleep(1)
