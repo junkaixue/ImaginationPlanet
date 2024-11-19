@@ -19,8 +19,9 @@ main_map = {
 
     # Guess
     "Guess": "pics/guess.png",
-    "GuessL": "pics/guess_left.png",
-    "GuessR": "pics/guess_right.png",
+    # Temp hard code
+    # "GuessL": "pics/guess_left.png",
+    # "GuessR": "pics/guess_right.png",
 
     # Visit Main
     "VisitMain": "pics/visiting_main.png",
@@ -28,31 +29,15 @@ main_map = {
 
 visit_map = {
     # Visit
-    "VisitFriend": "pics/friend_list.png",
     "VisitComplete": "pics/visiting_complete.png",
-    "VisitButton": "pics/visiting_button.png",
-    "VisitBack": "pics/visit_back.png",
-    "CardButton": "pics/card_button.png",
-    "CardMode": "pics/card_mode.png",
-    "CatCard": "pics/cat_card.png",
-    "BackVisit": "pics/back_normal_visit.png",
     "Roll": "pics/rolling.png",
-    "CatHouse": "pics/cat_house.png",
     "Timeout": "pics/timeout.png",
     "VisitBusy": "pics/visit_busy.png",
-    "Confirm": "pics/confirm.png",
 }
 
 fight_map = {
     # Fight
-    "TaskMain": "pics/task_main.png",
-    "FightMain": "pics/fight_main.png",
-    "FightEntry": "pics/fight_entry.png",
     "FightButton": "pics/fight_button.png",
-    "FightSkip": "pics/fight_skip.png",
-    "TicketRunout": "pics/ticket_runout.png",
-    "CancelBuy": "pics/cancel_button.png",
-    "Exit": "pics/exit.png",
 }
 
 common_map = {
@@ -62,12 +47,38 @@ common_map = {
     "Confirm": "pics/confirm.png",
 }
 
+single_find_map = {
+    # Visit
+    "CardButton": "pics/card_button.png",
+    "CardMode": "pics/card_mode.png",
+    "CatCard": "pics/cat_card.png",
+    "CatHouse": "pics/cat_house.png",
+    "VisitBack": "pics/visit_back.png",
+    "Confirm": "pics/confirm.png",
+    "BackVisit": "pics/back_normal_visit.png",
+    "VisitFriend": "pics/friend_list.png",
+    "VisitButton": "pics/visiting_button.png",
+    "FightSkip": "pics/fight_skip.png",
+    "CancelBuy": "pics/cancel_button.png",
+
+    # Fight
+    "TaskMain": "pics/task_main.png",
+    "FightMain": "pics/fight_main.png",
+    "FightEntry": "pics/fight_entry.png",
+    "Exit": "pics/exit.png",
+    "TicketRunout": "pics/ticket_runout.png",
+
+}
+
 resource_map = {
     "Main" : main_map,
     "Fight" : fight_map,
     "Visit" : visit_map,
     "Common" : common_map,
+    "Single" : single_find_map,
 }
+
+
 
 but_list = {}
 
@@ -119,24 +130,33 @@ def get_scaling_factor():
 
 
 def find_button(map_scope):
-    # Take a screenshot
-    screenshot = pyautogui.screenshot()
-    screen = np.array(screenshot)
-    gray_screen = cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
-
+    gray_screen = screen_shot()
     bts = []
 
     for button_name, template_path in resource_map[map_scope].items():
-        template = cv2.imread(template_path, 0)
-        if template is None:
-            print(f"Error: Unable to load '{template_path}'.")
-            continue
-        # Perform template matching
-        result = cv2.matchTemplate(gray_screen, template, cv2.TM_CCOEFF_NORMED)
-        threshold = 0.8
-        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-
-        if max_val >= threshold:
-            # print ("Found " + button_name)
+        if single_find_with_path(template_path, gray_screen):
             bts.append(button_name)
     return bts
+
+def single_find(but):
+    return single_find_with_path(single_find_map[but], None)
+
+def single_find_with_path(but_path, gs):
+    gray_screen = screen_shot() if gs is None else gs
+    template = cv2.imread(but_path, 0)
+    if template is None:
+        print(f"Error: Unable to load '{but_path}'.")
+        return False
+    # Perform template matching
+    result = cv2.matchTemplate(gray_screen, template, cv2.TM_CCOEFF_NORMED)
+    threshold = 0.8
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+    if max_val >= threshold:
+        return True
+    return False
+
+def screen_shot():
+    # Take a screenshot
+    screenshot = pyautogui.screenshot()
+    screen = np.array(screenshot)
+    return cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
