@@ -46,7 +46,7 @@ The script offers two primary modes of operation:
 
 ## Command-Line Arguments
 
-- `-r` or `--regular`: Set to `True` to perform a regular run. Default is `False`.
+- `-r` or `--run`: Set to `True` to perform a regular run. Default is `False`.
 
 - `-f` or `--fight`: Set to `True` to initiate the fight sequence. Default is `False`.
 
@@ -112,4 +112,3 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 - [OpenCV](https://opencv.org/)
 - [NumPy](https://numpy.org/)
 - [PyAutoGUI](https://pyautogui.readthedocs.io/)
-```
