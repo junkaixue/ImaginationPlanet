@@ -1,8 +1,8 @@
-# ImaginationPlanet Automation
+# ImaginationPlanet Game Automation
 
 ## Overview
 
-ImaginationPlanet Automation is a Python-based tool designed to automate specific tasks within the ImaginationPlanet application. This script facilitates routine operations, enhancing efficiency and user experience.
+ImaginationPlanet Automation is a Python-based tool designed to automate specific tasks within the ImaginationPlanet game. This script facilitates routine operations, enhancing efficiency and user experience.
 
 ## Prerequisites
 
