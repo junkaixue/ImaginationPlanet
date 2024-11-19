@@ -1,6 +1,3 @@
-Here's a comprehensive `README.md` template for your "ImaginationPlanet Automation" project:
-
-```markdown
 # ImaginationPlanet Automation
 
 ## Overview
