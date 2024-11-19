@@ -2,6 +2,8 @@ import time
 
 from common import *
 from click import *
+from fight import Fight
+
 
 class MainRun:
     sft = 0.0
@@ -133,6 +135,11 @@ class MainRun:
                 continue
             elif "NoMore" in bts:
                 print("This RUN is DONE!! Total " + str(self.visits) + " visits!")
+                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                time.sleep(1)
+                f = Fight()
+                f.fight()
+                print("Complete fight after running!")
                 exit(0)
             else:
                 self.count += 1
