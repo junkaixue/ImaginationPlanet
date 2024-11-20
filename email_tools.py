@@ -1,18 +1,24 @@
-import smtplib
-from email.mime.text import MIMEText
+import yagmail
 
-def send_test_email():
-    msg = MIMEText('This is a test email.')
-    msg['Subject'] = 'Test Email'
-    msg['From'] = 'ai@imaginationplanet.com'
-    msg['To'] = 'junkai.xue@gmail.com'
+email_info_path = 'email.info'
 
-    try:
-        with smtplib.SMTP('localhost', 1025) as server:
-            server.sendmail('ai@imaginationplanet.com', ['junkai.xue@gmail.com'], msg.as_string())
-            print('Email sent successfully.')
-    except Exception as e:
-        print(f'Failed to send email: {e}')
+
+def send_email(content):
+    email_info = {}
+    for line in open(email_info_path, 'r').readlines():
+        data = line.strip().split('=')
+        email_info[data[0]] = data[1]
+
+    # Initialize the SMTP client
+    yag = yagmail.SMTP(email_info["from_email"], email_info["app_password"])
+
+    # Define the recipient, subject, and content
+    subject = 'Imagination Planet Complete!'
+
+    # Send the email
+    yag.send(to=email_info["to_email"], subject=subject, contents=content)
+    print('Email successfully sent!')
+
 
 if __name__ == '__main__':
-    send_test_email()
+    send_email("Test")

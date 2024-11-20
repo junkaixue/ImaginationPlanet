@@ -1,5 +1,5 @@
 import Quartz
-import time
+
 
 def click_at(x, y):
     """
@@ -19,6 +19,7 @@ def click_at(x, y):
     )
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)
 
+
 # print(f"Clicked at ({x}, {y})")
 
 def move_to(x, y):
@@ -28,11 +29,11 @@ def move_to(x, y):
     Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_move)
 
 # Move to (500, 300)
-#move_to(200, 200)
+# move_to(200, 200)
 
 # Example: Simulate a click at (500, 300) on the desktop
-#for i in range(1,100):
+# for i in range(1,100):
 #    click_at(1200, 800)
 #    time.sleep(2)
-    
+
 # click_at(1214,810)
