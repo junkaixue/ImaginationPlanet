@@ -1,7 +1,7 @@
 import time
 
-from common import *
 from click import *
+from common import *
 from fight import Fight
 
 
@@ -10,6 +10,7 @@ class MainRun:
     rb = None
     count = 0
     visits = 1
+    f = Fight()
 
     def __init__(self):
         self.sft = get_scaling_factor()
@@ -22,7 +23,6 @@ class MainRun:
             except:
                 print("Run Botton was not found!")
         print("Found the Run Button!")
-
 
     def visiting(self):
         time.sleep(2)
@@ -53,19 +53,22 @@ class MainRun:
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
+            elif "AdsSkip" in btl:
+                print("Ads skipped!")
+                center = get_center("UseTicket", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
             else:
                 print("Keep visiting!")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
 
-
     def guess(self):
-       # l = get_center("GuessL", "Main")
+        # l = get_center("GuessL", "Main")
         click_at(self.rb.x / self.sft - 50, self.rb.y / self.sft)
         time.sleep(1)
-        #r = get_center("GuessR", "Main")
+        # r = get_center("GuessR", "Main")
         click_at(self.rb.x / self.sft + 50, self.rb.y / self.sft)
-
 
     def find_cat_house(self):
         click_at(1200, 500)
@@ -92,7 +95,7 @@ class MainRun:
             print("Found card button at " + str(card_button.x / self.sft) + " " + str(card_button.y / self.sft))
             time.sleep(1)
             click_at(self.rb.x / self.sft, self.rb.y / self.sft)
-            time.sleep(1)
+            time.sleep(5)
         print("Card already opened!")
         time.sleep(1)
         if single_find("CatCard"):
@@ -133,14 +136,19 @@ class MainRun:
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 continue
+            elif "Gift" in bts:
+                print("Need to thank the gift sender!")
+                center = get_center("Exit", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+                continue
             elif "NoMore" in bts:
                 print("This RUN is DONE!! Total " + str(self.visits) + " visits!")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
-                f = Fight()
-                f.fight()
+                self.f.fight()
                 print("Complete fight after running!")
-                exit(0)
+                return
             else:
                 self.count += 1
                 print("Keep running! This is " + str(self.count) + " clicks")

@@ -2,7 +2,8 @@
 
 ## Overview
 
-ImaginationPlanet Automation is a Python-based tool designed to automate specific tasks within the ImaginationPlanet game. This script facilitates routine operations, enhancing efficiency and user experience.
+ImaginationPlanet Automation is a Python-based tool designed to automate specific tasks within the ImaginationPlanet
+game. This script facilitates routine operations, enhancing efficiency and user experience.
 
 ## Prerequisites
 
@@ -23,13 +24,15 @@ Before running the script, ensure your environment meets the following requireme
   pip install opencv-python numpy pyautogui
   ```
 
-  *Note:* The `pyobjc-framework-Quartz` package is specific to macOS systems. If you're using a different operating system, please refer to the relevant documentation for equivalent packages.
+  *Note:* The `pyobjc-framework-Quartz` package is specific to macOS systems. If you're using a different operating
+  system, please refer to the relevant documentation for equivalent packages.
 
 ## Usage
 
 The script offers two primary modes of operation:
 
-1. **Regular Run:** Executes a full sequence, including grabbing the cat and engaging in fights until all tickets are utilized.
+1. **Regular Run:** Executes a full sequence, including grabbing the cat and engaging in fights until all tickets are
+   utilized.
 
    ```bash
    python imaginationplanet.py -r=True

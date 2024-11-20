@@ -3,6 +3,7 @@ import time
 from click import click_at
 from common import *
 
+
 class Fight:
     sft = 0.0
     total = 0
@@ -33,9 +34,9 @@ class Fight:
     def start_fight(self):
         sk = None
         while not self.check_ticket_runout():
-            ft = get_all("FightButton", "Fight", self.sft)
             i = 1
-            print ("Total: " + str(len(ft)) + " slots")
+            ft = get_all("FightButton", "Fight")
+            print("Total: " + str(len(ft)) + " slots")
             for b in ft:
                 if self.check_ticket_runout():
                     print("Tickets running out!")
@@ -60,10 +61,10 @@ class Fight:
         return True
 
     def fight(self):
-        print ("Go to fight...")
+        print("Go to fight...")
         self.go_to_fight()
-        time.sleep(3) # Very slow
-        print ("Start fight...")
+        time.sleep(3)  # Very slow
+        print("Start fight...")
         self.start_fight()
         self.exit_fight()
 
@@ -81,9 +82,6 @@ class Fight:
         print("Exited fight...")
 
 
-
-
 if __name__ == "__main__":
     f = Fight()
-    f.exit_fight()
-
+    f.fight()

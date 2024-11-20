@@ -1,9 +1,9 @@
+from datetime import datetime
+
+import Quartz
 import cv2
 import numpy as np
 import pyautogui
-import Quartz
-import cmath
-from datetime import datetime
 
 # Preserve the original print function
 original_print = print
@@ -16,6 +16,7 @@ main_map = {
     "RunButton": "pics/throwbutton.png",
     "Replace": "pics/replace.png",
     "NoMore": "pics/no_more.png",
+    "Gift": "pics/gift.png",
 
     # Guess
     "Guess": "pics/guess.png",
@@ -33,6 +34,7 @@ visit_map = {
     "Roll": "pics/rolling.png",
     "Timeout": "pics/timeout.png",
     "VisitBusy": "pics/visit_busy.png",
+    "AdsSkip": "pics/ads_skip.png",
 }
 
 fight_map = {
@@ -48,6 +50,9 @@ common_map = {
 }
 
 single_find_map = {
+    # Main
+    "ThankGift": "pics/thank_gift.png",
+
     # Visit
     "CardButton": "pics/card_button.png",
     "CardMode": "pics/card_mode.png",
@@ -60,6 +65,7 @@ single_find_map = {
     "VisitButton": "pics/visiting_button.png",
     "FightSkip": "pics/fight_skip.png",
     "CancelBuy": "pics/cancel_button.png",
+    "UseTicket": "pics/use_ticket.png",
 
     # Fight
     "TaskMain": "pics/task_main.png",
@@ -71,14 +77,12 @@ single_find_map = {
 }
 
 resource_map = {
-    "Main" : main_map,
-    "Fight" : fight_map,
-    "Visit" : visit_map,
-    "Common" : common_map,
-    "Single" : single_find_map,
+    "Main": main_map,
+    "Fight": fight_map,
+    "Visit": visit_map,
+    "Common": common_map,
+    "Single": single_find_map,
 }
-
-
 
 but_list = {}
 
@@ -95,16 +99,21 @@ def get_center(but, map_scope):
         coor_dict[but] = pyautogui.center(location)
     return coor_dict[but]
 
-def get_all(but, map_scope, sft):
+
+def get_all(but, map_scope):
+    matches = list(pyautogui.locateAllOnScreen(resource_map[map_scope][but], confidence=0.8))
+    coors = []
+    prev = None
+    for match in matches:
+        if prev is None or abs(prev.top - match.top) > 20:
+            prev = match
+            coors.append(pyautogui.center(match))
+    return coors
+
+
+def get_all_with_cache(but, map_scope):
     if but not in but_list:
-        matches = list(pyautogui.locateAllOnScreen(resource_map[map_scope][but], confidence=0.8))
-        coors = []
-        prev = None
-        for match in matches:
-            if prev is None or abs(prev.top - match.top) > 20:
-                prev = match
-                coors.append(pyautogui.center(match))
-        but_list[but] = coors
+        but_list[but] = get_all(but, map_scope)
     return but_list[but]
 
 
@@ -138,8 +147,10 @@ def find_button(map_scope):
             bts.append(button_name)
     return bts
 
+
 def single_find(but):
     return single_find_with_path(single_find_map[but], None)
+
 
 def single_find_with_path(but_path, gs):
     gray_screen = screen_shot() if gs is None else gs
@@ -154,6 +165,7 @@ def single_find_with_path(but_path, gs):
     if max_val >= threshold:
         return True
     return False
+
 
 def screen_shot():
     # Take a screenshot
