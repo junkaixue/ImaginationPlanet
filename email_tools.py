@@ -1,4 +1,5 @@
 import yagmail
+import datetime
 
 email_info_path = 'email.info'
 
@@ -13,7 +14,7 @@ def send_email(content):
     yag = yagmail.SMTP(email_info["from_email"], email_info["app_password"])
 
     # Define the recipient, subject, and content
-    subject = 'Imagination Planet Complete!'
+    subject = '[' +  str(datetime.date) + '] Imagination Planet Complete!'
 
     # Send the email
     yag.send(to=email_info["to_email"], subject=subject, contents=content)

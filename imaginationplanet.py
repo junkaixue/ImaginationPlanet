@@ -20,12 +20,12 @@ if __name__ == "__main__":
         print("Complete single run for " + str(datetime.datetime.now() - time) + " seconds!")
         print("Total visits " + str(run.visits) + " times")
         content = "The run starts at: " + str(time) + "\n Takes " + str(
-            datetime.datetime.now() - time) + " seconds!\nTotal " + str(run.visits) + " visits\n"
+            datetime.datetime.now() - time) + "!\nTotal " + str(run.visits) + " visits\n"
         content += "The fight has total " + str(run.f.total) + " fights\n"
     elif args.fight:
         fight = Fight()
         fight.fight()
-        print("Complete single fight for " + str(datetime.datetime.now() - time) + " seconds!")
+        print("Complete single fight for " + str(datetime.datetime.now() - time) + "!")
         print("Total fights " + str(fight.total) + " times")
         content = "The run starts at: " + str(time) + "\n Total " + str(fight.total) + " fights\n"
     send_email(content)
