@@ -40,6 +40,9 @@ class MainRun:
             elif "VisitComplete" in btl:
                 print("Complete visiting!")
                 cc = get_center("VisitBack", "Single")
+                # click twice
+                click_at(cc.x / self.sft, cc.y / self.sft)
+                time.sleep(1)
                 click_at(cc.x / self.sft, cc.y / self.sft)
                 break
             elif "Timeout" in btl:
@@ -105,6 +108,12 @@ class MainRun:
             # Drag the cursor to the destination point
             pyautogui.dragTo(cc.x / self.sft, cc.y / self.sft - 300, duration=1, button='left')
             time.sleep(8)
+            # Can be busy sometime
+            while single_find("VisitBusy"):
+                print("Visit busy!")
+                center = get_center("Confirm", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
         click_at(self.rb.x / self.sft, self.rb.y / self.sft - 300)
         time.sleep(2)
         bv = get_center("BackVisit", "Single")

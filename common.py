@@ -66,6 +66,7 @@ single_find_map = {
     "FightSkip": "pics/fight_skip.png",
     "CancelBuy": "pics/cancel_button.png",
     "UseTicket": "pics/use_ticket.png",
+    "VisitBusy": "pics/visit_busy.png",
 
     # Fight
     "TaskMain": "pics/task_main.png",
@@ -86,6 +87,8 @@ resource_map = {
 
 but_list = {}
 
+no_cache_list = ["CatHouse", "Exit", "Replace"]
+
 
 # Define a new print function with a timestamp
 def print(*args, **kwargs):
@@ -94,7 +97,7 @@ def print(*args, **kwargs):
 
 
 def get_center(but, map_scope):
-    if but == "CatHouse" or but == "Exit" or but not in coor_dict:  # sometime scroll can change the pos
+    if but in no_cache_list or but not in coor_dict:  # sometime scroll can change the pos
         location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=0.8)
         coor_dict[but] = pyautogui.center(location)
     return coor_dict[but]
