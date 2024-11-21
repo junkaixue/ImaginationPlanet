@@ -114,11 +114,13 @@ class MainRun:
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
-        click_at(self.rb.x / self.sft, self.rb.y / self.sft - 300)
-        time.sleep(2)
-        bv = get_center("BackVisit", "Single")
-        click_at(bv.x / self.sft, bv.y / self.sft)
-        time.sleep(1)
+        while single_find("CardMode"):
+            click_at(self.rb.x / self.sft, self.rb.y / self.sft - 300)
+            time.sleep(2)
+            bv = get_center("BackVisit", "Single")
+            click_at(bv.x / self.sft, bv.y / self.sft)
+            time.sleep(1)
+        print("Exited card mode, start running...")
 
     def run(self):
         while True:
