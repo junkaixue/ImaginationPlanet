@@ -10,23 +10,30 @@ class MainRun:
     rb = None
     count = 0
     visits = 1
-    f = Fight()
+    sc = False
 
-    def __init__(self):
+    def __init__(self, skip_cat_grab):
         self.sft = get_scaling_factor()
+        self.sc = skip_cat_grab
         found_rb = False
-
+        retry = 50
         while not found_rb:
             try:
                 self.rb = get_center("RunButton", "Main")
                 found_rb = True
             except:
                 print("Run Botton was not found!")
+                retry -= 1
+                if retry == 0:
+                    print("No run button, stop!")
+                    exit(0)
+                time.sleep(1)
         print("Found the Run Button!")
 
     def visiting(self):
         time.sleep(2)
-        self.grab_cat()
+        if not self.sc:
+            self.grab_cat()
         self.visits += 1
         for i in range(1, 2000):
             btl = find_button("Visit")
@@ -35,7 +42,8 @@ class MainRun:
                 center = get_center("Roll", "Visit")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
-                click_at(center.x / self.sft, center.y / self.sft)
+                while single_find("Confirm"):
+                    click_at(center.x / self.sft, center.y / self.sft)
                 print("Complete Rolling!")
             elif "VisitComplete" in btl:
                 print("Complete visiting!")
@@ -89,15 +97,26 @@ class MainRun:
         click_at((vc.x / self.sft), (lc.y / self.sft))
 
     def grab_cat(self):
+        retry = 10
         while not single_find("CardButton"):
             print("Card Button is not found!")
-            time.sleep(1)
+            time.sleep(2)
+            retry -= 1
+            if retry <= 0:
+                print("Retry runs out for card button found!")
+                return
+        retry = 10
         while not single_find("CardMode"):
             card_button = get_center("CardButton", "Single")
             click_at(card_button.x / self.sft, card_button.y / self.sft)
             print("Found card button at " + str(card_button.x / self.sft) + " " + str(card_button.y / self.sft))
             time.sleep(1)
             click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+            time.sleep(1)
+            if single_find("VisitBusy"):
+                print("Visit busy!")
+                center = get_center("Confirm", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
             time.sleep(5)
         print("Card already opened!")
         time.sleep(1)
@@ -121,6 +140,35 @@ class MainRun:
             click_at(bv.x / self.sft, bv.y / self.sft)
             time.sleep(1)
         print("Exited card mode, start running...")
+
+    def light_run(self):
+        while True:
+            bts = find_button("Main")
+            if "VisitMain" in bts:
+                print("Visiting! This is " + str(self.visits) + " visit!")
+                center = get_center("VisitFriend", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+                self.find_cat_house()
+                self.visiting()
+                time.sleep(1)
+                continue
+            elif "Gift" in bts:
+                print("Need to thank the gift sender!")
+                center = get_center("Exit", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+                continue
+            elif "NoMore" in bts:
+                print("This RUN is DONE!! Total " + str(self.visits) + " visits!")
+                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                time.sleep(1)
+                return
+            else:
+                print ("In running!")
+                time.sleep(5)
 
     def run(self):
         while True:
@@ -157,9 +205,12 @@ class MainRun:
                 print("This RUN is DONE!! Total " + str(self.visits) + " visits!")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
-                self.f.fight()
-                print("Complete fight after running!")
                 return
+            elif "ToManyRequest" in bts:
+                print ("Too many requests!")
+                center = get_center("Confirm", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
             else:
                 self.count += 1
                 print("Keep running! This is " + str(self.count) + " clicks")

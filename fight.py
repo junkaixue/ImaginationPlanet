@@ -19,14 +19,21 @@ class Fight:
                 tm = get_center("TaskMain", self.map_scope)
                 click_at(tm.x / self.sft, tm.y / self.sft)
                 time.sleep(2)
-                # go to fight main
-                fm = get_center("FightMain", self.map_scope)
-                click_at(fm.x / self.sft, fm.y / self.sft)
-                time.sleep(2)
+                if single_find("FightMain"):
+                    # go to fight main
+                    fm = get_center("FightMain", self.map_scope)
+                    click_at(fm.x / self.sft, fm.y / self.sft)
+                    time.sleep(2)
+                    if single_find("FightEntry"):
+                        fe = get_center("FightEntry", self.map_scope)
+                        click_at(fe.x / self.sft, fe.y / self.sft)
+                        return
+                    else:
+                        continue
+                else:
+                    continue
                 # go to fight entry
-                fe = get_center("FightEntry", self.map_scope)
-                click_at(fe.x / self.sft, fe.y / self.sft)
-                return
+
             else:
                 print("Task Main is not found!")
                 time.sleep(1)
