@@ -81,6 +81,8 @@ single_find_map = {
     "TakeRed": "pics/take_red_pack.png",
     "RedBack": "pics/red_pack_back.png",
     "DiamRed": "pics/diamond_red_pack.png",
+    "ChatBar": "pics/chat_bar.png",
+    "SendText": "pics/send_text.png",
 
     "TooManyRequest": "pics/too_many_request.png",
 }
@@ -126,11 +128,21 @@ def get_scaling_factor():
         return 1  # Default scaling factor for other systems
 
 def get_center(but, map_scope):
+    return get_center_h(but, map_scope, 0.8)
+
+def simple_single_find(but, map_scope, th):
+    try:
+        pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=th)
+        return True
+    except:
+        return False
+                                     
+def get_center_h(but, map_scope, th):
     """
     Get the center coordinates of a button on the screen.
     """
     if but in no_cache_list or but not in coor_dict:  # Sometimes scroll can change the position
-        location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=0.8)
+        location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=th)
         if location is not None:
             coor_dict[but] = pyautogui.center(location)
         else:
@@ -166,7 +178,7 @@ def find_button(map_scope):
     gray_screen = screen_shot()
     bts = []
     for button_name, template_path in resource_map[map_scope].items():
-        if single_find_with_path(template_path, gray_screen):
+        if single_find_with_path(template_path, gray_screen, 0.8):
             bts.append(button_name)
     return bts
 
@@ -174,9 +186,9 @@ def single_find(but):
     """
     Find a single button using its pre-defined template path.
     """
-    return single_find_with_path(single_find_map[but], None)
+    return single_find_with_path(single_find_map[but], None, 0.8)
 
-def single_find_with_path(but_path, gs):
+def single_find_with_path(but_path, gs, th):
     """
     Perform template matching using a specified template path.
     """
@@ -187,7 +199,7 @@ def single_find_with_path(but_path, gs):
         return False
     # Perform template matching
     result = cv2.matchTemplate(gray_screen, template, cv2.TM_CCOEFF_NORMED)
-    threshold = 0.8
+    threshold = th
     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
     if max_val >= threshold:
         return True
