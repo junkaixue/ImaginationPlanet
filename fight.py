@@ -13,35 +13,32 @@ class Fight:
         self.sft = get_scaling_factor()
 
     def go_to_fight(self):
-        while True:
-            if single_find("TaskMain"):
-                print("Found Task Main")
-                tm = get_center("TaskMain", self.map_scope)
-                click_at(tm.x / self.sft, tm.y / self.sft)
+        while single_find("TaskMain"):
+            print("Found Task Main")
+            tm = get_center("TaskMain", self.map_scope)
+            click_at(tm.x / self.sft, tm.y / self.sft)
+            time.sleep(2)
+            while single_find("FightMain"):
+                # go to fight main
+                fm = get_center("FightMain", self.map_scope)
+                click_at(fm.x / self.sft, fm.y / self.sft)
                 time.sleep(2)
-                if single_find("FightMain"):
-                    # go to fight main
-                    fm = get_center("FightMain", self.map_scope)
-                    click_at(fm.x / self.sft, fm.y / self.sft)
-                    time.sleep(2)
-                    if single_find("FightEntry"):
+                while single_find("FightEntry"):
+                    try:
                         fe = get_center("FightEntry", self.map_scope)
                         click_at(fe.x / self.sft, fe.y / self.sft)
-                        return
-                    else:
+                    except:
                         continue
-                else:
-                    continue
-                # go to fight entry
 
-            else:
-                print("Task Main is not found!")
-                time.sleep(1)
+
 
     def start_fight(self):
         sk = None
         while not self.check_ticket_runout():
             i = 1
+            while not single_find("FightButton"):
+                time.sleep(2)
+                print ("Button not found")
             ft = get_all("FightButton", "Fight")
             print("Total: " + str(len(ft)) + " slots")
             for b in ft:
@@ -52,6 +49,9 @@ class Fight:
                 click_at(b.x / self.sft, b.y / self.sft)
                 time.sleep(12)
                 if sk is None:
+                    while not single_find("FightSkip"):
+                        print ("Skip button is not found!")
+                        time.sleep(2)
                     sk = get_center("FightSkip", self.map_scope)
                 click_at(sk.x / self.sft, sk.y / self.sft)
                 time.sleep(2)

@@ -1,12 +1,11 @@
 from datetime import datetime
-
-import Quartz
+import pyautogui
 import cv2
 import numpy as np
-import pyautogui
+import platform
+import ctypes
+from win32api import GetSystemMetrics
 
-# Preserve the original print function
-original_print = print
 
 coor_dict = {}
 
@@ -74,7 +73,16 @@ single_find_map = {
     "FightEntry": "pics/fight_entry.png",
     "Exit": "pics/exit.png",
     "TicketRunout": "pics/ticket_runout.png",
+    "FightButton": "pics/fight_button.png",
 
+    # Red Pack
+    "Chat": "pics/chat.png",
+    "RollRed": "pics/roll_red_pack.png",
+    "TakeRed": "pics/take_red_pack.png",
+    "RedBack": "pics/red_pack_back.png",
+    "DiamRed": "pics/diamond_red_pack.png",
+
+    "TooManyRequest": "pics/too_many_request.png",
 }
 
 resource_map = {
@@ -87,23 +95,53 @@ resource_map = {
 
 but_list = {}
 
-no_cache_list = ["CatHouse", "Exit", "Replace"]
-
+no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed"]
 
 # Define a new print function with a timestamp
+# Save the original built-in print function
+original_print = print
+
 def print(*args, **kwargs):
+    """
+    Custom print function with a timestamp.
+    """
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # Call the original print function
     original_print(f'[{timestamp}]', *args, **kwargs)
 
 
-def get_center(but, map_scope):
-    if but in no_cache_list or but not in coor_dict:  # sometime scroll can change the pos
-        location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=0.8)
-        coor_dict[but] = pyautogui.center(location)
-    return coor_dict[but]
+def get_scaling_factor():
+    """
+    Get the display scaling factor.
+    """
+    if platform.system() == "Windows":
+        hdc = ctypes.windll.user32.GetDC(0)
+        dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+        ctypes.windll.user32.ReleaseDC(0, hdc)
+        return dpi / 96  # Standard DPI is 96
+    elif platform.system() == "Darwin":
+        # If macOS support is needed, implement Quartz-based scaling factor logic
+        raise NotImplementedError("MacOS support for scaling factor is not implemented in this example.")
+    else:
+        return 1  # Default scaling factor for other systems
 
+def get_center(but, map_scope):
+    """
+    Get the center coordinates of a button on the screen.
+    """
+    if but in no_cache_list or but not in coor_dict:  # Sometimes scroll can change the position
+        location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=0.8)
+        if location is not None:
+            coor_dict[but] = pyautogui.center(location)
+        else:
+            print(f"Warning: Button '{but}' not found on screen.")
+            return None
+    return coor_dict.get(but)
 
 def get_all(but, map_scope):
+    """
+    Get all matching locations of a button on the screen.
+    """
     matches = list(pyautogui.locateAllOnScreen(resource_map[map_scope][but], confidence=0.8))
     coors = []
     prev = None
@@ -113,53 +151,39 @@ def get_all(but, map_scope):
             coors.append(pyautogui.center(match))
     return coors
 
-
 def get_all_with_cache(but, map_scope):
+    """
+    Get all cached locations of a button on the screen.
+    """
     if but not in but_list:
         but_list[but] = get_all(but, map_scope)
     return but_list[but]
 
-
-def get_scaling_factor():
-    # Get the main display ID
-    main_display_id = Quartz.CGMainDisplayID()
-
-    # Get the display mode
-    display_mode = Quartz.CGDisplayCopyDisplayMode(main_display_id)
-
-    # Retrieve the pixel dimensions
-    pixel_width = Quartz.CGDisplayModeGetPixelWidth(display_mode)
-    pixel_height = Quartz.CGDisplayModeGetPixelHeight(display_mode)
-
-    # Retrieve the point dimensions
-    point_width = Quartz.CGDisplayModeGetWidth(display_mode)
-    point_height = Quartz.CGDisplayModeGetHeight(display_mode)
-
-    # Calculate the scaling factor
-    scaling_factor = pixel_width / point_width
-
-    return scaling_factor
-
-
 def find_button(map_scope):
+    """
+    Find buttons on the screen by matching templates.
+    """
     gray_screen = screen_shot()
     bts = []
-
     for button_name, template_path in resource_map[map_scope].items():
         if single_find_with_path(template_path, gray_screen):
             bts.append(button_name)
     return bts
 
-
 def single_find(but):
+    """
+    Find a single button using its pre-defined template path.
+    """
     return single_find_with_path(single_find_map[but], None)
 
-
 def single_find_with_path(but_path, gs):
+    """
+    Perform template matching using a specified template path.
+    """
     gray_screen = screen_shot() if gs is None else gs
     template = cv2.imread(but_path, 0)
     if template is None:
-        print(f"Error: Unable to load '{but_path}'.")
+        print(f"Error: Unable to load template from '{but_path}'.")
         return False
     # Perform template matching
     result = cv2.matchTemplate(gray_screen, template, cv2.TM_CCOEFF_NORMED)
@@ -169,9 +193,11 @@ def single_find_with_path(but_path, gs):
         return True
     return False
 
-
 def screen_shot():
-    # Take a screenshot
+    """
+    Take a screenshot and convert it to a grayscale image for template matching.
+    """
     screenshot = pyautogui.screenshot()
     screen = np.array(screenshot)
     return cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
+
