@@ -11,9 +11,11 @@ class MainRun:
     count = 0
     visits = 1
     sc = False
+    cg = 10
 
     def __init__(self, skip_cat_grab):
         self.sft = get_scaling_factor()
+        print ("Scaling factor : " + str(self.sft))
         self.sc = skip_cat_grab
         found_rb = False
         retry = 50
@@ -34,6 +36,7 @@ class MainRun:
         time.sleep(2)
         if not self.sc:
             self.grab_cat()
+        print ("In visiting mode!")
         self.visits += 1
         for i in range(1, 2000):
             btl = find_button("Visit")
@@ -47,12 +50,11 @@ class MainRun:
                 print("Complete Rolling!")
             elif "VisitComplete" in btl:
                 print("Complete visiting!")
-                cc = get_center("VisitBack", "Single")
-                # click twice
-                click_at(cc.x / self.sft, cc.y / self.sft)
-                time.sleep(1)
-                click_at(cc.x / self.sft, cc.y / self.sft)
-                break
+                while single_find("VisitBack"):
+                    cc = get_center("VisitBack", "Single")
+                    click_at(cc.x / self.sft, cc.y / self.sft)
+                    time.sleep(1)
+                return
             elif "Timeout" in btl:
                 print("Visit timeout!")
                 center = get_center("Confirm", "Single")
@@ -74,29 +76,38 @@ class MainRun:
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
 
-    def guess(self):
-        # l = get_center("GuessL", "Main")
-        click_at(self.rb.x / self.sft - 50, self.rb.y / self.sft)
-        time.sleep(1)
-        # r = get_center("GuessR", "Main")
-        click_at(self.rb.x / self.sft + 50, self.rb.y / self.sft)
-
     def find_cat_house(self):
-        click_at(1200, 500)
-        pyautogui.scroll(10)  # Make it top
+        pyautogui.vscroll(100)  # Make it top
+        scrolls = 50
         while True:
-            if not single_find("CatHouse"):
-                pyautogui.scroll(-2)
+            scrolls -= 1
+            if scrolls == 0:
+                return False
+            elif not single_find("CatHouse"):
+                pyautogui.vscroll(-100)
+                print ("Cat House not found, " + str(scrolls) + " retries remain")
                 continue
             else:
                 break
-
-        lc = get_center("CatHouse", "Single")
-        vc = get_center("VisitButton", "Single")
-        # print(f"Image found at: {center.y}")
-        click_at((vc.x / self.sft), (lc.y / self.sft))
+        while single_find("CatHouse"):
+            try:
+                lc = get_center("CatHouse", "Single")
+                vc = get_center("VisitButton", "Single")
+                # print(f"Image found at: {center.y}")
+                click_at((vc.x / self.sft), (lc.y / self.sft))
+                print ("Clicked cat house")
+            except:
+                print ("Cat house already clicked")
+            
+                
+        print ("Finish finding, go to visiting")
+        return True
 
     def grab_cat(self):
+        if self.cg == 0:
+            print ("Skip cat grab")
+            return
+        self.cg -= 1
         retry = 10
         while not single_find("CardButton"):
             print("Card Button is not found!")
@@ -151,7 +162,12 @@ class MainRun:
                 time.sleep(1)
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
-                self.find_cat_house()
+                click_at(center.x / self.sft, center.y / self.sft - 200)
+                if not self.find_cat_house():
+                     click_at(center.x / self.sft, center.y / self.sft)
+                     time.sleep(1)
+                     click_at(center.x / self.sft, center.y / self.sft - 200)
+                     self.find_cat_house()
                 self.visiting()
                 time.sleep(1)
                 continue
@@ -185,7 +201,8 @@ class MainRun:
                 time.sleep(1)
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
-                self.find_cat_house()
+                if not self.find_cat_house():
+                    self.find_cat_house()
                 self.visiting()
                 time.sleep(1)
                 continue
@@ -219,5 +236,5 @@ class MainRun:
 
 
 if __name__ == '__main__':
-    r = MainRun()
+    r = MainRun(True)
     r.visiting()
