@@ -11,7 +11,7 @@ class MainRun:
     count = 0
     visits = 1
     sc = False
-    cg = 10
+    cg = 5
 
     def __init__(self, skip_cat_grab):
         self.sft = get_scaling_factor()
@@ -31,6 +31,20 @@ class MainRun:
                     exit(0)
                 time.sleep(1)
         print("Found the Run Button!")
+        self.long_click()
+
+    def long_click(self):
+        # Move to the position (if necessary)
+        pyautogui.moveTo(self.rb.x, self.rb.y)
+
+        # Press and hold the mouse button
+        pyautogui.mouseDown()
+
+        # Wait for 2 seconds
+        time.sleep(2)
+
+        # Release the mouse button
+        pyautogui.mouseUp()
 
     def visiting(self):
         time.sleep(2)
@@ -64,6 +78,11 @@ class MainRun:
             elif "VisitBusy" in btl:
                 print("Visit busy!")
                 center = get_center("Confirm", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+            elif "TooManyRequest" in btl:
+                print ("Too many request!")
+                center = get_center("TooManyRequest", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
             elif "AdsSkip" in btl:
@@ -182,6 +201,12 @@ class MainRun:
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
                 return
+            elif "Confirm" in bts:
+                while single_find("Confirm"):
+                    center = get_center("Confirm", "Single")
+                    click_at(center.x / self.sft, center.y / self.sft)
+                    time.sleep(1)
+                self.long_click()
             else:
                 print ("In running!")
                 time.sleep(5)

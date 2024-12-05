@@ -16,9 +16,10 @@ main_map = {
     "Replace": "pics/replace.png",
     "NoMore": "pics/no_more.png",
     "Gift": "pics/gift.png",
+    "Confirm": "pics/confirm.png",
 
     # Guess
-    "Guess": "pics/guess.png",
+    # "Guess": "pics/guess.png",
     # Temp hard code
     # "GuessL": "pics/guess_left.png",
     # "GuessR": "pics/guess_right.png",

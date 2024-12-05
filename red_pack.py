@@ -2,6 +2,7 @@
 
 from pynput.keyboard import Controller
 import time
+from datetime import datetime, timedelta
 
 keyboard = Controller()
 
@@ -16,8 +17,12 @@ class RedPack():
     sft = 0.0
     count = 0
     thankyou_texts = ["xie xie!", "3q", "duo xie hong bao!", "lao ban da qi!"]
+    now = 0
+    timeout= 7200
+    
     
     def __init__(self, sfto):
+        self.now = datetime.now()
         self.count = 0
         self.sft = sfto if sfto != 0 else get_scaling_factor()
         print ("start red pack waiting...")
@@ -28,7 +33,7 @@ class RedPack():
             click_at(center.x / self.sft, center.y / self.sft)
             time.sleep(2)
         print ("Entered chat")
-        while True:
+        while self.now + timedelta(seconds=self.timeout) >= datetime.now():
             if single_find("TooManyRequest"):
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
