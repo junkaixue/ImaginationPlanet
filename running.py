@@ -3,6 +3,7 @@ import time
 from click import *
 from common import *
 from fight import Fight
+from rebot_check import RobotCheck
 
 
 class MainRun:
@@ -12,6 +13,7 @@ class MainRun:
     visits = 1
     sc = False
     cg = 5
+    rd = None
 
     def __init__(self, skip_cat_grab):
         self.sft = get_scaling_factor()
@@ -32,6 +34,7 @@ class MainRun:
                 time.sleep(1)
         print("Found the Run Button!")
         self.long_click()
+        self.rd = rd
 
     def long_click(self):
         # Move to the position (if necessary)
@@ -89,6 +92,11 @@ class MainRun:
                 print("Ads skipped!")
                 center = get_center("UseTicket", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+            elif "RobotDetect" in btl:
+                print("Robot detected!")
+                if self.rd is None:
+                    self.rd = RobotCheck(self.sft)
                 time.sleep(1)
             else:
                 print("Keep visiting!")
@@ -207,6 +215,11 @@ class MainRun:
                     click_at(center.x / self.sft, center.y / self.sft)
                     time.sleep(1)
                 self.long_click()
+            elif "RobotDetect" in bts:
+                print ("Robot detected!")
+                if self.rd is None:
+                    self.rd = RobotCheck(self.sft)
+                self.rd.break_check()
             else:
                 print ("In running!")
                 time.sleep(5)
@@ -216,7 +229,7 @@ class MainRun:
             bts = find_button("Main")
             if "Guess" in bts:
                 print("Found Guess! Let's guess!")
-                self.guess()
+                # self.guess()
                 time.sleep(2)
                 continue
             elif "VisitMain" in bts:
