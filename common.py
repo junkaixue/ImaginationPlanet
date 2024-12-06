@@ -23,6 +23,7 @@ main_map = {
     # Temp hard code
     # "GuessL": "pics/guess_left.png",
     # "GuessR": "pics/guess_right.png",
+    "RobotDetect": "pics/robot_detect.png",
 
     # Visit Main
     "VisitMain": "pics/visiting_main.png",
@@ -35,6 +36,7 @@ visit_map = {
     "Timeout": "pics/timeout.png",
     "VisitBusy": "pics/visit_busy.png",
     "AdsSkip": "pics/ads_skip.png",
+    "RobotDetect": "pics/robot_detect.png",
 }
 
 fight_map = {

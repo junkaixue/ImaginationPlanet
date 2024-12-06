@@ -12,10 +12,10 @@ def combo(skipcat):
     r = MainRun(skipcat)
     f = Fight()
     while True:
-        rp = RedPack(1)
         r.light_run()
         f.fight()
-        rp.get_red_pack(1)
+        irp = RedPack(1)
+        irp.get_red_pack()
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
