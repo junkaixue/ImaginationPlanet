@@ -86,6 +86,14 @@ single_find_map = {
     "SendText": "pics/send_text.png",
 
     "TooManyRequest": "pics/too_many_request.png",
+
+    # Robot check
+    "RobotDetected": "pics/robot_detect.png",
+    "Plus": "pics/plus_sign.png",
+    "Equal": "pics/equal_sign.png",
+    "QWD": "pics/question_wide.png",
+    "QConfirm": "pics/question_confirm.png",
+    "QReward": "pics/answer_reward.png",
 }
 
 resource_map = {
