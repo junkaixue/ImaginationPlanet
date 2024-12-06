@@ -34,7 +34,6 @@ class MainRun:
                 time.sleep(1)
         print("Found the Run Button!")
         self.long_click()
-        self.rd = rd
 
     def long_click(self):
         # Move to the position (if necessary)
