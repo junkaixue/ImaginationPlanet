@@ -3,7 +3,7 @@ import time
 from click import *
 from common import *
 from fight import Fight
-from rebot_check import RobotCheck
+from robot_check import RobotCheck
 
 
 class MainRun:
@@ -97,6 +97,10 @@ class MainRun:
                 if self.rd is None:
                     self.rd = RobotCheck(self.sft)
                 time.sleep(1)
+                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                time.sleep(1)
+                self.long_click()
+                time.sleep(1)
             else:
                 print("Keep visiting!")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
@@ -136,6 +140,10 @@ class MainRun:
         self.cg -= 1
         retry = 10
         while not single_find("CardButton"):
+            if single_find("RobotDetected"):
+                self.rd.break_check()
+                time.sleep(1)
+                continue
             print("Card Button is not found!")
             time.sleep(2)
             retry -= 1
@@ -144,6 +152,10 @@ class MainRun:
                 return
         retry = 10
         while not single_find("CardMode"):
+            if single_find("RobotDetected"):
+                self.rd.break_check()
+                time.sleep(1)
+                continue
             card_button = get_center("CardButton", "Single")
             click_at(card_button.x / self.sft, card_button.y / self.sft)
             print("Found card button at " + str(card_button.x / self.sft) + " " + str(card_button.y / self.sft))
@@ -158,6 +170,9 @@ class MainRun:
         print("Card already opened!")
         time.sleep(1)
         if single_find("CatCard"):
+            if single_find("RobotDetected"):
+                self.rd.break_check()
+                time.sleep(1)
             cc = get_center("CatCard", "Single")
             # Move the cursor to the starting point
             pyautogui.moveTo(cc.x / self.sft, cc.y / self.sft, duration=0.5)
@@ -166,11 +181,19 @@ class MainRun:
             time.sleep(8)
             # Can be busy sometime
             while single_find("VisitBusy"):
+                if single_find("RobotDetected"):
+                    self.rd.break_check()
+                    time.sleep(1)
+                    continue
                 print("Visit busy!")
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
         while single_find("CardMode"):
+            if single_find("RobotDetected"):
+                self.rd.break_check()
+                time.sleep(1)
+                continue
             click_at(self.rb.x / self.sft, self.rb.y / self.sft - 300)
             time.sleep(2)
             bv = get_center("BackVisit", "Single")
@@ -219,6 +242,9 @@ class MainRun:
                 if self.rd is None:
                     self.rd = RobotCheck(self.sft)
                 self.rd.break_check()
+            elif single_find("PKG"):
+                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                time.sleep(1)
             else:
                 print ("In running!")
                 time.sleep(5)
