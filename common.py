@@ -54,6 +54,7 @@ common_map = {
 single_find_map = {
     # Main
     "ThankGift": "pics/thank_gift.png",
+    "PKG": "pics/package.png",
 
     # Visit
     "CardButton": "pics/card_button.png",

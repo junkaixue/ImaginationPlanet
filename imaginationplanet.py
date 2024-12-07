@@ -51,6 +51,3 @@ if __name__ == "__main__":
     if args.combo:
         combo(args.skipcat)
     send_email(content)
-
-    rp = RedPack(0)
-    rp.get_red_pack()
