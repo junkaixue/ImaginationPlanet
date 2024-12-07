@@ -96,10 +96,9 @@ class MainRun:
                 print("Robot detected!")
                 if self.rd is None:
                     self.rd = RobotCheck(self.sft)
+                self.rd.break_check()
                 time.sleep(1)
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
-                time.sleep(1)
-                self.long_click()
                 time.sleep(1)
             else:
                 print("Keep visiting!")
@@ -242,6 +241,11 @@ class MainRun:
                 if self.rd is None:
                     self.rd = RobotCheck(self.sft)
                 self.rd.break_check()
+                time.sleep(1)
+                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                time.sleep(1)
+                self.long_click()
+                time.sleep(1)
             elif single_find("PKG"):
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
