@@ -37,6 +37,10 @@ class Fight:
         while not self.check_ticket_runout():
             i = 1
             while not single_find("FightButton"):
+                if single_find("FightEntry"):
+                    center = get_center("FightEntry", "Single")
+                    click_at(center.x / self.sft, center.y / self.sft)
+                    print("Find fight entry and clicked it.")
                 time.sleep(2)
                 print ("Button not found")
             ft = get_all("FightButton", "Fight")

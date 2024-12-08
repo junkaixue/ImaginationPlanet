@@ -249,6 +249,10 @@ class MainRun:
             elif single_find("PKG"):
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
+            elif single_find("RunButton"):
+                print ("Auto run stopped, resume it...")
+                self.long_click()
+                time.sleep(2)
             else:
                 print ("In running!")
                 time.sleep(5)
