@@ -1,9 +1,11 @@
 import cv2
 import pytesseract
 import easyocr
+
 from click import click_at
 from common import get_center, single_find_map
 import time
+import numpy as np
 from collections import namedtuple
 import pyautogui
 
@@ -14,7 +16,21 @@ pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tessera
 ScreenRegion = namedtuple('ScreenRegion', ['left', 'top', 'width', 'height'])
 easy_reader = easyocr.Reader(['en'])
 
+def light_blue_handle():
+    image = cv2.imread("tmp.png")
+    # Convert to HSV
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+    lower_blue = np.array([90, 50, 50])  # Lower bound
+    upper_blue = np.array([130, 255, 255])  # Upper bound
 
+    # Create a mask for light blue
+    mask = cv2.inRange(hsv, lower_blue, upper_blue)
+
+    # Apply the mask to the original image
+    isolated_blue = cv2.bitwise_and(image, image, mask=mask)
+
+    # Save the isolated image
+    cv2.imwrite("lt.png", isolated_blue)
 
 def preprocess_image(image_path):
     """
@@ -101,7 +117,28 @@ class RobotCheck:
     def get_add_numbers(self, screen_region):
         screen_shot_by_area(screen_region)
         return run_easyocr("tmp.png")
-       #
+
+    def use_easyocr(self, area, result, file):
+        results = easy_reader.readtext(file)
+        # Concatenate all detected text
+        for bbox, text, confidence in results:
+            ct = text.strip()
+            if ct.isdigit() and result == int(ct):
+                print("Find result by easyocr. result : " + ct)
+                x_coords = [point[0] for point in bbox]
+                y_coords = [point[1] for point in bbox]
+
+                # Calculate the center of the bounding box in image coordinates
+                center_x_image = (min(x_coords) + max(x_coords)) / 2
+                center_y_image = (min(y_coords) + max(y_coords)) / 2
+
+                # Map the center to screen coordinates
+                center_x_screen = center_x_image + area[0]
+                center_y_screen = center_y_image + area[1]
+                print("It locates at: " + str(center_x_screen) + " " + str(center_x_screen))
+                click_at(center_x_screen, center_y_screen)
+                return True
+        return False
 
     def break_check(self):
         result = 0
@@ -126,25 +163,8 @@ class RobotCheck:
         for area in self.answers:
             screen_shot_by_area(area)
             # print ("Screen shot area" + str(area))
-            results = easy_reader.readtext("tmp.png")
-            # Concatenate all detected text
-            for bbox, text, confidence in results:
-                ct = text.strip()
-                if ct.isdigit() and result == int(ct):
-                    print ("Find result by easyocr. result : " + ct)
-                    x_coords = [point[0] for point in bbox]
-                    y_coords = [point[1] for point in bbox]
-
-                    # Calculate the center of the bounding box in image coordinates
-                    center_x_image = (min(x_coords) + max(x_coords)) / 2
-                    center_y_image = (min(y_coords) + max(y_coords)) / 2
-
-                    # Map the center to screen coordinates
-                    center_x_screen = center_x_image + area[0]
-                    center_y_screen = center_y_image + area[1]
-                    print ("It locates at: " + str(center_x_screen) + " " + str(center_x_screen))
-                    click_at(center_x_screen, center_y_screen)
-                    return
+            if self.use_easyocr(area, result, "tmp.png"):
+                return
             processed_image = preprocess_image("tmp.png")
             data = pytesseract.image_to_boxes(processed_image, config='-c tessedit_char_whitelist=0123456789')
 
@@ -169,6 +189,10 @@ class RobotCheck:
                     print ("It locates at: " + str(center_x_screen) + " " + str(center_x_screen))
                     click_at(center_x_screen, center_y_screen)
                     return
+
+            light_blue_handle()
+            self.use_easyocr(area, result, "lt.png")
+
 
 
 
