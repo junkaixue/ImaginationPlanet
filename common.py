@@ -4,7 +4,6 @@ import cv2
 import numpy as np
 import platform
 import ctypes
-from win32api import GetSystemMetrics
 
 
 coor_dict = {}

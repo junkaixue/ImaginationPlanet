@@ -2,7 +2,6 @@ import time
 
 from click import *
 from common import *
-from fight import Fight
 from robot_check import RobotCheck
 
 
@@ -249,7 +248,7 @@ class MainRun:
             elif single_find("PKG"):
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
-            elif single_find("RunButton"):
+            elif simple_single_find("RunButton", "Main", 0.8):
                 print ("Auto run stopped, resume it...")
                 self.long_click()
                 time.sleep(2)
