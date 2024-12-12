@@ -54,6 +54,11 @@ single_find_map = {
     # Main
     "ThankGift": "pics/thank_gift.png",
     "PKG": "pics/package.png",
+    "TW": "pics/twenty_throw.png",
+    "TWB": "pics/twenty_throw_on_bar.png",
+    "ONE": "pics/one_throw.png",
+    "ONEB": "pics/one_throw_on_bar.png",
+    "FACE_UP_LEFT": "pics/face_up_left.png",
 
     # Visit
     "CardButton": "pics/card_button.png",
@@ -86,6 +91,7 @@ single_find_map = {
     "DiamRed": "pics/diamond_red_pack.png",
     "ChatBar": "pics/chat_bar.png",
     "SendText": "pics/send_text.png",
+    "MainBack": "pics/main_back.png",
 
     "TooManyRequest": "pics/too_many_request.png",
 
@@ -108,7 +114,7 @@ resource_map = {
 
 but_list = {}
 
-no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed"]
+no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "Confirm"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
