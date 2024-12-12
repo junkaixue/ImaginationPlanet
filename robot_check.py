@@ -17,14 +17,18 @@ ScreenRegion = namedtuple('ScreenRegion', ['left', 'top', 'width', 'height'])
 easy_reader = easyocr.Reader(['en'])
 
 def light_blue_handle():
+    return light_color_handle(np.array([90, 50, 50]), np.array([130, 255, 255]))
+
+def light_orange_handle():
+    return light_color_handle(np.array([0, 100, 100]), np.array([20, 255, 255]))
+
+def light_color_handle(lower, upper):
     image = cv2.imread("tmp.png")
     # Convert to HSV
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
-    lower_blue = np.array([90, 50, 50])  # Lower bound
-    upper_blue = np.array([130, 255, 255])  # Upper bound
 
     # Create a mask for light blue
-    mask = cv2.inRange(hsv, lower_blue, upper_blue)
+    mask = cv2.inRange(hsv, lower, upper)
 
     # Apply the mask to the original image
     isolated_blue = cv2.bitwise_and(image, image, mask=mask)
@@ -191,7 +195,11 @@ class RobotCheck:
                     return
 
             light_blue_handle()
-            self.use_easyocr(area, result, "lt.png")
+            if self.use_easyocr(area, result, "lt.png"):
+                return
+            light_orange_handle()
+            if self.use_easyocr(area, result, "lt.png"):
+                return
 
 
 

@@ -4,6 +4,8 @@ from pynput.keyboard import Controller
 import time
 from datetime import datetime, timedelta
 
+from robot_check import RobotCheck
+
 keyboard = Controller()
 
 from click import *
@@ -13,12 +15,13 @@ import random
 
 
 
-class RedPack():
+class RedPack:
     sft = 0.0
     count = 0
     thankyou_texts = ["xie xie!", "3q", "duo xie hong bao!", "lao ban da qi!"]
     now = 0
     timeout= 7200
+    rb = None
     
     
     def __init__(self, sfto):
@@ -38,19 +41,34 @@ class RedPack():
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
-            elif simple_single_find("RollRed", "Single", 0.97):
+            elif simple_single_find("RobotDetected", "Single", 0.8):
+                if self.rb is None:
+                    self.rb = RobotCheck(self.sft)
+                self.rb.break_check()
+                time.sleep(1)
+            elif simple_single_find("RollRed", "Single", 0.8):
                 self.single_get("RollRed")
-            elif simple_single_find("DiamRed", "Single", 0.99):
+            elif simple_single_find("DiamRed", "Single", 0.8):
                 self.single_get("DiamRed")
             else:
                 print ("Nothing sleep 2 seconds")
                 time.sleep(2)
+        while single_find("MainBack"):
+            print ("Get red pack finished")
+            center = get_center("MainBack", "Single")
+            click_at(center.x / self.sft, center.y / self.sft)
+            time.sleep(2)
+        print("finished red")
             
 
     def single_get(self, pk_name):
         thankyou = False
-        while simple_single_find(pk_name, "Single", 0.97):
-            center = get_center_h(pk_name, "Single", 0.97)
+        while simple_single_find(pk_name, "Single", 0.8):
+            if simple_single_find("RobotDetect", "Single", 0.8):
+                if self.rb is None:
+                    self.rb = RobotCheck()
+                self.rb.break_check()
+            center = get_center_h(pk_name, "Single", 0.8)
             click_at(center.x / self.sft, center.y / self.sft)
             time.sleep(1)
 
@@ -94,6 +112,5 @@ class RedPack():
 
 if __name__ == '__main__': 
     r = RedPack(0)
-    r.send_thankyou()
     r.get_red_pack()
 

@@ -21,6 +21,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-r", "--run", action='store_true', help="Just regular run and visiting")
     parser.add_argument("-l", "--lightrun", action='store_true', help="Light weight regular run and visiting")
+    parser.add_argument("-s", "--switchrun", action='store_true', help="Switch run and visiting")
     parser.add_argument("-f", "--fight", action='store_true', help="Just fight")
     parser.add_argument("-sc", "--skipcat", action='store_true', help="Skip cat grab")
     parser.add_argument("-c", "--combo", action='store_true', help="Comb of running + fighting + wait for red pack for 2 hours")
@@ -41,6 +42,13 @@ if __name__ == "__main__":
         print("Total visits " + str(run.visits) + " times")
         content = "The run starts at: " + str(time) + "\n Takes " + str(
             datetime.datetime.now() - time) + "!\nTotal " + str(run.visits) + " visits\n"
+    elif args.switchrun:
+        run = MainRun(args.skipcat)
+        run.switch_run()
+        print("Total visits " + str(run.visits) + " times")
+        content = "The run starts at: " + str(time) + "\n Takes " + str(
+            datetime.datetime.now() - time) + "!\nTotal " + str(run.visits) + " visits\n"
+
     if args.fight:
         fight = Fight()
         fight.fight()

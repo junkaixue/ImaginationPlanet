@@ -32,7 +32,6 @@ class MainRun:
                     exit(0)
                 time.sleep(1)
         print("Found the Run Button!")
-        self.long_click()
 
     def long_click(self):
         # Move to the position (if necessary)
@@ -124,6 +123,7 @@ class MainRun:
                 # print(f"Image found at: {center.y}")
                 click_at((vc.x / self.sft), (lc.y / self.sft))
                 print ("Clicked cat house")
+                time.sleep(1)
             except:
                 print ("Cat house already clicked")
             
@@ -139,6 +139,8 @@ class MainRun:
         retry = 10
         while not single_find("CardButton"):
             if single_find("RobotDetected"):
+                if self.rd is None:
+                    self.rd = RobotCheck(self.sft)
                 self.rd.break_check()
                 time.sleep(1)
                 continue
@@ -200,6 +202,7 @@ class MainRun:
         print("Exited card mode, start running...")
 
     def light_run(self):
+        self.long_click()
         while True:
             bts = find_button("Main")
             if "VisitMain" in bts:
@@ -216,12 +219,6 @@ class MainRun:
                      click_at(center.x / self.sft, center.y / self.sft - 200)
                      self.find_cat_house()
                 self.visiting()
-                time.sleep(1)
-                continue
-            elif "Gift" in bts:
-                print("Need to thank the gift sender!")
-                center = get_center("Exit", "Single")
-                click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 continue
             elif "NoMore" in bts:
@@ -246,7 +243,7 @@ class MainRun:
                 self.long_click()
                 time.sleep(1)
             elif single_find("PKG"):
-                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                click_at(self.rb.x / self.sft, self.rb.y / self.sft + 100)
                 time.sleep(1)
             elif simple_single_find("RunButton", "Main", 0.8):
                 print ("Auto run stopped, resume it...")
@@ -255,6 +252,74 @@ class MainRun:
             else:
                 print ("In running!")
                 time.sleep(5)
+
+    def switch_run(self):
+        while True:
+            if single_find("FACE_UP_LEFT"):
+                self.switch("ONE", "TWB")
+            else:
+                if single_find("TWB"):
+                    self.switch("TW", "ONEB")
+
+            bts = find_button("Main")
+            if "Guess" in bts:
+                print("Found Guess! Let's guess!")
+                # self.guess()
+                time.sleep(2)
+                continue
+            elif "VisitMain" in bts:
+                print("Visiting! This is " + str(self.visits) + " visit!")
+                center = get_center("VisitFriend", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+                if not self.find_cat_house():
+                    self.find_cat_house()
+                self.visiting()
+                time.sleep(1)
+                continue
+            elif "Replace" in bts:
+                print("Found replacement! Take it!")
+                center = get_center("Replace", "Main")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+                continue
+            elif "Gift" in bts:
+                print("Need to thank the gift sender!")
+                center = get_center("Exit", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+                continue
+            elif "NoMore" in bts:
+                print("This RUN is DONE!! Total " + str(self.visits) + " visits!")
+                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                time.sleep(1)
+                return
+            elif "ToManyRequest" in bts:
+                print ("Too many requests!")
+                center = get_center("Confirm", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+            elif "RobotDetect" in bts:
+                print("Robot detected!")
+                if self.rd is None:
+                    self.rd = RobotCheck(self.sft)
+                self.rd.break_check()
+                time.sleep(1)
+                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                time.sleep(1)
+                self.long_click()
+                time.sleep(1)
+            elif single_find("PKG"):
+                click_at(self.rb.x / self.sft, self.rb.y / self.sft + 100)
+                time.sleep(1)
+            else:
+                self.count += 1
+                print("Keep running! This is " + str(self.count) + " clicks")
+                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                time.sleep(0.5)
+
 
     def run(self):
         while True:
@@ -304,7 +369,21 @@ class MainRun:
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(0.5)
 
+    def switch(self, from_s, to_s):
+        while single_find(from_s):
+            center = get_center(from_s, "Single")
+            click_at(center.x / self.sft, center.y / self.sft)
+            time.sleep(1)
+            try:
+                center = get_center(to_s, "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+            except:
+                print("Switch failed, retry...")
+        print("Switched to " + to_s)
+
+
 
 if __name__ == '__main__':
     r = MainRun(True)
-    r.visiting()
+    r.switch("TW", "ONEB")
