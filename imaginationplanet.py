@@ -8,8 +8,8 @@ from running import MainRun
 from red_pack import RedPack
 
 
-def combo(skipcat):
-    r = MainRun(skipcat)
+def combo(skipcat, switch):
+    r = MainRun(skipcat, switch)
     f = Fight()
     while True:
         r.light_run()
@@ -43,7 +43,7 @@ if __name__ == "__main__":
         content = "The run starts at: " + str(time) + "\n Takes " + str(
             datetime.datetime.now() - time) + "!\nTotal " + str(run.visits) + " visits\n"
     elif args.switchrun:
-        run = MainRun(args.skipcat)
+        run = MainRun(args.skipcat, True)
         run.switch_run()
         print("Total visits " + str(run.visits) + " times")
         content = "The run starts at: " + str(time) + "\n Takes " + str(
@@ -57,5 +57,5 @@ if __name__ == "__main__":
     print("Complete single run for " + str(datetime.datetime.now() - time) + " seconds!")
 
     if args.combo:
-        combo(args.skipcat)
+        combo(args.skipcat, args.switchrun)
     send_email(content)

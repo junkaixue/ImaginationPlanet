@@ -13,9 +13,11 @@ class MainRun:
     sc = False
     cg = 5
     rd = None
+    is_switch = False
 
-    def __init__(self, skip_cat_grab):
+    def __init__(self, skip_cat_grab, is_switch = False):
         self.sft = get_scaling_factor()
+        self.is_switch = is_switch
         print ("Scaling factor : " + str(self.sft))
         self.sc = skip_cat_grab
         found_rb = False
@@ -46,6 +48,12 @@ class MainRun:
         # Release the mouse button
         pyautogui.mouseUp()
 
+    def guess(self):
+        click_at(self.rb.x / self.sft - 50, self.rb.y / self.sft)
+        time.sleep(1)
+        click_at(self.rb.x / self.sft + 50, self.rb.y / self.sft)
+        time.sleep(1)
+
     def visiting(self):
         time.sleep(2)
         if not self.sc:
@@ -53,14 +61,39 @@ class MainRun:
         print ("In visiting mode!")
         self.visits += 1
         for i in range(1, 2000):
+            if single_find("Confirm"):
+                print ("Confirm of high rolling!")
+                center = get_center("Confirm", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
             btl = find_button("Visit")
             if "Roll" in btl:
                 print("Found Rolling!")
-                center = get_center("Roll", "Visit")
-                click_at(center.x / self.sft, center.y / self.sft)
-                time.sleep(1)
-                while single_find("Confirm"):
+                if self.is_switch:
+                    while single_find("OneMore"):
+                        print ("High times, one more!")
+                        center = get_center("OneMore", "Single")
+                        click_at(center.x / self.sft, center.y / self.sft)
+                        time.sleep(1)
+                        while single_find("UseTicket"):
+                            print ("Use ticket!")
+                            cc = get_center("UseTicket", "Single")
+                            click_at(cc.x / self.sft, cc.y / self.sft)
+                            time.sleep(1)
+                            click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                            time.sleep(1)
+                        while single_find("Confirm"):
+                            print ("Confirm ticket!")
+                            cc = get_center("Confirm", "Single")
+                            click_at(cc.x / self.sft, cc.y / self.sft)
+                            time.sleep(1)
+
+                else:
+                    center = get_center("Roll", "Visit")
                     click_at(center.x / self.sft, center.y / self.sft)
+                    time.sleep(1)
+                    while single_find("Confirm"):
+                        click_at(center.x / self.sft, center.y / self.sft)
                 print("Complete Rolling!")
             elif "VisitComplete" in btl:
                 print("Complete visiting!")
@@ -258,13 +291,13 @@ class MainRun:
             if single_find("FACE_UP_LEFT"):
                 self.switch("ONE", "TWB")
             else:
-                if single_find("TWB"):
+                if single_find("TW"):
                     self.switch("TW", "ONEB")
 
             bts = find_button("Main")
             if "Guess" in bts:
                 print("Found Guess! Let's guess!")
-                # self.guess()
+                self.guess()
                 time.sleep(2)
                 continue
             elif "VisitMain" in bts:
@@ -274,16 +307,20 @@ class MainRun:
                 time.sleep(1)
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
+                click_at(center.x / self.sft, center.y / self.sft - 200)
                 if not self.find_cat_house():
-                    self.find_cat_house()
+                     click_at(center.x / self.sft, center.y / self.sft)
+                     time.sleep(1)
+                     click_at(center.x / self.sft, center.y / self.sft - 200)
+                     self.find_cat_house()
                 self.visiting()
                 time.sleep(1)
                 continue
             elif "Replace" in bts:
-                print("Found replacement! Take it!")
-                center = get_center("Replace", "Main")
-                click_at(center.x / self.sft, center.y / self.sft)
-                time.sleep(1)
+                print("Found replacement let's wait!")
+                #center = get_center("Replace", "Main")
+                #click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(5)
                 continue
             elif "Gift" in bts:
                 print("Need to thank the gift sender!")
@@ -318,7 +355,7 @@ class MainRun:
                 self.count += 1
                 print("Keep running! This is " + str(self.count) + " clicks")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
-                time.sleep(0.5)
+                time.sleep(4.5)
 
 
     def run(self):
@@ -326,7 +363,7 @@ class MainRun:
             bts = find_button("Main")
             if "Guess" in bts:
                 print("Found Guess! Let's guess!")
-                # self.guess()
+                self.guess()
                 time.sleep(2)
                 continue
             elif "VisitMain" in bts:
@@ -386,4 +423,4 @@ class MainRun:
 
 if __name__ == '__main__':
     r = MainRun(True)
-    r.switch("TW", "ONEB")
+    r.switch_run()
