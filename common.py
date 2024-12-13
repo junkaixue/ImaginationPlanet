@@ -18,7 +18,7 @@ main_map = {
     "Confirm": "pics/confirm.png",
 
     # Guess
-    # "Guess": "pics/guess.png",
+    "Guess": "pics/guess.png",
     # Temp hard code
     # "GuessL": "pics/guess_left.png",
     # "GuessR": "pics/guess_right.png",
@@ -74,6 +74,7 @@ single_find_map = {
     "CancelBuy": "pics/cancel_button.png",
     "UseTicket": "pics/use_ticket.png",
     "VisitBusy": "pics/visit_busy.png",
+    "OneMore": "pics/one_more.png",
 
     # Fight
     "TaskMain": "pics/task_main.png",
