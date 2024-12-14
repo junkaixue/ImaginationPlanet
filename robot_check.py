@@ -8,6 +8,7 @@ import time
 import numpy as np
 from collections import namedtuple
 import pyautogui
+from pytesseract import Output
 
 
 # Configure Tesseract executable path
@@ -43,6 +44,7 @@ def preprocess_image(image_path):
     image = cv2.imread(image_path)
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     _, binary = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY)
+    cv2.imwrite("lt.png", binary)
     return binary
 
 def screen_shot_by_area(my_region):
@@ -109,7 +111,7 @@ class RobotCheck:
                 time.sleep(5)
         loc_r = pyautogui.locateOnScreen(single_find_map["QReward"])
 
-        top_line = int(self.loc_p.top + 2 * self.loc_p.height)
+        top_line = int(self.loc_p.top + 2 * self.loc_p.height) - 20
         w_w = loc_r.left + loc_r.width - loc_w.left
         s_w = (loc_w.width - 2 * w_w) // 2
         self.answers.append(ScreenRegion(int(loc_w.left), top_line, int(w_w), int(loc_r.top - top_line)))
@@ -169,31 +171,6 @@ class RobotCheck:
             # print ("Screen shot area" + str(area))
             if self.use_easyocr(area, result, "tmp.png"):
                 return
-            processed_image = preprocess_image("tmp.png")
-            data = pytesseract.image_to_boxes(processed_image, config='-c tessedit_char_whitelist=0123456789')
-
-            # Image dimensions (needed to flip Y-axis for Tesseract coordinates)
-            image_height = area[3]
-
-            # Parse data and filter for digits
-            for line in data.splitlines():
-                char, x1, y1, x2, y2, _ = line.split()
-                if char.isdigit() and result == int(char):  # Check if the character is a digit
-                    print ("Find result by tesseract. result : " + char)
-                    # Convert coordinates to integers
-                    x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-
-                    # Calculate center in image coordinates
-                    center_x_image = (x1 + x2) / 2
-                    center_y_image = image_height - ((y1 + y2) / 2)  # Flip Y-axis
-
-                    # Map to screen coordinates
-                    center_x_screen = center_x_image + area[0]
-                    center_y_screen = center_y_image + area[1]
-                    print ("It locates at: " + str(center_x_screen) + " " + str(center_x_screen))
-                    click_at(center_x_screen, center_y_screen)
-                    return
-
             light_blue_handle()
             if self.use_easyocr(area, result, "lt.png"):
                 return
