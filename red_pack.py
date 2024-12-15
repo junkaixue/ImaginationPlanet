@@ -18,7 +18,7 @@ import random
 class RedPack:
     sft = 0.0
     count = 0
-    thankyou_texts = ["xie xie!", "3q", "duo xie hong bao!", "lao ban da qi!"]
+    thankyou_texts = ["xie xie!", "3q", "duo xie hong bao!", "xx"]
     now = 0
     timeout= 7200
     rb = None
