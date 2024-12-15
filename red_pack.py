@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-from pynput.keyboard import Controller
+from pynput.keyboard import Controller, Key
 import time
 from datetime import datetime, timedelta
 
@@ -104,7 +104,9 @@ class RedPack:
                 time.sleep(0.05) 
             time.sleep(0.5)
             print ("Click send")
-            center = get_center("SendText", "Single")
+            keyboard.press(Key.enter)
+            keyboard.release(Key.enter)
+            # center = get_center("SendText", "Single")
             # click_at(center.x / self.sft, center.y / self.sft)
             time.sleep(1)
         except:
@@ -112,5 +114,5 @@ class RedPack:
 
 if __name__ == '__main__': 
     r = RedPack(0)
-    r.get_red_pack()
+    r.send_thankyou()
 
