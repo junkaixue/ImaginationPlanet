@@ -114,5 +114,5 @@ class RedPack:
 
 if __name__ == '__main__': 
     r = RedPack(0)
-    r.send_thankyou()
+    r.get_red_pack()
 

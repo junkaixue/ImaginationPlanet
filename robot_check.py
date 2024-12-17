@@ -164,6 +164,8 @@ class RobotCheck:
         self.click_answer(result)
         center = get_center("QConfirm", "Single")
         click_at(center.x, center.y)
+        time.sleep(1)
+        click_at(center.x, center.y)
 
     def click_answer(self, result):
         for area in self.answers:
