@@ -15,7 +15,8 @@ class MainRun:
     rd = None
     is_switch = False
 
-    def __init__(self, skip_cat_grab, is_switch = False):
+    def __init__(self, skip_cat_grab, semi_auto = False, is_switch = False):
+        self.semi_auto = semi_auto
         self.sft = get_scaling_factor()
         self.is_switch = is_switch
         print ("Scaling factor : " + str(self.sft))
@@ -235,7 +236,8 @@ class MainRun:
         print("Exited card mode, start running...")
 
     def light_run(self):
-        self.long_click()
+        if not self.semi_auto:
+            self.long_click()
         while True:
             bts = find_button("Main")
             if "VisitMain" in bts:
@@ -278,7 +280,7 @@ class MainRun:
             elif single_find("PKG"):
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft + 100)
                 time.sleep(1)
-            elif simple_single_find("RunButton", "Main", 0.8):
+            elif not self.semi_auto and simple_single_find("RunButton", "Main", 0.8):
                 print ("Auto run stopped, resume it...")
                 self.long_click()
                 time.sleep(2)

@@ -24,6 +24,7 @@ if __name__ == "__main__":
     parser.add_argument("-s", "--switchrun", action='store_true', help="Switch run and visiting")
     parser.add_argument("-f", "--fight", action='store_true', help="Just fight")
     parser.add_argument("-sc", "--skipcat", action='store_true', help="Skip cat grab")
+    parser.add_argument("-sa", "--semiauto", action='store_true', help="Semiauto run")
     parser.add_argument("-c", "--combo", action='store_true', help="Comb of running + fighting + wait for red pack for 2 hours")
     
     args = parser.parse_args()
@@ -37,7 +38,7 @@ if __name__ == "__main__":
         content = "The run starts at: " + str(time) + "\n Takes " + str(
             datetime.datetime.now() - time) + "!\nTotal " + str(run.visits) + " visits\n"
     elif args.lightrun:
-        run = MainRun(args.skipcat)
+        run = MainRun(args.skipcat, args.semiauto)
         run.light_run()
         print("Total visits " + str(run.visits) + " times")
         content = "The run starts at: " + str(time) + "\n Takes " + str(
