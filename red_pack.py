@@ -51,8 +51,8 @@ class RedPack:
             elif simple_single_find("DiamRed", "Single", 0.8):
                 self.single_get("DiamRed")
             else:
-                print ("Nothing sleep 2 seconds")
-                time.sleep(2)
+                print ("Nothing sleep 1 seconds")
+                time.sleep(1)
         while single_find("MainBack"):
             print ("Get red pack finished")
             center = get_center("MainBack", "Single")
@@ -66,7 +66,7 @@ class RedPack:
         while simple_single_find(pk_name, "Single", 0.8):
             if simple_single_find("RobotDetect", "Single", 0.8):
                 if self.rb is None:
-                    self.rb = RobotCheck()
+                    self.rb = RobotCheck(self.sft)
                 self.rb.break_check()
             center = get_center_h(pk_name, "Single", 0.8)
             click_at(center.x / self.sft, center.y / self.sft)
@@ -77,14 +77,14 @@ class RedPack:
             print ("New Red Pack")
             center = get_center("TakeRed", "Single")
             click_at(center.x / self.sft, center.y / self.sft)
-            time.sleep(2)
+            time.sleep(1)
             click_at(center.x / self.sft, center.y / self.sft)
-            time.sleep(2)
+            time.sleep(1)
             thankyou = True
         while single_find("RedBack"):
             center = get_center("RedBack", "Single")
             click_at(center.x / self.sft, center.y / self.sft)
-            time.sleep(2)
+            time.sleep(1)
         print ("Got red_pack")
         self.count += 1
 
