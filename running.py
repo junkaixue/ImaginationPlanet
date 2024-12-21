@@ -187,6 +187,8 @@ class MainRun:
         retry = 10
         while not single_find("CardMode"):
             if single_find("RobotDetected"):
+                if self.rd is None:
+                    self.rd = RobotCheck(self.sft)
                 self.rd.break_check()
                 time.sleep(1)
                 continue
