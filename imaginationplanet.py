@@ -20,6 +20,7 @@ def combo(skipcat, switch):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("-r", "--run", action='store_true', help="Just regular run and visiting")
+    parser.add_argument("-rp", "--redpack", action='store_true', help="Get redpack")
     parser.add_argument("-l", "--lightrun", action='store_true', help="Light weight regular run and visiting")
     parser.add_argument("-s", "--switchrun", action='store_true', help="Switch run and visiting")
     parser.add_argument("-f", "--fight", action='store_true', help="Just fight")
@@ -56,6 +57,10 @@ if __name__ == "__main__":
         print("Total fights " + str(fight.total) + " times")
         content += "The run starts at: " + str(time) + "\n Total " + str(fight.total) + " fights\n"
     print("Complete single run for " + str(datetime.datetime.now() - time) + " seconds!")
+
+    if args.redpack:
+        rp = RedPack(0)
+        rp.get_red_pack()
 
     if args.combo:
         combo(args.skipcat, args.switchrun)
