@@ -20,14 +20,14 @@ class RedPack:
     count = 0
     thankyou_texts = ["xie xie!", "3q", "duo xie hong bao!", "xx"]
     now = 0
-    timeout= 7200
     rb = None
     
     
-    def __init__(self, sfto):
+    def __init__(self, sfto, timeout = 0):
         self.now = datetime.now()
         self.count = 0
         self.sft = sfto if sfto != 0 else get_scaling_factor()
+        self.timeout = timeout
         print ("start red pack waiting...")
 
     def get_red_pack(self):
@@ -36,7 +36,7 @@ class RedPack:
             click_at(center.x / self.sft, center.y / self.sft)
             time.sleep(2)
         print ("Entered chat")
-        while self.now + timedelta(seconds=self.timeout) >= datetime.now():
+        while self.timeout == 0 or self.now + timedelta(seconds=self.timeout) >= datetime.now():
             if single_find("TooManyRequest"):
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)

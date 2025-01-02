@@ -14,7 +14,7 @@ def combo(skipcat, switch):
     while True:
         r.light_run()
         f.fight()
-        irp = RedPack(1)
+        irp = RedPack(1, 7200)
         irp.get_red_pack()
 
 if __name__ == "__main__":
