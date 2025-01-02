@@ -115,7 +115,7 @@ resource_map = {
 
 but_list = {}
 
-no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "Confirm"]
+no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
@@ -160,19 +160,31 @@ def get_center_h(but, map_scope, th):
     Get the center coordinates of a button on the screen.
     """
     if but in no_cache_list or but not in coor_dict:  # Sometimes scroll can change the position
-        location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=th)
-        if location is not None:
-            coor_dict[but] = pyautogui.center(location)
-        else:
-            print(f"Warning: Button '{but}' not found on screen.")
-            return None
+        try:
+            location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=th)
+            if location is not None:
+                coor_dict[but] = pyautogui.center(location)
+            else:
+                print(f"Warning: Button '{but}' not found on screen.")
+                return None
+        except:
+            location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=th)
+            if location is not None:
+                coor_dict[but] = pyautogui.center(location)
+            else:
+                print(f"Warning: Button '{but}' not found on screen.")
+                return None
     return coor_dict.get(but)
 
 def get_all(but, map_scope):
     """
     Get all matching locations of a button on the screen.
     """
-    matches = list(pyautogui.locateAllOnScreen(resource_map[map_scope][but], confidence=0.8))
+    matches = []
+    try:
+        matches = list(pyautogui.locateAllOnScreen(resource_map[map_scope][but], confidence=0.8))
+    except:
+        matches = list(pyautogui.locateAllOnScreen(resource_map[map_scope][but]))
     coors = []
     prev = None
     for match in matches:
