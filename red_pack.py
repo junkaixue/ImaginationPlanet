@@ -63,14 +63,18 @@ class RedPack:
 
     def single_get(self, pk_name):
         thankyou = False
-        while simple_single_find(pk_name, "Single", 0.8):
-            if simple_single_find("RobotDetect", "Single", 0.8):
-                if self.rb is None:
-                    self.rb = RobotCheck(self.sft)
-                self.rb.break_check()
-            center = get_center_h(pk_name, "Single", 0.8)
-            click_at(center.x / self.sft, center.y / self.sft)
-            time.sleep(1)
+        try:
+            while simple_single_find(pk_name, "Single", 0.8):
+                if simple_single_find("RobotDetect", "Single", 0.8):
+                    if self.rb is None:
+                        self.rb = RobotCheck(self.sft)
+                    self.rb.break_check()
+                center = get_center_h(pk_name, "Single", 0.8)
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+        except:
+            print ("Too many chats!")
+            return
 
         if single_find("TakeRed"):
             self.count += 1

@@ -63,9 +63,13 @@ class MainRun:
         self.visits += 1
         for i in range(1, 2000):
             if single_find("Confirm"):
-                print ("Confirm of high rolling!")
-                center = get_center("Confirm", "Single")
-                click_at(center.x / self.sft, center.y / self.sft)
+                try:
+                    print ("Confirm of high rolling!")
+                    center = get_center("Confirm", "Single")
+                    click_at(center.x / self.sft, center.y / self.sft)
+                except:
+                    time.sleep(1)
+                    continue
                 time.sleep(1)
             btl = find_button("Visit")
             if "Roll" in btl:
@@ -218,6 +222,8 @@ class MainRun:
             # Can be busy sometime
             while single_find("VisitBusy"):
                 if single_find("RobotDetected"):
+                    if self.rd is None:
+                        self.rd = RobotCheck(self.sft)
                     self.rd.break_check()
                     time.sleep(1)
                     continue
