@@ -75,6 +75,7 @@ single_find_map = {
     "UseTicket": "pics/use_ticket.png",
     "VisitBusy": "pics/visit_busy.png",
     "OneMore": "pics/one_more.png",
+    "VisitGoHome": "pics/visit_go_home.png",
 
     # Fight
     "TaskMain": "pics/task_main.png",
@@ -103,6 +104,18 @@ single_find_map = {
     "QWD": "pics/question_wide.png",
     "QConfirm": "pics/question_confirm.png",
     "QReward": "pics/answer_reward.png",
+
+    # Boss fight
+    "BossDiam": "pics/boss_diamond.png",
+    "BossFree": "pics/boss_free.png",
+    "BossEnd": "pics/boss_no_ticket.png",
+    "BossWorld": "pics/boss_world.png",
+    "Group": "pics/group.png",
+    "BossGroup": "pics/group_boss.png",
+    "Challenge": "pics/challenge.png",
+    "GoHome": "pics/go_home.png",
+    "BossBack": "pics/boss_back.png",
+    "WGoHome": "pics/world_go_home.png",
 }
 
 resource_map = {

@@ -14,9 +14,11 @@ class MainRun:
     cg = 5
     rd = None
     is_switch = False
+    go_home = False
 
-    def __init__(self, skip_cat_grab, semi_auto = False, is_switch = False):
+    def __init__(self, skip_cat_grab, go_home, semi_auto = False, is_switch = False):
         self.semi_auto = semi_auto
+        self.go_home = go_home
         self.sft = get_scaling_factor()
         self.is_switch = is_switch
         print ("Scaling factor : " + str(self.sft))
@@ -56,9 +58,28 @@ class MainRun:
         time.sleep(1)
 
     def visiting(self):
-        time.sleep(2)
+        time.sleep(4)
         if not self.sc:
             self.grab_cat()
+        if self.go_home:
+            print ("Going home!")
+            while single_find("VisitGoHome"):
+                try:
+                    center = get_center("VisitGoHome", "Single")
+                    click_at(center.x / self.sft, center.y / self.sft)
+                    time.sleep(2)
+                    center = get_center("Confirm", "Single")
+                    click_at(center.x / self.sft, center.y / self.sft)
+                    time.sleep(2)
+                    if single_find("VisitBack"):
+                        center = get_center("VisitBack", "Single")
+                        click_at(center.x / self.sft, center.y / self.sft)
+                        time.sleep(2)
+                except:
+                    print("Super slow in loading animation")
+
+            print ("Go home directly")
+            return
         print ("In visiting mode!")
         self.visits += 1
         for i in range(1, 2000):

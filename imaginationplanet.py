@@ -1,6 +1,7 @@
 import argparse
 import datetime
 
+from boss_fight import BossFight
 from common import print
 from email_tools import send_email
 from fight import Fight
@@ -8,8 +9,8 @@ from running import MainRun
 from red_pack import RedPack
 
 
-def combo(skipcat, switch):
-    r = MainRun(skipcat, switch)
+def combo(skipcat, gohome, switch):
+    r = MainRun(skipcat, gohome, switch)
     f = Fight()
     while True:
         r.light_run()
@@ -26,6 +27,8 @@ if __name__ == "__main__":
     parser.add_argument("-f", "--fight", action='store_true', help="Just fight")
     parser.add_argument("-sc", "--skipcat", action='store_true', help="Skip cat grab")
     parser.add_argument("-sa", "--semiauto", action='store_true', help="Semiauto run")
+    parser.add_argument("-g", "--gohome", action='store_true', help="Go home directly")
+    parser.add_argument("-bf", "--bossfight", action='store_true', help="Combo boss fight")
     parser.add_argument("-c", "--combo", action='store_true', help="Comb of running + fighting + wait for red pack for 2 hours")
     
     args = parser.parse_args()
@@ -33,23 +36,27 @@ if __name__ == "__main__":
     content = ""
     time = datetime.datetime.now()
     if args.run:
-        run = MainRun(args.skipcat)
+        run = MainRun(args.skipcat, args.gohome)
         run.run()
         print("Total visits " + str(run.visits) + " times")
         content = "The run starts at: " + str(time) + "\n Takes " + str(
             datetime.datetime.now() - time) + "!\nTotal " + str(run.visits) + " visits\n"
     elif args.lightrun:
-        run = MainRun(args.skipcat, args.semiauto)
+        run = MainRun(args.skipcat, args.gohome, args.semiauto)
         run.light_run()
         print("Total visits " + str(run.visits) + " times")
         content = "The run starts at: " + str(time) + "\n Takes " + str(
             datetime.datetime.now() - time) + "!\nTotal " + str(run.visits) + " visits\n"
     elif args.switchrun:
-        run = MainRun(args.skipcat, True)
+        run = MainRun(args.skipcat, args.gohome, True)
         run.switch_run()
         print("Total visits " + str(run.visits) + " times")
         content = "The run starts at: " + str(time) + "\n Takes " + str(
             datetime.datetime.now() - time) + "!\nTotal " + str(run.visits) + " visits\n"
+
+    if args.bossfight:
+        bf = BossFight()
+        bf.combo_fight()
 
     if args.fight:
         fight = Fight()
@@ -63,5 +70,5 @@ if __name__ == "__main__":
         rp.get_red_pack()
 
     if args.combo:
-        combo(args.skipcat, args.switchrun)
+        combo(args.skipcat, args.gohome, args.switchrun)
     send_email(content)
