@@ -4,6 +4,9 @@ import time
 
 class BossFight:
     rb = None
+    """ Hard code offset due to gift picture keep changing, now only works for windows """
+    x_offset = 533 - 656
+    y_offset = 1008 - 1209
 
     def __init__(self, sft = 0):
         if sft == 0:
@@ -28,7 +31,7 @@ class BossFight:
     def combo_fight(self):
         self.go_to_fight(0)
         print("Finish world boss fight")
-        self.go_to_fight(1, True)
+        self.go_to_fight(1)
         print("Finish group boss fight")
 
     def go_to_fight(self, fight_type, use_diam = False):
@@ -62,11 +65,14 @@ class BossFight:
                 time.sleep(3)
                 print ("Find group main")
 
-            while single_find("BossGroup"):
-                center = get_center("BossGroup", "Single")
-                click_at(center.x / self.sft, center.y / self.sft - 50)
-                time.sleep(3)
-                print ("Find group boss")
+            while single_find("GBossMain"):
+                try:
+                    center = get_center("BossGroup", "Single")
+                    click_at(center.x / self.sft, center.y / self.sft - 50)
+                    time.sleep(2)
+                except:
+                    print("Try to click group boss but too many fliers")
+            print ("Find group boss")
 
             while single_find("Challenge"):
                 center = get_center("Challenge", "Single")
@@ -75,6 +81,7 @@ class BossFight:
                 print ("Find challenge button")
         print ("Start fight!")
         self.fight(use_diam)
+        self.collect_gift()
         self.exit_fight(fight_type)
 
     def exit_fight(self, fight_type):
@@ -133,7 +140,15 @@ class BossFight:
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(2)
 
+    def collect_gift(self):
+        collects = 0
+        while collects < 25:
+            click_at(self.rb.x + self.x_offset / self.sft, self.rb.y + self.y_offset / self.sft)
+            time.sleep(2)
+            collects += 1
+            print("Collect gift: " + str(collects) + "times")
+
 if __name__ == '__main__':
     b = BossFight(1)
-    b.go_to_fight(0)
+    b.go_to_fight(1)
 
