@@ -116,6 +116,8 @@ single_find_map = {
     "GoHome": "pics/go_home.png",
     "BossBack": "pics/boss_back.png",
     "WGoHome": "pics/world_go_home.png",
+    "BGift": "pics/boss_gift.png",
+    "GBossMain": "pics/group_boss_main.png",
 }
 
 resource_map = {
