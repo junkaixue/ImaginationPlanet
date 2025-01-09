@@ -1,3 +1,4 @@
+import time
 from datetime import datetime
 import pyautogui
 import cv2
@@ -5,6 +6,7 @@ import numpy as np
 import platform
 import ctypes
 
+from click import click_at
 
 coor_dict = {}
 
@@ -65,6 +67,7 @@ single_find_map = {
     "CardMode": "pics/card_mode.png",
     "CatCard": "pics/cat_card.png",
     "CatHouse": "pics/cat_house.png",
+    "CatHouseNiu": "pics/cat_house_niu.png",
     "VisitBack": "pics/visit_back.png",
     "Confirm": "pics/confirm.png",
     "BackVisit": "pics/back_normal_visit.png",
@@ -130,7 +133,7 @@ resource_map = {
 
 but_list = {}
 
-no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm"]
+no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm", "Challenge"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
@@ -258,3 +261,23 @@ def screen_shot():
     screen = np.array(screenshot)
     return cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
 
+def challenge_fight():
+    count = 1
+    while single_find("Challenge"):
+        print ("Chanllenge not pass, fight again!")
+        center = get_center("Challenge", "Single")
+        click_at(center.x, center.y)
+        time.sleep(3)
+        print("Start challenge fight " + str(count))
+        count += 1
+
+        while simple_single_find("FightSkip", "Single", 0.9):
+            print("Found Skip Button")
+            cc = get_center("FightSkip", "Single")
+            click_at(cc.x, cc.y)
+            time.sleep(3)
+    print ("Challenge fight " + str(count) + " then it succeeded!")
+
+
+if __name__ == "__main__":
+    challenge_fight()
