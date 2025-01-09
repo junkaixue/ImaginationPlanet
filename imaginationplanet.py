@@ -2,7 +2,7 @@ import argparse
 import datetime
 
 from boss_fight import BossFight
-from common import print
+from common import print, challenge_fight
 from email_tools import send_email
 from fight import Fight
 from running import MainRun
@@ -30,7 +30,10 @@ if __name__ == "__main__":
     parser.add_argument("-g", "--gohome", action='store_true', help="Go home directly")
     parser.add_argument("-bf", "--bossfight", action='store_true', help="Combo boss fight")
     parser.add_argument("-c", "--combo", action='store_true', help="Comb of running + fighting + wait for red pack for 2 hours")
-    
+    parser.add_argument("-cf", "--challengefight", action='store_true', help="Try to fight challenge until success")
+    parser.add_argument("-n", "--niu", action='store_true', help="Run for niu mode")
+
+
     args = parser.parse_args()
 
     content = ""
@@ -57,6 +60,9 @@ if __name__ == "__main__":
     if args.bossfight:
         bf = BossFight()
         bf.combo_fight()
+
+    if args.challengefight:
+        challenge_fight()
 
     if args.fight:
         fight = Fight()

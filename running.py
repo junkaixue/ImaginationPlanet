@@ -16,13 +16,14 @@ class MainRun:
     is_switch = False
     go_home = False
 
-    def __init__(self, skip_cat_grab, go_home, semi_auto = False, is_switch = False):
+    def __init__(self, skip_cat_grab, go_home, semi_auto = False, is_switch = False, is_niu = False):
         self.semi_auto = semi_auto
         self.go_home = go_home
         self.sft = get_scaling_factor()
         self.is_switch = is_switch
         print ("Scaling factor : " + str(self.sft))
         self.sc = skip_cat_grab
+        self.is_niu = is_niu
         found_rb = False
         retry = 50
         while not found_rb:
@@ -61,7 +62,7 @@ class MainRun:
         time.sleep(4)
         if not self.sc:
             self.grab_cat()
-        if self.go_home:
+        if self.go_home or self.is_niu:
             print ("Going home!")
             while single_find("VisitGoHome"):
                 try:
@@ -165,19 +166,20 @@ class MainRun:
     def find_cat_house(self):
         pyautogui.vscroll(100)  # Make it top
         scrolls = 50
+        cat_house_name = ("CatHouseNiu" if self.is_niu else "CatHouse" )
         while True:
             scrolls -= 1
             if scrolls == 0:
                 return False
-            elif not single_find("CatHouse"):
+            elif not single_find(cat_house_name):
                 pyautogui.vscroll(-100)
                 print ("Cat House not found, " + str(scrolls) + " retries remain")
                 continue
             else:
                 break
-        while single_find("CatHouse"):
+        while single_find(cat_house_name):
             try:
-                lc = get_center("CatHouse", "Single")
+                lc = get_center(cat_house_name, "Single")
                 vc = get_center("VisitButton", "Single")
                 # print(f"Image found at: {center.y}")
                 click_at((vc.x / self.sft), (lc.y / self.sft))
