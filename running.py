@@ -68,9 +68,11 @@ class MainRun:
                 try:
                     center = get_center("VisitGoHome", "Single")
                     click_at(center.x / self.sft, center.y / self.sft)
+                    print ("Clicked go home!")
                     time.sleep(2)
                     center = get_center("Confirm", "Single")
                     click_at(center.x / self.sft, center.y / self.sft)
+                    print("Clicked confirm button!")
                     time.sleep(2)
                     if single_find("VisitBack"):
                         center = get_center("VisitBack", "Single")
@@ -170,7 +172,7 @@ class MainRun:
         while True:
             scrolls -= 1
             if scrolls == 0:
-                return False
+                break
             elif not single_find(cat_house_name):
                 pyautogui.vscroll(-100)
                 print ("Cat House not found, " + str(scrolls) + " retries remain")
@@ -187,8 +189,11 @@ class MainRun:
                 time.sleep(1)
             except:
                 print ("Cat house already clicked")
-            
-                
+
+        if not single_find("VisitGoHome"):
+            print("Not in visiting main page, retry!")
+            time.sleep(3)
+            return False
         print ("Finish finding, go to visiting")
         return True
 
@@ -279,11 +284,10 @@ class MainRun:
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 click_at(center.x / self.sft, center.y / self.sft - 200)
-                if not self.find_cat_house():
-                     click_at(center.x / self.sft, center.y / self.sft)
-                     time.sleep(1)
-                     click_at(center.x / self.sft, center.y / self.sft - 200)
-                     self.find_cat_house()
+                while not self.find_cat_house():
+                    click_at(center.x / self.sft, center.y / self.sft)
+                    time.sleep(1)
+                    click_at(center.x / self.sft, center.y / self.sft - 200)
                 self.visiting()
                 time.sleep(1)
                 continue
