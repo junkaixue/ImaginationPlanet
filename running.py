@@ -24,6 +24,8 @@ class MainRun:
         print ("Scaling factor : " + str(self.sft))
         self.sc = skip_cat_grab
         self.is_niu = is_niu
+        self.back_visit = None
+        self.card_button = None
         found_rb = False
         retry = 50
         while not found_rb:
@@ -211,7 +213,12 @@ class MainRun:
                 time.sleep(1)
                 continue
             print("Card Button is not found!")
+            click_at(self.rb.x / self.sft, self.rb.y / self.sft)
             time.sleep(2)
+            if single_find("UseTicket"):
+                center = get_center("UseTicket", "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(2)
             retry -= 1
             if retry <= 0:
                 print("Retry runs out for card button found!")
@@ -224,9 +231,14 @@ class MainRun:
                 self.rd.break_check()
                 time.sleep(1)
                 continue
-            card_button = get_center("CardButton", "Single")
-            click_at(card_button.x / self.sft, card_button.y / self.sft)
-            print("Found card button at " + str(card_button.x / self.sft) + " " + str(card_button.y / self.sft))
+            while self.card_button is None:
+                try:
+                   self.card_button = get_center("CardButton", "Single")
+                except:
+                    print ("Card button not found")
+                    time.sleep(2)
+            click_at(self.card_button.x / self.sft, self.card_button.y / self.sft)
+            print("Found card button at " + str(self.card_button.x / self.sft) + " " + str(self.card_button.y / self.sft))
             time.sleep(1)
             click_at(self.rb.x / self.sft, self.rb.y / self.sft)
             time.sleep(1)
@@ -239,6 +251,8 @@ class MainRun:
         time.sleep(1)
         if single_find("CatCard"):
             if single_find("RobotDetected"):
+                if self.rd is None:
+                    self.rd = RobotCheck(self.sft)
                 self.rd.break_check()
                 time.sleep(1)
             cc = get_center("CatCard", "Single")
@@ -261,13 +275,20 @@ class MainRun:
                 time.sleep(1)
         while single_find("CardMode"):
             if single_find("RobotDetected"):
+                if self.rd is None:
+                    self.rd = RobotCheck(self.sft)
                 self.rd.break_check()
                 time.sleep(1)
                 continue
             click_at(self.rb.x / self.sft, self.rb.y / self.sft - 300)
             time.sleep(2)
-            bv = get_center("BackVisit", "Single")
-            click_at(bv.x / self.sft, bv.y / self.sft)
+            while self.back_visit is None:
+                try:
+                    self.back_visit = get_center("BackVisit", "Single")
+                except:
+                    print ("Back Visit not found")
+                    time.sleep(2)
+            click_at(self.back_visit.x / self.sft, self.back_visit.y / self.sft)
             time.sleep(1)
         print("Exited card mode, start running...")
 

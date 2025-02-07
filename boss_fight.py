@@ -8,7 +8,7 @@ class BossFight:
     x_offset = 533 - 656
     y_offset = 1008 - 1209
 
-    def __init__(self, sft = 0):
+    def __init__(self, sft = 1):
         if sft == 0:
             self.sft = get_scaling_factor()
         else:

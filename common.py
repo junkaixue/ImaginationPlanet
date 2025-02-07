@@ -121,6 +121,18 @@ single_find_map = {
     "WGoHome": "pics/world_go_home.png",
     "BGift": "pics/boss_gift.png",
     "GBossMain": "pics/group_boss_main.png",
+
+    # Star Pick
+    "StarPick": "pics/star/pick_up.png",
+    "Ship1": "pics/star/ship_1.png",
+    "Ship2": "pics/star/ship_2.png",
+    "Ship3": "pics/star/ship_3.png",
+    "Ship4": "pics/star/ship_4.png",
+    "ShipFree": "pics/star/ship_free.png",
+    "ShipList": "pics/star/ship_list.png",
+    "Star": "pics/star/star.png",
+    "ShipPage" : "pics/star/ship_list_page.png",
+    "CloseList" : "pics/star/close_ship_list.png",
 }
 
 resource_map = {
