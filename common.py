@@ -128,11 +128,22 @@ single_find_map = {
     "Ship2": "pics/star/ship_2.png",
     "Ship3": "pics/star/ship_3.png",
     "Ship4": "pics/star/ship_4.png",
+    "S1V": "pics/star/ship1_verify.png",
+    "S2V": "pics/star/ship2_verify.png",
+    "S3V": "pics/star/ship3_verify.png",
+    "S4V": "pics/star/ship4_verify.png",
     "ShipFree": "pics/star/ship_free.png",
     "ShipList": "pics/star/ship_list.png",
     "Star": "pics/star/star.png",
     "ShipPage" : "pics/star/ship_list_page.png",
     "CloseList" : "pics/star/close_ship_list.png",
+    "Shop": "pics/star/shop.png",
+    "Details": "pics/star/details.png",
+    "SConfirm": "pics/star/ship_confirm.png",
+    "SChat" : "pics/star/ship_chat.png",
+    "Bag": "pics/star/bag.png",
+    "Acc": "pics/star/acc.png",
+    "PPT": "pics/star/property.png",
 }
 
 resource_map = {
@@ -145,7 +156,7 @@ resource_map = {
 
 but_list = {}
 
-no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm", "Challenge"]
+no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm", "Challenge", "StarPick", "ShipFree",  "Star"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
