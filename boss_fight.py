@@ -31,7 +31,7 @@ class BossFight:
     def combo_fight(self):
         self.go_to_fight(0)
         print("Finish world boss fight")
-        self.go_to_fight(1)
+       # self.go_to_fight(1)
         print("Finish group boss fight")
 
     def go_to_fight(self, fight_type, use_diam = False):
