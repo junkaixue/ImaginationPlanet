@@ -15,7 +15,7 @@ from pytesseract import Output
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 ScreenRegion = namedtuple('ScreenRegion', ['left', 'top', 'width', 'height'])
-easy_reader = easyocr.Reader(['en'])
+easy_reader = easyocr.Reader(['en'], gpu=True)
 
 def light_blue_handle():
     return light_color_handle(np.array([90, 50, 50]), np.array([130, 255, 255]))
