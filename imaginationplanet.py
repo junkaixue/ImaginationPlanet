@@ -7,6 +7,7 @@ from email_tools import send_email
 from fight import Fight
 from running import MainRun
 from red_pack import RedPack
+from star_pick_up import StarPick
 
 
 def combo(skipcat, gohome, switch):
@@ -32,6 +33,8 @@ if __name__ == "__main__":
     parser.add_argument("-c", "--combo", action='store_true', help="Comb of running + fighting + wait for red pack for 2 hours")
     parser.add_argument("-cf", "--challengefight", action='store_true', help="Try to fight challenge until success")
     parser.add_argument("-n", "--niu", action='store_true', help="Run for niu mode")
+    parser.add_argument("-sp", "--starpick", action='store_true', help="Star picking")
+
 
 
     args = parser.parse_args()
@@ -77,4 +80,8 @@ if __name__ == "__main__":
 
     if args.combo:
         combo(args.skipcat, args.gohome, args.switchrun)
+
+    if args.starpick:
+        s = StarPick()
+        s.pick_up()
     send_email(content)
