@@ -141,7 +141,7 @@ single_find_map = {
     "Details": "pics/star/details.png",
     "SConfirm": "pics/star/ship_confirm.png",
     "SSConfirm": "pics/star/s_confirm.png",
-    "Disconnected" : "pics/disconnected.png",
+    "Disconnected" : "pics/star/disconnected.png",
     "SChat" : "pics/star/ship_chat.png",
     "Bag": "pics/star/bag.png",
     "Acc": "pics/star/acc.png",
@@ -149,6 +149,8 @@ single_find_map = {
     "SendShip" : "pics/star/send_ship.png",
     "SBack" : "pics/star/go_back.png",
     "SEntry": "pics/star/star_entry.png",
+    "75": "pics/star/75.png",
+    "75V": "pics/star/75_verify.png",
 }
 
 resource_map = {
