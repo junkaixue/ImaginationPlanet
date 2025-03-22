@@ -1,15 +1,16 @@
 import cv2
 import numpy as np
 import pyautogui
-import Quartz
-from click import click_at
 
 offset_x = 181
 offset_y = 125
+
+
 def map_coordinates(detected_x, detected_y, scaling_factor):
     adjusted_x = int(detected_x / scaling_factor)
     adjusted_y = int(detected_y / scaling_factor)
     return adjusted_x, adjusted_y
+
 
 # Load the button templates (for multiple buttons)
 templates = [
@@ -45,11 +46,11 @@ for template_path, button_name in templates:
     for detected_x, detected_y in zip(*loc[::-1]):
         center_x = detected_x + w // 2
         center_y = detected_y + h // 2
-        #print(f"{button_name} detected at: ({center_x}, {center_y})")
+        # print(f"{button_name} detected at: ({center_x}, {center_y})")
 
         # Map to logical coordinates
         final_x, final_y = map_coordinates(center_x, center_y, scaling_factor)
         print(f"{button_name} mapped coordinates: ({final_x - offset_x}, {final_y - offset_y})")
 
         # Click at the mapped coordinates
-        #print (final_x - offset_x, final_y - offset_y)
+        # print (final_x - offset_x, final_y - offset_y)

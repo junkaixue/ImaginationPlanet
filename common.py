@@ -1,10 +1,11 @@
+import ctypes
+import platform
 import time
 from datetime import datetime
-import pyautogui
+
 import cv2
 import numpy as np
-import platform
-import ctypes
+import pyautogui
 
 from click import click_at
 
@@ -135,22 +136,34 @@ single_find_map = {
     "ShipFree": "pics/star/ship_free.png",
     "ShipList": "pics/star/ship_list.png",
     "Star": "pics/star/star.png",
-    "ShipPage" : "pics/star/ship_list_page.png",
-    "CloseList" : "pics/star/close_ship_list.png",
+    "ShipPage": "pics/star/ship_list_page.png",
+    "CloseList": "pics/star/close_ship_list.png",
     "Shop": "pics/star/shop.png",
     "Details": "pics/star/details.png",
     "SConfirm": "pics/star/ship_confirm.png",
     "SSConfirm": "pics/star/s_confirm.png",
-    "Disconnected" : "pics/star/disconnected.png",
-    "SChat" : "pics/star/ship_chat.png",
+    "Disconnected": "pics/star/disconnected.png",
+    "SChat": "pics/star/ship_chat.png",
     "Bag": "pics/star/bag.png",
     "Acc": "pics/star/acc.png",
     "PPT": "pics/star/property.png",
-    "SendShip" : "pics/star/send_ship.png",
-    "SBack" : "pics/star/go_back.png",
+    "SendShip": "pics/star/send_ship.png",
+    "SBack": "pics/star/go_back.png",
     "SEntry": "pics/star/star_entry.png",
     "75": "pics/star/75.png",
     "75V": "pics/star/75_verify.png",
+
+    # Tower Fight
+    "TEntry": "pics/tower/entry.png",
+    "TFight": "pics/tower/fight_button.png",
+    "TNext": "pics/tower/next_page.png",
+    "TSN": "pics/tower/shanliu.png",
+    "TConfirm": "pics/tower/tconfirm.png",
+    "TTicket": "pics/tower/ticket.png",
+    "TClick": "pics/tower/tclick.png",
+    "TComplete": "pics/tower/tcomplete.png",
+    "TBuy": "pics/tower/tbuy.png",
+    "TExit": "pics/tower/texit.png",
 }
 
 resource_map = {
@@ -163,11 +176,13 @@ resource_map = {
 
 but_list = {}
 
-no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm", "Challenge", "StarPick", "ShipFree",  "Star"]
+no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm", "Challenge", "StarPick",
+                 "ShipFree", "Star"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
 original_print = print
+
 
 def print(*args, **kwargs):
     """
@@ -193,8 +208,10 @@ def get_scaling_factor():
     else:
         return 1  # Default scaling factor for other systems
 
+
 def get_center(but, map_scope):
     return get_center_h(but, map_scope, 0.8)
+
 
 def simple_single_find(but, map_scope, th):
     try:
@@ -202,7 +219,8 @@ def simple_single_find(but, map_scope, th):
         return True
     except:
         return False
-                                     
+
+
 def get_center_h(but, map_scope, th):
     """
     Get the center coordinates of a button on the screen.
@@ -224,6 +242,7 @@ def get_center_h(but, map_scope, th):
                 return None
     return coor_dict.get(but)
 
+
 def get_all(but, map_scope):
     """
     Get all matching locations of a button on the screen.
@@ -241,6 +260,7 @@ def get_all(but, map_scope):
             coors.append(pyautogui.center(match))
     return coors
 
+
 def get_all_with_cache(but, map_scope):
     """
     Get all cached locations of a button on the screen.
@@ -248,6 +268,7 @@ def get_all_with_cache(but, map_scope):
     if but not in but_list:
         but_list[but] = get_all(but, map_scope)
     return but_list[but]
+
 
 def find_button(map_scope):
     """
@@ -260,11 +281,13 @@ def find_button(map_scope):
             bts.append(button_name)
     return bts
 
+
 def single_find(but):
     """
     Find a single button using its pre-defined template path.
     """
     return single_find_with_path(single_find_map[but], None, 0.8)
+
 
 def single_find_with_path(but_path, gs, th):
     """
@@ -283,6 +306,7 @@ def single_find_with_path(but_path, gs, th):
         return True
     return False
 
+
 def screen_shot():
     """
     Take a screenshot and convert it to a grayscale image for template matching.
@@ -291,10 +315,11 @@ def screen_shot():
     screen = np.array(screenshot)
     return cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
 
+
 def challenge_fight():
     count = 1
     while single_find("Challenge"):
-        print ("Chanllenge not pass, fight again!")
+        print("Chanllenge not pass, fight again!")
         center = get_center("Challenge", "Single")
         click_at(center.x, center.y)
         time.sleep(3)
@@ -306,7 +331,7 @@ def challenge_fight():
             cc = get_center("FightSkip", "Single")
             click_at(cc.x, cc.y)
             time.sleep(3)
-    print ("Challenge fight " + str(count) + " then it succeeded!")
+    print("Challenge fight " + str(count) + " then it succeeded!")
 
 
 if __name__ == "__main__":

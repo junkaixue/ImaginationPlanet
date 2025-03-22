@@ -1,5 +1,6 @@
 import pyautogui
 
+
 def click_at(x, y):
     """
     Simulate a mouse click at the specified (x, y) coordinates.
@@ -8,6 +9,7 @@ def click_at(x, y):
     """
     pyautogui.click(x, y)
 
+
 def move_to(x, y):
     """
     Move the mouse pointer to the specified (x, y) coordinates.
@@ -15,4 +17,3 @@ def move_to(x, y):
     :param y: Vertical coordinate (int)
     """
     pyautogui.moveTo(x, y)
-
