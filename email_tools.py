@@ -1,5 +1,6 @@
-import yagmail
 import datetime
+
+import yagmail
 
 email_info_path = 'email.info'
 

@@ -1,6 +1,3 @@
-import time
-
-from click import click_at
 from common import *
 
 
@@ -30,8 +27,6 @@ class Fight:
                     except:
                         continue
 
-
-
     def start_fight(self):
         sk = None
         while not self.check_ticket_runout():
@@ -42,7 +37,7 @@ class Fight:
                     click_at(center.x / self.sft, center.y / self.sft)
                     print("Find fight entry and clicked it.")
                 time.sleep(2)
-                print ("Button not found")
+                print("Button not found")
             ft = get_all("FightButton", "Fight")
             print("Total: " + str(len(ft)) + " slots")
             for b in ft:
@@ -54,7 +49,7 @@ class Fight:
                 time.sleep(12)
                 if sk is None:
                     while not single_find("FightSkip"):
-                        print ("Skip button is not found!")
+                        print("Skip button is not found!")
                         time.sleep(2)
                     sk = get_center("FightSkip", self.map_scope)
                 click_at(sk.x / self.sft, sk.y / self.sft)

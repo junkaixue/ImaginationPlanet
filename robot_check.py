@@ -1,15 +1,14 @@
+import time
+from collections import namedtuple
+
 import cv2
-import pytesseract
 import easyocr
+import numpy as np
+import pyautogui
+import pytesseract
 
 from click import click_at
 from common import get_center, single_find_map
-import time
-import numpy as np
-from collections import namedtuple
-import pyautogui
-from pytesseract import Output
-
 
 # Configure Tesseract executable path
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -17,11 +16,14 @@ pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tessera
 ScreenRegion = namedtuple('ScreenRegion', ['left', 'top', 'width', 'height'])
 easy_reader = easyocr.Reader(['en'])
 
+
 def light_blue_handle():
     return light_color_handle(np.array([90, 50, 50]), np.array([130, 255, 255]))
 
+
 def light_orange_handle():
     return light_color_handle(np.array([0, 100, 100]), np.array([20, 255, 255]))
+
 
 def light_color_handle(lower, upper):
     image = cv2.imread("tmp.png")
@@ -37,6 +39,7 @@ def light_color_handle(lower, upper):
     # Save the isolated image
     cv2.imwrite("lt.png", isolated_blue)
 
+
 def preprocess_image(image_path):
     """
     Preprocess the image for Tesseract (grayscale and binary thresholding).
@@ -47,10 +50,12 @@ def preprocess_image(image_path):
     cv2.imwrite("lt.png", binary)
     return binary
 
+
 def screen_shot_by_area(my_region):
     # Pass the region to pyautogui
     screenshot = pyautogui.screenshot(region=my_region)
     screenshot.save("tmp.png")
+
 
 def run_easyocr(image_path):
     """
@@ -73,6 +78,7 @@ class RobotCheck:
     result = 0
     answers = []
     sft = 0
+
     def __init__(self, sft):
         self.sft = sft
         self.compute_pos()
@@ -94,12 +100,12 @@ class RobotCheck:
                 print("Equal not found")
         print("Equal found")
         """
-        
+
         # left and right
-        #c_len = self.loc_e.left - self.loc_p.left - self.loc_p.width
-        #c_len += 10
-        #self.left_add = ScreenRegion(int(self.loc_p.left - c_len), int(self.loc_e.top), int(c_len) , int(self.loc_e.height))
-        #self.right_add = ScreenRegion(int(self.loc_p.left + self.loc_p.width), int(self.loc_e.top), int(c_len), int(self.loc_e.height))
+        # c_len = self.loc_e.left - self.loc_p.left - self.loc_p.width
+        # c_len += 10
+        # self.left_add = ScreenRegion(int(self.loc_p.left - c_len), int(self.loc_e.top), int(c_len) , int(self.loc_e.height))
+        # self.right_add = ScreenRegion(int(self.loc_p.left + self.loc_p.width), int(self.loc_e.top), int(c_len), int(self.loc_e.height))
 
         # answers
         # gift can block searching
@@ -117,8 +123,8 @@ class RobotCheck:
         self.answers.append(ScreenRegion(int(loc_w.left), top_line, int(w_w), int(loc_r.top - top_line)))
         self.answers.append(ScreenRegion(int(loc_w.left + w_w), top_line, int(s_w), int(loc_r.top - top_line)))
         self.answers.append(ScreenRegion(int(loc_w.left + w_w + s_w), top_line, int(s_w), int(loc_r.top - top_line)))
-        self.answers.append(ScreenRegion(int(loc_w.left + w_w + 2 * s_w), top_line, int(s_w), int(loc_r.top - top_line)))
-
+        self.answers.append(
+            ScreenRegion(int(loc_w.left + w_w + 2 * s_w), top_line, int(s_w), int(loc_r.top - top_line)))
 
     def get_add_numbers(self, screen_region):
         screen_shot_by_area(screen_region)
@@ -150,17 +156,18 @@ class RobotCheck:
         result = 0
         # loc_tt = ScreenRegion(int(self.loc_e.left - 4 * self.loc_p.width), int(self.loc_e.top), int(4 * self.loc_p.width),
         #                      int(self.loc_e.height))
-        loc_tt = ScreenRegion(int(self.loc_p.left - 2 * self.loc_p.width), int(self.loc_p.top), int(3.9 * self.loc_p.width),
+        loc_tt = ScreenRegion(int(self.loc_p.left - 2 * self.loc_p.width), int(self.loc_p.top),
+                              int(3.9 * self.loc_p.width),
                               int(self.loc_p.height))
         screen_shot_by_area(loc_tt)
         results = easy_reader.readtext("tmp.png")
         if len(results) > 1 or '+' not in results[0][1]:
-            print ("Result is not found")
+            print("Result is not found")
             return
         d = results[0][1].split('+')
         result += int(d[0])
         result += int(d[1])
-        print ("Computed result : " + str(result))
+        print("Computed result : " + str(result))
         self.click_answer(result)
         center = get_center("QConfirm", "Single")
         click_at(center.x, center.y)
@@ -181,10 +188,6 @@ class RobotCheck:
                 return
 
 
-
-
-
 if __name__ == "__main__":
     r = RobotCheck(1)
     r.break_check()
-

@@ -1,15 +1,16 @@
-from common import *
 import time
 from collections import namedtuple
-import pyautogui
-import cmath
 
+import pyautogui
+
+from common import *
 from robot_check import RobotCheck
 
 Point = namedtuple('Point', ['x', 'y'])
 
+
 class StarPick:
-    ships = {"Ship1" : 0, "Ship2" : 1, "Ship3" : 2, "Ship4" : 3}
+    ships = {"Ship1": 0, "Ship2": 1, "Ship3": 2, "Ship4": 3}
     ships_list = ["Ship1", "Ship2", "Ship3", "Ship4"]
     verify_list = ["S1V", "S2V", "S3V", "S4V"]
     visiting = {}
@@ -27,10 +28,10 @@ class StarPick:
     top_line = 0
     fails = 0
     rb = None
+    refresh_time = 0
+    refresh_period = 1200
 
-
-
-    def __init__(self, sft = 0, debug = False):
+    def __init__(self, sft=0, debug=False):
 
         if sft == 0:
             self.sft = get_scaling_factor()
@@ -45,16 +46,16 @@ class StarPick:
                 self.click_point = Point((loc.left + loc.width) / self.sft, (loc.top - 20) / self.sft)
                 self.click_start = Point(loc.left / self.sft, (loc.top - 20) / self.sft)
                 loc = pyautogui.locateOnScreen(single_find_map["SChat"])
-                print ("Found Click")
+                print("Found Click")
                 self.bottom_line = (loc.top + loc.height) / self.sft + 50
-                print ("Found bottom line")
+                print("Found bottom line")
                 self.top_line = self.click_point.y - 200
-                print ("BT : " + str(self.bottom_line))
+                print("BT : " + str(self.bottom_line))
                 print("TO : " + str(self.top_line))
                 completed = True
             except:
                 print("Cannot find click point")
-
+        self.refresh_time = time.time()
 
     def get_send_coo(self):
         sp_cc = []
@@ -94,21 +95,21 @@ class StarPick:
             return False
 
         if len(self.free) == 0:
-            print ("No free ships!")
+            print("No free ships!")
             return True
         # find left top
         pyautogui.moveTo(self.click_start.x / self.sft, self.click_start.y / self.sft)
-        for i in range (0, 10):
+        for i in range(0, 10):
             pyautogui.vscroll(200)
-        for i in range (0, 5):
+        for i in range(0, 5):
             pyautogui.moveTo(self.click_start.x / self.sft, self.click_start.y / self.sft)
             self.scroll_start(6)
             time.sleep(1)
 
         print("Get top left corner, start scan")
         block_index = 0
-        for i in range (0, 2):
-            for j in range (0, 3):
+        for i in range(0, 3):
+            for j in range(0, 4):
                 if len(self.free) == 0:
                     return True
 
@@ -138,17 +139,18 @@ class StarPick:
             print("No stars in this area for block: " + str(block_index))
             return
         for star in stars:
-            print (str(star.x) + "," + str(star.y))
+            print(str(star.x) + "," + str(star.y))
 
         if len(stars) == 0:
             return
 
         to_assign = min(len(stars), len(self.free))
         if to_assign > 0:
-            print ("To set to center position")
+            print("To set to center position")
             reset_index = 0
             while reset_index < to_assign:
-                if stars[reset_index].y / self.sft <= self.bottom_line or stars[reset_index].y / self.sft >= self.top_line:
+                if stars[reset_index].y / self.sft <= self.bottom_line or stars[
+                    reset_index].y / self.sft >= self.top_line:
                     reset_index += 1
                     continue
                 else:
@@ -168,7 +170,8 @@ class StarPick:
 
         nstars = []
         for star in stars:
-            if star.y / self.sft <= self.bottom_line or star.y / self.sft >= self.top_line or (round(star.x / 100) * 100 + round(star.y / 100)) in self.visiting[block_index].keys():
+            if star.y / self.sft <= self.bottom_line or star.y / self.sft >= self.top_line or (
+                    round(star.x / 100) * 100 + round(star.y / 100)) in self.visiting[block_index].keys():
                 continue
             nstars.append(star)
         stars = nstars
@@ -178,12 +181,12 @@ class StarPick:
         for i in range(to_assign):
             picks = 5
             while not single_find("StarPick") and picks > 0:
-                print ("Picking star...")
+                print("Picking star...")
                 picks -= 1
                 click_at(stars[i].x / self.sft, stars[i].y / self.sft)
                 time.sleep(2)
             if picks == 0:
-                print ("Failed to pick star")
+                print("Failed to pick star")
                 return
             picks = 5
             while single_find("StarPick") and picks > 0 and not single_find("SendShip"):
@@ -193,29 +196,29 @@ class StarPick:
                 time.sleep(2)
                 picks -= 1
             if picks == 0:
-                print ("Failed to click star")
+                print("Failed to click star")
                 return
             if len(self.send_coo) == 0:
-                print ("Get send coo")
+                print("Get send coo")
                 self.get_send_coo()
             time.sleep(2)
             ship = self.free.pop()
             index = self.ships[ship]
             while single_find("Details"):
                 click_at(self.send_coo[index].x / self.sft, self.send_coo[index].y / self.sft)
-                print ("Send ship " + ship)
+                print("Send ship " + ship)
                 time.sleep(2)
             if single_find("SConfirm"):
-                print ("Need to buy tickets")
+                print("Need to buy tickets")
                 while single_find("SConfirm"):
-                    print ("Click Confirm buying tickets")
+                    print("Click Confirm buying tickets")
                     try:
                         loc = pyautogui.locateOnScreen(single_find_map["SConfirm"])
                         click_at((loc.left + loc.width * 0.75) / self.sft, (loc.top + loc.height + 40) / self.sft)
                         time.sleep(1)
                     except:
                         print("Failed to locate confirm")
-                print ("Brought 4 tickets, no tickets")
+                print("Brought 4 tickets, no tickets")
                 click_at(self.click_point.x / self.sft, self.click_point.y / self.sft)
                 picks = 5
                 while not single_find("StarPick") and picks > 0:
@@ -237,7 +240,8 @@ class StarPick:
                 while single_find("Details"):
                     click_at(self.send_coo[index].x / self.sft, self.send_coo[index].y / self.sft)
                     time.sleep(2)
-            print ("Send ship " + ship + " with block index " + str(block_index) + " coords " + str(round(stars[i].x / 100) * 100 + round(stars[i].y / 100)))
+            print("Send ship " + ship + " with block index " + str(block_index) + " coords " + str(
+                round(stars[i].x / 100) * 100 + round(stars[i].y / 100)))
             self.visiting[block_index][round(stars[i].x / 100) * 100 + round(stars[i].y / 100)] = ship
             self.visit_ship[ship] = block_index
 
@@ -255,7 +259,7 @@ class StarPick:
             center = get_center("ShipList", "Single")
             click_at(center.x / self.sft, center.y / self.sft)
             time.sleep(1)
-            print ("Clicked the ship list")
+            print("Clicked the ship list")
             tries -= 1
         if tries == 0:
             return False
@@ -285,10 +289,10 @@ class StarPick:
                 return False
             print("Check ship: " + ship)
             if single_find("ShipFree"):
-                print ("Ship " + ship + " is free")
+                print("Ship " + ship + " is free")
                 self.free.add(ship)
-                if ship in self.visit_ship.keys ():
-                    print ("Block index: " + str(self.visit_ship[ship]))
+                if ship in self.visit_ship.keys():
+                    print("Block index: " + str(self.visit_ship[ship]))
                     indx = -1
                     for index in self.visiting[self.visit_ship[ship]].keys():
                         if self.visiting[self.visit_ship[ship]][index] == ship:
@@ -343,14 +347,15 @@ class StarPick:
             time.sleep(2)
         if picks == 0:
             print("Failed to reenter")
+        self.refresh_time = time.time()
 
-        picks = 5
-        while not single_find("75V") and picks > 0:
-            center = get_center("75", "Single")
-            click_at(center.x / self.sft, center.y / self.sft)
-            print("Clicking click 75% button")
-            picks -= 1
-            time.sleep(2)
+        # picks = 5
+        # while not single_find("75V") and picks > 0:
+        #     center = get_center("75", "Single")
+        #     click_at(center.x / self.sft, center.y / self.sft)
+        #     print("Clicking click 75% button")
+        #     picks -= 1
+        #     time.sleep(2)
 
     def pick_up(self):
         time_wait = 2 * 60
@@ -362,7 +367,7 @@ class StarPick:
                 time.sleep(1)
             click_at(self.click_start.x / self.sft, self.click_start.y / self.sft)
             self.rounds += 1
-            if self.fails >= 5:
+            if time.time() >= self.refresh_time + self.refresh_period or self.fails >= 5:
                 try:
                     self.reenter()
                 except:
@@ -375,6 +380,7 @@ class StarPick:
                 self.fails = 0
             print("Finish round" + str(self.rounds) + ". Now sleep for " + str(time_wait) + " seconds")
             time.sleep(time_wait)
+
 
 if __name__ == "__main__":
     s = StarPick()
