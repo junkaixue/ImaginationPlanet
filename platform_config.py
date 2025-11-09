@@ -22,10 +22,10 @@ def get_image_path(filename):
     Get the full path to an image file based on the current platform.
     
     Args:
-        filename: Just the filename (e.g., "throwbutton.png")
+        filename: Just the filename or path with subdirectory (e.g., "throwbutton.png" or "star/ship_1.png")
     
     Returns:
-        Full path to the image (e.g., "pics/mac/throwbutton.png")
+        Full path to the image (e.g., "pics/mac/throwbutton.png" or "pics/mac/star/ship_1.png")
     """
     return os.path.join(IMAGE_DIR, filename)
 

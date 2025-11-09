@@ -8,6 +8,7 @@ from fight import Fight
 from red_pack import RedPack
 from running import MainRun
 from star_pick_up import StarPick
+from black_market_finder import BlackMarketFinder
 
 
 def combo(skipcat, gohome, switch):
@@ -36,6 +37,7 @@ if __name__ == "__main__":
     parser.add_argument("-cf", "--challengefight", action='store_true', help="Try to fight challenge until success")
     parser.add_argument("-n", "--niu", action='store_true', help="Run for niu mode")
     parser.add_argument("-sp", "--starpick", action='store_true', help="Star picking")
+    parser.add_argument("-bm", "--blackmarket", action='store_true', help="Find black market")
 
     args = parser.parse_args()
 
@@ -84,4 +86,9 @@ if __name__ == "__main__":
     if args.starpick:
         s = StarPick()
         s.pick_up()
+    
+    if args.blackmarket:
+        bm = BlackMarketFinder()
+        bm.find_black_market()
+    
     send_email(content)
