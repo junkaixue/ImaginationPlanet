@@ -1,0 +1,53 @@
+ImaginationPlanet/
+│
+├── 🆕 REFACTORING DOCUMENTATION
+│   ├── REFACTORING_COMPLETE.md        ⭐ Start here - Summary
+│   ├── MIGRATION_GUIDE.md             📖 Step-by-step guide
+│   ├── CHECKLIST.md                   ✅ Action items
+│   ├── BEFORE_AFTER_COMPARISON.md     📊 Code comparisons
+│   └── REFACTORING_SUMMARY.md         🔧 Technical details
+│
+├── 🆕 CORE PLATFORM SUPPORT
+│   └── platform_config.py             🎯 Auto-detect OS & image paths
+│
+├── ✅ UNIFIED CODE (Modified)
+│   ├── common.py                      🔄 Merged (was common.py + common_mac.py)
+│   ├── click.py                       🔄 Merged (was click.py + click_mac.py)
+│   └── README.md                      📝 Updated with platform docs
+│
+├── ⚠️  OBSOLETE FILES (Can delete)
+│   ├── common_mac.py                  ❌ Functionality now in common.py
+│   └── click_mac.py                   ❌ Functionality now in click.py
+│
+├── 🧪 HELPER SCRIPTS
+│   ├── test_platform.py               ✓ Verify refactoring
+│   └── copy_missing_mac_images.py     ✓ Image setup helper
+│
+├── 🎮 GAME AUTOMATION (Unchanged)
+│   ├── imaginationplanet.py           Main entry point
+│   ├── running.py                     Main run logic
+│   ├── fight.py                       Fighting automation
+│   ├── red_pack.py                    Red pack automation
+│   ├── robot_check.py                 Robot verification
+│   └── email_tools.py                 Email notifications
+│
+├── 🖼️  IMAGES - WINDOWS (Default)
+│   └── pics/
+│       ├── throwbutton.png
+│       ├── fight_button.png
+│       └── ... (58 PNG files)
+│
+├── 🍎 IMAGES - MAC (Platform-specific)
+│   └── pics/mac/
+│       ├── throwbutton.png            ✅ Mac-specific
+│       ├── fight_button.png           ✅ Mac-specific
+│       ├── cat_house.png              ✅ Mac-specific
+│       ├── ... (28 more Mac screenshots)
+│       ├── answer_reward.png          ⚠️  Copied from Windows
+│       ├── chat.png                   ⚠️  Copied from Windows
+│       └── ... (28 more placeholders to replace)
+│
+└── 📦 CONFIGURATION
+    ├── requirements.txt               Python packages (Windows)
+    ├── requirements_mac.txt           Python packages (Mac)
+    └── .gitignore                     Git ignore rules
