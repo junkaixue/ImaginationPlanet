@@ -5,6 +5,8 @@
 ImaginationPlanet Automation is a Python-based tool designed to automate specific tasks within the ImaginationPlanet
 game. This script facilitates routine operations, enhancing efficiency and user experience.
 
+**Cross-Platform Support:** The project automatically detects your operating system (Windows or macOS) and uses the appropriate image templates and system APIs for mouse control.
+
 ## Prerequisites
 
 Before running the script, ensure your environment meets the following requirements:
@@ -76,6 +78,30 @@ The script offers two primary modes of operation:
 4. **Run the Script:**
 
    Choose the desired mode of operation as described in the [Usage](#usage) section.
+
+## Platform-Specific Configuration
+
+The project uses platform-specific image templates for accurate game element detection:
+
+- **Windows:** Image templates are stored in `pics/` directory (default)
+- **macOS:** Image templates are stored in `pics/mac/` directory
+
+The platform is automatically detected at runtime. No manual configuration is needed - the correct image directory is selected based on your operating system.
+
+### Image Directory Structure
+
+```
+pics/                  # Windows images (default)
+├── throwbutton.png
+├── fight_button.png
+└── ...
+pics/mac/              # macOS-specific images
+├── throwbutton.png
+├── fight_button.png
+└── ...
+```
+
+**Note:** If you're maintaining images for both platforms, ensure both directories contain all required image files with identical filenames.
 
 ## Contributing
 
