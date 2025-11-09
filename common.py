@@ -172,6 +172,9 @@ single_find_map = {
     "TComplete": get_image_path("tower/tcomplete.png"),
     "TBuy": get_image_path("tower/tbuy.png"),
     "TExit": get_image_path("tower/texit.png"),
+    
+    # Black Market (part of star feature)
+    "BlackMarket": get_image_path("star/black_market.png"),
 }
 
 resource_map = {
@@ -185,7 +188,7 @@ resource_map = {
 but_list = {}
 
 no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm", "Challenge", "StarPick",
-                 "ShipFree", "Star"]
+                 "ShipFree", "Star", "BlackMarket"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
@@ -235,7 +238,7 @@ def get_scaling_factor():
 
 
 def get_center(but, map_scope):
-    return get_center_h(but, map_scope, 0.8)
+    return get_center_h(but, map_scope, 0.6)
 
 
 def simple_single_find(but, map_scope, th):
