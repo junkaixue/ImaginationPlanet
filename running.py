@@ -1,3 +1,7 @@
+import time
+import platform
+
+from click import *
 from common import *
 from robot_check import RobotCheck
 
@@ -12,15 +16,21 @@ class MainRun:
     rd = None
     is_switch = False
     go_home = False
+    is_mac = platform.system() == "Darwin"
 
     def __init__(self, skip_cat_grab, go_home, semi_auto=False, is_switch=False, is_niu=False):
         self.semi_auto = semi_auto
         self.go_home = go_home
         self.sft = get_scaling_factor()
         self.is_switch = is_switch
+        self.is_niu = is_niu
+        
+        # Mac-specific optimizations
+        if self.is_mac:
+            self.cg = 10  # More cat grabs on Mac
+        
         print("Scaling factor : " + str(self.sft))
         self.sc = skip_cat_grab
-        self.is_niu = is_niu
         self.back_visit = None
         self.card_button = None
         found_rb = False
@@ -36,11 +46,16 @@ class MainRun:
                     print("No run button, stop!")
                     exit(0)
                 time.sleep(1)
+        
+        # Mac uses scaling factor of 1
+        if self.is_mac:
+            self.sft = 1
+        
         print("Found the Run Button!")
 
     def long_click(self):
         # Move to the position (if necessary)
-        pyautogui.moveTo(self.rb.x, self.rb.y)
+        pyautogui.moveTo(self.rb.x / self.sft, self.rb.y / self.sft)
 
         # Press and hold the mouse button
         pyautogui.mouseDown()
@@ -58,7 +73,7 @@ class MainRun:
         time.sleep(1)
 
     def visiting(self):
-        time.sleep(4)
+        time.sleep(4 if self.is_mac else 2)
         if not self.sc:
             self.grab_cat()
         if self.go_home or self.is_niu:
@@ -84,8 +99,9 @@ class MainRun:
             return
         print("In visiting mode!")
         self.visits += 1
+        
         for i in range(1, 2000):
-            if single_find("Confirm"):
+            if single_find("Confirm") and not self.is_mac:
                 try:
                     print("Confirm of high rolling!")
                     center = get_center("Confirm", "Single")
@@ -120,7 +136,7 @@ class MainRun:
                     center = get_center("Roll", "Visit")
                     click_at(center.x / self.sft, center.y / self.sft)
                     time.sleep(1)
-                    while single_find("Confirm"):
+                    while single_find("HConfirm"):
                         click_at(center.x / self.sft, center.y / self.sft)
                 print("Complete Rolling!")
             elif "VisitComplete" in btl:
@@ -151,21 +167,17 @@ class MainRun:
                 center = get_center("UseTicket", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
-            elif "RobotDetect" in btl:
-                print("Robot detected!")
-                if self.rd is None:
-                    self.rd = RobotCheck(self.sft)
-                self.rd.break_check()
-                time.sleep(1)
-                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
-                time.sleep(1)
             else:
                 print("Keep visiting!")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
 
     def find_cat_house(self):
-        pyautogui.vscroll(100)  # Make it top
+        # Mac needs larger scroll values
+        scroll_up = 100 if self.is_mac else 10
+        scroll_down = -100 if self.is_mac else -2
+        
+        pyautogui.vscroll(scroll_up)  # Make it top
         scrolls = 50
         cat_house_name = ("CatHouseNiu" if self.is_niu else "CatHouse")
         while True:
@@ -173,7 +185,7 @@ class MainRun:
             if scrolls == 0:
                 break
             elif not single_find(cat_house_name):
-                pyautogui.vscroll(-100)
+                pyautogui.vscroll(scroll_down)
                 print("Cat House not found, " + str(scrolls) + " retries remain")
                 continue
             else:
@@ -203,12 +215,6 @@ class MainRun:
         self.cg -= 1
         retry = 10
         while not single_find("CardButton"):
-            if single_find("RobotDetected"):
-                if self.rd is None:
-                    self.rd = RobotCheck(self.sft)
-                self.rd.break_check()
-                time.sleep(1)
-                continue
             print("Card Button is not found!")
             click_at(self.rb.x / self.sft, self.rb.y / self.sft)
             time.sleep(2)
@@ -386,23 +392,13 @@ class MainRun:
                 continue
             elif "NoMore" in bts:
                 print("This RUN is DONE!! Total " + str(self.visits) + " visits!")
-                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 return
             elif "ToManyRequest" in bts:
                 print("Too many requests!")
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
-                time.sleep(1)
-            elif "RobotDetect" in bts:
-                print("Robot detected!")
-                if self.rd is None:
-                    self.rd = RobotCheck(self.sft)
-                self.rd.break_check()
-                time.sleep(1)
-                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
-                time.sleep(1)
-                self.long_click()
                 time.sleep(1)
             elif single_find("PKG"):
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft + 100)
