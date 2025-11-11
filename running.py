@@ -476,5 +476,5 @@ class MainRun:
 
 
 if __name__ == '__main__':
-    r = MainRun(True)
+    r = MainRun(False, False, False, True)
     r.switch_run()
