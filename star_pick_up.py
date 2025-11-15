@@ -4,7 +4,6 @@ from collections import namedtuple
 import pyautogui
 
 from common import *
-from robot_check import RobotCheck
 
 Point = namedtuple('Point', ['x', 'y'])
 
@@ -27,7 +26,6 @@ class StarPick:
     bottom_line = 0
     top_line = 0
     fails = 0
-    rb = None
     refresh_time = 0
     refresh_period = 1200
 
@@ -118,11 +116,6 @@ class StarPick:
                 if len(self.free) == 0:
                     return True
 
-                if single_find("RobotDetected"):
-                    if self.rb is None:
-                        self.rb = RobotCheck(self.sft)
-                    self.rb.break_check()
-                    time.sleep(1)
                 click_at(self.click_start.x / self.sft, self.click_start.y / self.sft)
                 self.find_in_single_block(block_index)
                 block_index += 1
@@ -365,11 +358,6 @@ class StarPick:
     def pick_up(self):
         time_wait = 2 * 60
         while True:
-            if single_find("RobotDetected"):
-                if self.rb is None:
-                    self.rb = RobotCheck(self.sft)
-                self.rb.break_check()
-                time.sleep(1)
             click_at(self.click_start.x / self.sft, self.click_start.y / self.sft)
             self.rounds += 1
             if time.time() >= self.refresh_time + self.refresh_period or self.fails >= 5:

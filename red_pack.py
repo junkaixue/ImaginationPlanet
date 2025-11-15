@@ -4,8 +4,6 @@ from datetime import timedelta
 
 from pynput.keyboard import Controller, Key
 
-from robot_check import RobotCheck
-
 keyboard = Controller()
 
 from common import *
@@ -17,7 +15,6 @@ class RedPack:
     count = 0
     thankyou_texts = ["xie xie!", "3q", "duo xie hong bao!", "xx"]
     now = 0
-    rb = None
 
     def __init__(self, sfto, timeout=0):
         self.now = datetime.now()
@@ -36,11 +33,6 @@ class RedPack:
             if single_find("TooManyRequest"):
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
-                time.sleep(1)
-            elif simple_single_find("RobotDetected", "Single", 0.8):
-                if self.rb is None:
-                    self.rb = RobotCheck(self.sft)
-                self.rb.break_check()
                 time.sleep(1)
             elif simple_single_find("RollRed", "Single", 0.8):
                 self.single_get("RollRed")

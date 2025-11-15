@@ -69,11 +69,13 @@ single_find_map = {
     "ONE": get_image_path("one_throw.png"),
     "ONEB": get_image_path("one_throw_on_bar.png"),
     "FACE_UP_LEFT": get_image_path("face_up_left.png"),
+    "VISIT_FACE_UP_LEFT": get_image_path("visit_face_up_left.png"),
 
     # Visit
     "CardButton": get_image_path("card_button.png"),
     "CardMode": get_image_path("card_mode.png"),
     "CatCard": get_image_path("cat_card.png"),
+    "AgainCard": get_image_path("again_card.png"),
     "CatHouse": get_image_path("cat_house.png"),
     "CatHouseNiu": get_image_path("cat_house_niu.png"),
     "VisitBack": get_image_path("visit_back.png"),
@@ -188,7 +190,7 @@ resource_map = {
 but_list = {}
 
 no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm", "Challenge", "StarPick",
-                 "ShipFree", "Star", "BlackMarket"]
+                 "ShipFree", "Star", "BlackMarket", "AgainCard"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
