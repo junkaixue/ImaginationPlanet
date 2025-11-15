@@ -18,6 +18,8 @@ class MainRun:
     go_home = False
     is_mac = platform.system() == "Darwin"
     smart_grab = None  # Smart card grab handler
+    current_mode = None  # Track current mode: "ONEB" or "TWB"
+    visit_roll_count = 0  # Count rolls within each visit
 
     def __init__(self, skip_cat_grab, go_home, semi_auto=False, is_switch=False, is_niu=False):
         self.semi_auto = semi_auto
@@ -106,18 +108,26 @@ class MainRun:
         log("In visiting mode!")
         self.visits += 1
 
+        # Reset roll counter for this visit
+        self.visit_roll_count = 0
+        
         for i in range(1, 2000):
-            # Check for duplicate visit before each roll
+            # Check for duplicate visit before each roll (but not if in ONEB mode)
             if not self.sc:
-                try:
-                    if self.smart_grab._check_face_in_any_box():
-                        log("🎯 Duplicate visit detected in visiting loop, triggering smart card grab!")
-                        if self.smart_grab.smart_grab_cat():
-                            log("�?Successfully used AgainCard, returning to main mode!")
-                except Exception as e:
-                    log(f"Smart grab check failed: {e}")
+                if self.current_mode == "ONEB":
+                    # In ONEB mode, skip smart card grab
+                    pass
+                else:
+                    try:
+                        if self.smart_grab._check_face_in_any_box():
+                            log("🎯 Duplicate visit detected in visiting loop, triggering smart card grab!")
+                            if self.smart_grab.smart_grab_cat():
+                                log("�?Successfully used AgainCard, returning to main mode!")
+                                return
+                    except Exception as e:
+                        log(f"Smart grab check failed: {e}")
 
-            if single_find("Confirm") and not self.is_mac:
+            if single_find("RollComplete") and not self.is_mac:
                 try:
                     log("Confirm of high rolling!")
                     center = get_center("Confirm", "Single")
@@ -128,35 +138,35 @@ class MainRun:
                 time.sleep(1)
             btl = find_button("Visit")
             if "Roll" in btl:
-                log("Found Rolling!")
-                if self.is_switch:
-                    while single_find("OneMore"):
-                        log("High times, one more!")
-                        center = get_center("OneMore", "Single")
-                        click_at(center.x / self.sft, center.y / self.sft)
-                        time.sleep(1)
-                        while single_find("UseTicket"):
-                            log("Use ticket!")
-                            cc = get_center("UseTicket", "Single")
-                            click_at(cc.x / self.sft, cc.y / self.sft)
-                            time.sleep(1)
-                            click_at(self.rb.x / self.sft, self.rb.y / self.sft)
-                            time.sleep(1)
-                        while single_find("Confirm"):
-                            log("Confirm ticket!")
-                            cc = get_center("Confirm", "Single")
-                            click_at(cc.x / self.sft, cc.y / self.sft)
-                            time.sleep(1)
-
-                else:
-                    center = get_center("Roll", "Visit")
+                self.visit_roll_count += 1
+                log(f"Found Rolling! (Visit #{self.visits}, Roll #{self.visit_roll_count})")
+                while single_find("OneMore"):
+                    log("High times, one more!")
+                    center = get_center("OneMore", "Single")
                     click_at(center.x / self.sft, center.y / self.sft)
                     time.sleep(1)
-                    while single_find("HConfirm"):
-                        click_at(center.x / self.sft, center.y / self.sft)
+                    while single_find("UseTicket"):
+                        log("Use ticket!")
+                        cc = get_center("UseTicket", "Single")
+                        click_at(cc.x / self.sft, cc.y / self.sft)
+                        time.sleep(1)
+                        click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                        time.sleep(1)
+                    while single_find("Confirm"):
+                        log("Confirm ticket!")
+                        cc = get_center("Confirm", "Single")
+                        click_at(cc.x / self.sft, cc.y / self.sft)
+                        time.sleep(1)
+
+                # else:
+                #     center = get_center("Roll", "Visit")
+                #     click_at(center.x / self.sft, center.y / self.sft)
+                #     time.sleep(1)
+                #     while single_find("HConfirm"):
+                #         click_at(center.x / self.sft, center.y / self.sft)
                 log("Complete Rolling!")
             elif "VisitComplete" in btl:
-                log("Complete visiting!")
+                log(f"Complete visiting! (Visit #{self.visits}, Total rolls: {self.visit_roll_count})")
                 while single_find("VisitBack"):
                     cc = get_center("VisitBack", "Single")
                     click_at(cc.x / self.sft, cc.y / self.sft)
@@ -360,9 +370,15 @@ class MainRun:
     def switch_run(self):
         while True:
             if simple_single_find("FACE_UP_LEFT", "Single", 0.65):
+                if self.current_mode != "TWB":
+                    log("🔄 Switching to TWB mode")
+                    self.current_mode = "TWB"
                 self.switch("ONE", "TWB")
             else:
                 if single_find("TW"):
+                    if self.current_mode != "ONEB":
+                        log("🔄 Switching to ONEB mode (smart grab disabled)")
+                        self.current_mode = "ONEB"
                     self.switch("TW", "ONEB")
 
             bts = find_button("Main")
