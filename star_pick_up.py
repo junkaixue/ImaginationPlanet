@@ -37,6 +37,11 @@ class StarPick:
             self.sft = get_scaling_factor()
         else:
             self.sft = sft
+        
+        # Keep offset_unit consistent across platforms
+        # Adjust scroll multipliers in the scan methods if needed for Windows
+        self.offset_unit = 65
+        
         if debug:
             return
         completed = False
