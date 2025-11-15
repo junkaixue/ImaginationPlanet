@@ -4,6 +4,7 @@ import platform
 from click import *
 from common import *
 from smart_card_grab import SmartCardGrab
+from log_helper import log
 
 
 class MainRun:
@@ -24,12 +25,12 @@ class MainRun:
         self.sft = get_scaling_factor()
         self.is_switch = is_switch
         self.is_niu = is_niu
-        
+
         # Mac-specific optimizations
         if self.is_mac:
             self.cg = 10  # More cat grabs on Mac
-        
-        print("Scaling factor : " + str(self.sft))
+
+        log("Scaling factor : " + str(self.sft))
         self.sc = skip_cat_grab
         self.back_visit = None
         self.card_button = None
@@ -40,21 +41,21 @@ class MainRun:
                 self.rb = get_center("RunButton", "Main")
                 found_rb = True
             except:
-                print("Run Botton was not found!")
+                log("Run Botton was not found!")
                 retry -= 1
                 if retry == 0:
-                    print("No run button, stop!")
+                    log("No run button, stop!")
                     exit(0)
                 time.sleep(1)
-        
+
         # Mac uses scaling factor of 1
         if self.is_mac:
             self.sft = 1
-        
+
         # Initialize smart card grab handler
         self.smart_grab = SmartCardGrab(sft=self.sft, rb=self.rb)
-        
-        print("Found the Run Button!")
+
+        log("Found the Run Button!")
 
     def long_click(self):
         # Move to the position (if necessary)
@@ -80,46 +81,45 @@ class MainRun:
         # Disable grab cat
         # if not self.sc:
         #     self.grab_cat()
-        
+
         if self.go_home or self.is_niu:
-            print("Going home!")
+            log("Going home!")
             while single_find("VisitGoHome"):
                 try:
                     center = get_center("VisitGoHome", "Single")
                     click_at(center.x / self.sft, center.y / self.sft)
-                    print("Clicked go home!")
+                    log("Clicked go home!")
                     time.sleep(2)
                     center = get_center("Confirm", "Single")
                     click_at(center.x / self.sft, center.y / self.sft)
-                    print("Clicked confirm button!")
+                    log("Clicked confirm button!")
                     time.sleep(2)
                     if single_find("VisitBack"):
                         center = get_center("VisitBack", "Single")
                         click_at(center.x / self.sft, center.y / self.sft)
                         time.sleep(2)
                 except:
-                    print("Super slow in loading animation")
+                    log("Super slow in loading animation")
 
-            print("Go home directly")
+            log("Go home directly")
             return
-        print("In visiting mode!")
+        log("In visiting mode!")
         self.visits += 1
-        
+
         for i in range(1, 2000):
             # Check for duplicate visit before each roll
             if not self.sc:
                 try:
                     if self.smart_grab._check_face_in_any_box():
-                        print("🎯 Duplicate visit detected in visiting loop, triggering smart card grab!")
+                        log("🎯 Duplicate visit detected in visiting loop, triggering smart card grab!")
                         if self.smart_grab.smart_grab_cat():
-                            print("✅ Successfully used AgainCard!")
-                            return  # Exit visiting after using again card
+                            log("�?Successfully used AgainCard, returning to main mode!")
                 except Exception as e:
-                    print(f"Smart grab check failed: {e}")
-            
+                    log(f"Smart grab check failed: {e}")
+
             if single_find("Confirm") and not self.is_mac:
                 try:
-                    print("Confirm of high rolling!")
+                    log("Confirm of high rolling!")
                     center = get_center("Confirm", "Single")
                     click_at(center.x / self.sft, center.y / self.sft)
                 except:
@@ -128,22 +128,22 @@ class MainRun:
                 time.sleep(1)
             btl = find_button("Visit")
             if "Roll" in btl:
-                print("Found Rolling!")
+                log("Found Rolling!")
                 if self.is_switch:
                     while single_find("OneMore"):
-                        print("High times, one more!")
+                        log("High times, one more!")
                         center = get_center("OneMore", "Single")
                         click_at(center.x / self.sft, center.y / self.sft)
                         time.sleep(1)
                         while single_find("UseTicket"):
-                            print("Use ticket!")
+                            log("Use ticket!")
                             cc = get_center("UseTicket", "Single")
                             click_at(cc.x / self.sft, cc.y / self.sft)
                             time.sleep(1)
                             click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                             time.sleep(1)
                         while single_find("Confirm"):
-                            print("Confirm ticket!")
+                            log("Confirm ticket!")
                             cc = get_center("Confirm", "Single")
                             click_at(cc.x / self.sft, cc.y / self.sft)
                             time.sleep(1)
@@ -154,37 +154,37 @@ class MainRun:
                     time.sleep(1)
                     while single_find("HConfirm"):
                         click_at(center.x / self.sft, center.y / self.sft)
-                print("Complete Rolling!")
+                log("Complete Rolling!")
             elif "VisitComplete" in btl:
-                print("Complete visiting!")
+                log("Complete visiting!")
                 while single_find("VisitBack"):
                     cc = get_center("VisitBack", "Single")
                     click_at(cc.x / self.sft, cc.y / self.sft)
                     time.sleep(1)
                 return
             elif "Timeout" in btl:
-                print("Visit timeout!")
+                log("Visit timeout!")
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 return
             elif "VisitBusy" in btl:
-                print("Visit busy!")
+                log("Visit busy!")
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
             elif "TooManyRequest" in btl:
-                print("Too many request!")
+                log("Too many request!")
                 center = get_center("TooManyRequest", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
             elif "AdsSkip" in btl:
-                print("Ads skipped!")
+                log("Ads skipped!")
                 center = get_center("UseTicket", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
             else:
-                print("Keep visiting!")
+                log("Keep visiting!")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
 
@@ -192,25 +192,25 @@ class MainRun:
         # Use relative coordinates from config instead of scrolling and image recognition
         cat_house_coords = self.smart_grab.config.get_coord("cat_house")
         if not cat_house_coords:
-            print("ERROR: cat_house coordinate not found in config!")
+            log("ERROR: cat_house coordinate not found in config!")
             return False
-        
-        print("Clicking cat house using relative coordinates")
+
+        log("Clicking cat house using relative coordinates")
         click_at(cat_house_coords[0], cat_house_coords[1])
         time.sleep(1)
-        
+
         if not single_find("VisitGoHome"):
-            print("Not in visiting main page, retry!")
+            log("Not in visiting main page, retry!")
             time.sleep(3)
             return False
-        print("Finish finding, go to visiting")
+        log("Finish finding, go to visiting")
         return True
-        
+
         # OLD IMPLEMENTATION - Kept for future reference
         # # Mac needs larger scroll values
         # scroll_up = 100 if self.is_mac else 10
         # scroll_down = -100 if self.is_mac else -2
-        # 
+        #
         # pyautogui.vscroll(scroll_up)  # Make it top
         # scrolls = 50
         # cat_house_name = ("CatHouseNiu" if self.is_niu else "CatHouse")
@@ -220,7 +220,7 @@ class MainRun:
         #         break
         #     elif not single_find(cat_house_name):
         #         pyautogui.vscroll(scroll_down)
-        #         print("Cat House not found, " + str(scrolls) + " retries remain")
+        #         log("Cat House not found, " + str(scrolls) + " retries remain")
         #         continue
         #     else:
         #         break
@@ -228,28 +228,28 @@ class MainRun:
         #     try:
         #         lc = get_center(cat_house_name, "Single")
         #         vc = get_center("VisitButton", "Single")
-        #         # print(f"Image found at: {center.y}")
+        #         # log(f"Image found at: {center.y}")
         #         click_at((vc.x / self.sft), (lc.y / self.sft))
-        #         print("Clicked cat house")
+        #         log("Clicked cat house")
         #         time.sleep(1)
         #     except:
-        #         print("Cat house already clicked")
+        #         log("Cat house already clicked")
         #
         # if not single_find("VisitGoHome"):
-        #     print("Not in visiting main page, retry!")
+        #     log("Not in visiting main page, retry!")
         #     time.sleep(3)
         #     return False
-        # print("Finish finding, go to visiting")
+        # log("Finish finding, go to visiting")
         # return True
 
     def grab_cat(self):
         if self.cg == 0:
-            print("Skip cat grab")
+            log("Skip cat grab")
             return
         self.cg -= 1
         retry = 10
         while not single_find("CardButton"):
-            print("Card Button is not found!")
+            log("Card Button is not found!")
             click_at(self.rb.x / self.sft, self.rb.y / self.sft)
             time.sleep(2)
             if single_find("UseTicket"):
@@ -258,7 +258,7 @@ class MainRun:
                 time.sleep(2)
             retry -= 1
             if retry <= 0:
-                print("Retry runs out for card button found!")
+                log("Retry runs out for card button found!")
                 return
         retry = 10
         while not single_find("CardMode"):
@@ -266,20 +266,20 @@ class MainRun:
                 try:
                     self.card_button = get_center("CardButton", "Single")
                 except:
-                    print("Card button not found")
+                    log("Card button not found")
                     time.sleep(2)
             click_at(self.card_button.x / self.sft, self.card_button.y / self.sft)
-            print(
+            log(
                 "Found card button at " + str(self.card_button.x / self.sft) + " " + str(self.card_button.y / self.sft))
             time.sleep(1)
             click_at(self.rb.x / self.sft, self.rb.y / self.sft)
             time.sleep(1)
             if single_find("VisitBusy"):
-                print("Visit busy!")
+                log("Visit busy!")
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
             time.sleep(5)
-        print("Card already opened!")
+        log("Card already opened!")
         time.sleep(1)
         if single_find("CatCard"):
             cc = get_center("CatCard", "Single")
@@ -290,7 +290,7 @@ class MainRun:
             time.sleep(8)
             # Can be busy sometime
             while single_find("VisitBusy"):
-                print("Visit busy!")
+                log("Visit busy!")
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
@@ -301,11 +301,11 @@ class MainRun:
                 try:
                     self.back_visit = get_center("BackVisit", "Single")
                 except:
-                    print("Back Visit not found")
+                    log("Back Visit not found")
                     time.sleep(2)
             click_at(self.back_visit.x / self.sft, self.back_visit.y / self.sft)
             time.sleep(1)
-        print("Exited card mode, start running...")
+        log("Exited card mode, start running...")
 
     def light_run(self):
         if not self.semi_auto:
@@ -313,7 +313,7 @@ class MainRun:
         while True:
             bts = find_button("Main")
             if "VisitMain" in bts:
-                print("Visiting! This is " + str(self.visits) + " visit!")
+                log("Visiting! This is " + str(self.visits) + " visit!")
                 center = get_center("VisitFriend", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
@@ -326,7 +326,7 @@ class MainRun:
                 time.sleep(1)
                 continue
             elif "NoMore" in bts:
-                print("This RUN is DONE!! Total " + str(self.visits) + " visits!")
+                log("This RUN is DONE!! Total " + str(self.visits) + " visits!")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
                 return
@@ -337,7 +337,7 @@ class MainRun:
                     time.sleep(1)
                 self.long_click()
             elif "RobotDetect" in bts:
-                print("Robot detected!")
+                log("Robot detected!")
                 if self.rd is None:
                     self.rd = RobotCheck(self.sft)
                 self.rd.break_check()
@@ -350,16 +350,16 @@ class MainRun:
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft + 100)
                 time.sleep(1)
             elif not self.semi_auto and simple_single_find("RunButton", "Main", 0.8):
-                print("Auto run stopped, resume it...")
+                log("Auto run stopped, resume it...")
                 self.long_click()
                 time.sleep(2)
             else:
-                print("In running!")
+                log("In running!")
                 time.sleep(5)
 
     def switch_run(self):
         while True:
-            if simple_single_find("FACE_UP_LEFT", "Single", 0.7):
+            if simple_single_find("FACE_UP_LEFT", "Single", 0.65):
                 self.switch("ONE", "TWB")
             else:
                 if single_find("TW"):
@@ -367,12 +367,12 @@ class MainRun:
 
             bts = find_button("Main")
             if "Guess" in bts:
-                print("Found Guess! Let's guess!")
+                log("Found Guess! Let's guess!")
                 self.guess()
                 time.sleep(2)
                 continue
             elif "VisitMain" in bts:
-                print("Visiting! This is " + str(self.visits) + " visit!")
+                log("Visiting! This is " + str(self.visits) + " visit!")
                 center = get_center("VisitFriend", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
@@ -386,24 +386,24 @@ class MainRun:
                 time.sleep(1)
                 continue
             elif "Replace" in bts:
-                print("Found replacement let's wait!")
+                log("Found replacement let's wait!")
                 # center = get_center("Replace", "Main")
                 # click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(5)
                 continue
             elif "Gift" in bts:
-                print("Need to thank the gift sender!")
+                log("Need to thank the gift sender!")
                 center = get_center("Exit", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 continue
             elif "NoMore" in bts:
-                print("This RUN is DONE!! Total " + str(self.visits) + " visits!")
+                log("This RUN is DONE!! Total " + str(self.visits) + " visits!")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 return
             elif "ToManyRequest" in bts:
-                print("Too many requests!")
+                log("Too many requests!")
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
@@ -412,7 +412,7 @@ class MainRun:
                 time.sleep(1)
             else:
                 self.count += 1
-                print("Keep running! This is " + str(self.count) + " clicks")
+                log("Keep running! This is " + str(self.count) + " clicks")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(4.5)
 
@@ -420,12 +420,12 @@ class MainRun:
         while True:
             bts = find_button("Main")
             if "Guess" in bts:
-                print("Found Guess! Let's guess!")
+                log("Found Guess! Let's guess!")
                 self.guess()
                 time.sleep(2)
                 continue
             elif "VisitMain" in bts:
-                print("Visiting! This is " + str(self.visits) + " visit!")
+                log("Visiting! This is " + str(self.visits) + " visit!")
                 center = get_center("VisitFriend", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
@@ -437,30 +437,30 @@ class MainRun:
                 time.sleep(1)
                 continue
             elif "Replace" in bts:
-                print("Found replacement! Take it!")
+                log("Found replacement! Take it!")
                 center = get_center("Replace", "Main")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 continue
             elif "Gift" in bts:
-                print("Need to thank the gift sender!")
+                log("Need to thank the gift sender!")
                 center = get_center("Exit", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 continue
             elif "NoMore" in bts:
-                print("This RUN is DONE!! Total " + str(self.visits) + " visits!")
+                log("This RUN is DONE!! Total " + str(self.visits) + " visits!")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(1)
                 return
             elif "ToManyRequest" in bts:
-                print("Too many requests!")
+                log("Too many requests!")
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
             else:
                 self.count += 1
-                print("Keep running! This is " + str(self.count) + " clicks")
+                log("Keep running! This is " + str(self.count) + " clicks")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 time.sleep(0.5)
 
@@ -474,8 +474,8 @@ class MainRun:
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
             except:
-                print("Switch failed, retry...")
-        print("Switched to " + to_s)
+                log("Switch failed, retry...")
+        log("Switched to " + to_s)
 
 
 if __name__ == '__main__':
