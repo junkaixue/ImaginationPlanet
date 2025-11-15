@@ -3,7 +3,7 @@ import platform
 
 from click import *
 from common import *
-from robot_check import RobotCheck
+from smart_card_grab import SmartCardGrab
 
 
 class MainRun:
@@ -13,10 +13,10 @@ class MainRun:
     visits = 1
     sc = False
     cg = 5
-    rd = None
     is_switch = False
     go_home = False
     is_mac = platform.system() == "Darwin"
+    smart_grab = None  # Smart card grab handler
 
     def __init__(self, skip_cat_grab, go_home, semi_auto=False, is_switch=False, is_niu=False):
         self.semi_auto = semi_auto
@@ -51,6 +51,9 @@ class MainRun:
         if self.is_mac:
             self.sft = 1
         
+        # Initialize smart card grab handler
+        self.smart_grab = SmartCardGrab(sft=self.sft, rb=self.rb)
+        
         print("Found the Run Button!")
 
     def long_click(self):
@@ -74,8 +77,10 @@ class MainRun:
 
     def visiting(self):
         time.sleep(4 if self.is_mac else 2)
-        if not self.sc:
-            self.grab_cat()
+        # Disable grab cat
+        # if not self.sc:
+        #     self.grab_cat()
+        
         if self.go_home or self.is_niu:
             print("Going home!")
             while single_find("VisitGoHome"):
@@ -101,6 +106,17 @@ class MainRun:
         self.visits += 1
         
         for i in range(1, 2000):
+            # Check for duplicate visit before each roll
+            if not self.sc:
+                try:
+                    if self.smart_grab._check_face_in_any_box():
+                        print("🎯 Duplicate visit detected in visiting loop, triggering smart card grab!")
+                        if self.smart_grab.smart_grab_cat():
+                            print("✅ Successfully used AgainCard!")
+                            return  # Exit visiting after using again card
+                except Exception as e:
+                    print(f"Smart grab check failed: {e}")
+            
             if single_find("Confirm") and not self.is_mac:
                 try:
                     print("Confirm of high rolling!")
@@ -173,40 +189,58 @@ class MainRun:
                 time.sleep(1)
 
     def find_cat_house(self):
-        # Mac needs larger scroll values
-        scroll_up = 100 if self.is_mac else 10
-        scroll_down = -100 if self.is_mac else -2
+        # Use relative coordinates from config instead of scrolling and image recognition
+        cat_house_coords = self.smart_grab.config.get_coord("cat_house")
+        if not cat_house_coords:
+            print("ERROR: cat_house coordinate not found in config!")
+            return False
         
-        pyautogui.vscroll(scroll_up)  # Make it top
-        scrolls = 50
-        cat_house_name = ("CatHouseNiu" if self.is_niu else "CatHouse")
-        while True:
-            scrolls -= 1
-            if scrolls == 0:
-                break
-            elif not single_find(cat_house_name):
-                pyautogui.vscroll(scroll_down)
-                print("Cat House not found, " + str(scrolls) + " retries remain")
-                continue
-            else:
-                break
-        while single_find(cat_house_name):
-            try:
-                lc = get_center(cat_house_name, "Single")
-                vc = get_center("VisitButton", "Single")
-                # print(f"Image found at: {center.y}")
-                click_at((vc.x / self.sft), (lc.y / self.sft))
-                print("Clicked cat house")
-                time.sleep(1)
-            except:
-                print("Cat house already clicked")
-
+        print("Clicking cat house using relative coordinates")
+        click_at(cat_house_coords[0], cat_house_coords[1])
+        time.sleep(1)
+        
         if not single_find("VisitGoHome"):
             print("Not in visiting main page, retry!")
             time.sleep(3)
             return False
         print("Finish finding, go to visiting")
         return True
+        
+        # OLD IMPLEMENTATION - Kept for future reference
+        # # Mac needs larger scroll values
+        # scroll_up = 100 if self.is_mac else 10
+        # scroll_down = -100 if self.is_mac else -2
+        # 
+        # pyautogui.vscroll(scroll_up)  # Make it top
+        # scrolls = 50
+        # cat_house_name = ("CatHouseNiu" if self.is_niu else "CatHouse")
+        # while True:
+        #     scrolls -= 1
+        #     if scrolls == 0:
+        #         break
+        #     elif not single_find(cat_house_name):
+        #         pyautogui.vscroll(scroll_down)
+        #         print("Cat House not found, " + str(scrolls) + " retries remain")
+        #         continue
+        #     else:
+        #         break
+        # while single_find(cat_house_name):
+        #     try:
+        #         lc = get_center(cat_house_name, "Single")
+        #         vc = get_center("VisitButton", "Single")
+        #         # print(f"Image found at: {center.y}")
+        #         click_at((vc.x / self.sft), (lc.y / self.sft))
+        #         print("Clicked cat house")
+        #         time.sleep(1)
+        #     except:
+        #         print("Cat house already clicked")
+        #
+        # if not single_find("VisitGoHome"):
+        #     print("Not in visiting main page, retry!")
+        #     time.sleep(3)
+        #     return False
+        # print("Finish finding, go to visiting")
+        # return True
 
     def grab_cat(self):
         if self.cg == 0:
@@ -228,12 +262,6 @@ class MainRun:
                 return
         retry = 10
         while not single_find("CardMode"):
-            if single_find("RobotDetected"):
-                if self.rd is None:
-                    self.rd = RobotCheck(self.sft)
-                self.rd.break_check()
-                time.sleep(1)
-                continue
             while self.card_button is None:
                 try:
                     self.card_button = get_center("CardButton", "Single")
@@ -254,11 +282,6 @@ class MainRun:
         print("Card already opened!")
         time.sleep(1)
         if single_find("CatCard"):
-            if single_find("RobotDetected"):
-                if self.rd is None:
-                    self.rd = RobotCheck(self.sft)
-                self.rd.break_check()
-                time.sleep(1)
             cc = get_center("CatCard", "Single")
             # Move the cursor to the starting point
             pyautogui.moveTo(cc.x / self.sft, cc.y / self.sft, duration=0.5)
@@ -267,23 +290,11 @@ class MainRun:
             time.sleep(8)
             # Can be busy sometime
             while single_find("VisitBusy"):
-                if single_find("RobotDetected"):
-                    if self.rd is None:
-                        self.rd = RobotCheck(self.sft)
-                    self.rd.break_check()
-                    time.sleep(1)
-                    continue
                 print("Visit busy!")
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
         while single_find("CardMode"):
-            if single_find("RobotDetected"):
-                if self.rd is None:
-                    self.rd = RobotCheck(self.sft)
-                self.rd.break_check()
-                time.sleep(1)
-                continue
             click_at(self.rb.x / self.sft, self.rb.y / self.sft - 300)
             time.sleep(2)
             while self.back_visit is None:
@@ -310,9 +321,7 @@ class MainRun:
                 time.sleep(1)
                 click_at(center.x / self.sft, center.y / self.sft - 200)
                 while not self.find_cat_house():
-                    click_at(center.x / self.sft, center.y / self.sft)
                     time.sleep(1)
-                    click_at(center.x / self.sft, center.y / self.sft - 200)
                 self.visiting()
                 time.sleep(1)
                 continue
@@ -350,7 +359,7 @@ class MainRun:
 
     def switch_run(self):
         while True:
-            if single_find("FACE_UP_LEFT"):
+            if simple_single_find("FACE_UP_LEFT", "Single", 0.7):
                 self.switch("ONE", "TWB")
             else:
                 if single_find("TW"):
@@ -371,9 +380,7 @@ class MainRun:
                 time.sleep(1)
                 click_at(center.x / self.sft, center.y / self.sft - 200)
                 if not self.find_cat_house():
-                    click_at(center.x / self.sft, center.y / self.sft)
                     time.sleep(1)
-                    click_at(center.x / self.sft, center.y / self.sft - 200)
                     self.find_cat_house()
                 self.visiting()
                 time.sleep(1)
@@ -458,7 +465,7 @@ class MainRun:
                 time.sleep(0.5)
 
     def switch(self, from_s, to_s):
-        while single_find(from_s):
+        while simple_single_find(from_s, "Single", 0.5):
             center = get_center(from_s, "Single")
             click_at(center.x / self.sft, center.y / self.sft)
             time.sleep(1)
