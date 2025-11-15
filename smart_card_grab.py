@@ -96,17 +96,7 @@ class SmartCardGrab:
         return False
 
     def _check_and_click_card_button(self):
-        """Step 1-2: Check for RunButton, if not click card_button from config, then click card_button once."""
-        # Step 1: Check if RunButton exists
-        if not simple_single_find("RunButton", "Main", 0.8):
-            log("RunButton not visible, clicking card_button from config...")
-            card_button_coords = self.config.get_coord("card_button")
-            if card_button_coords:
-                click_at(card_button_coords[0], card_button_coords[1])
-                log(f"Clicked card_button at config position ({card_button_coords[0]:.1f}, {card_button_coords[1]:.1f})")
-                time.sleep(2)
-
-        # Step 2: RunButton found (or should be visible now), click card_button using config coords
+        """Step 1: Click card_button to enter card selection UI."""
         log("Clicking card_button from config...")
         card_button_coords = self.config.get_coord("card_button")
         if not card_button_coords:
@@ -115,20 +105,19 @@ class SmartCardGrab:
 
         click_at(card_button_coords[0], card_button_coords[1])
         log(f"Clicked card_button at ({card_button_coords[0]:.1f}, {card_button_coords[1]:.1f})")
-        time.sleep(2)  # Increased delay for game to react
+        
+        # Wait for UI to transition to card selection mode
+        time.sleep(3)
+        log("Waiting for card selection UI...")
+        
         return True
 
     def _open_card_mode(self):
-        """Step 3: Click RunButton to open card mode with retry logic."""
-        # Check if RunButton is still visible (game might be busy)
-        if not simple_single_find("RunButton", "Main", 0.8):
-            log("⚠️ RunButton not visible before opening card mode, game may be busy!")
-            return False
-
+        """Step 2: Click RunButton to open card mode."""
         log("Opening card mode by clicking RunButton...")
         click_at(self.rb.x / self.sft, self.rb.y / self.sft)
         log(f"Clicked RunButton at ({self.rb.x / self.sft:.1f}, {self.rb.y / self.sft:.1f})")
-        time.sleep(2)
+        time.sleep(3)  # Wait for card mode to open
 
         # Check for VisitBusy
         if single_find("VisitBusy"):
@@ -146,6 +135,12 @@ class SmartCardGrab:
         # Check if CardMode opened, or if we're still at RunButton (click didn't work)
         retry = 10
         while retry > 0:
+            # Check if visit already completed (rolling finished naturally)
+            if single_find("VisitComplete"):
+                log("✅ Visit already completed - no card mode needed!")
+                log("Visit finished naturally, skipping card grab")
+                return False  # Return False so retry logic is triggered, which will clean up
+            
             if single_find("CardMode"):
                 log("�?Card mode opened successfully!")
                 time.sleep(1)
@@ -300,58 +295,75 @@ class SmartCardGrab:
         log("SMART CARD GRAB - Starting complete card grab flow")
         log("=" * 70)
 
-        # Step 0: Check for faces BEFORE starting card grab
-        if not self._check_face_in_any_box():
-            log("=" * 70)
-            log("�?No face in visit boxes, skipping card grab")
-            log("=" * 70)
-            return False
+        # # Step 0: Check for faces BEFORE starting card grab
+        # if not self._check_face_in_any_box():
+        #     log("=" * 70)
+        #     log("�?No face in visit boxes, skipping card grab")
+        #     log("=" * 70)
+        #     return False
 
-        # Step 1-2: Check RunButton and click card_button
-        if not self._check_and_click_card_button():
-            log("�?Failed to click card_button")
-            return False
+        # Retry entire card grab flow up to 3 times if any step fails
+        max_retries = 3
+        
+        for attempt in range(1, max_retries + 1):
+            log(f"Card grab attempt {attempt}/{max_retries}")
+            
+            try:
+                # Step 1-2: Check RunButton and click card_button
+                if not self._check_and_click_card_button():
+                    raise Exception("Failed to click card_button")
 
-        # Step 3: Open card mode
-        card_mode_opened = self._open_card_mode()
-        if not card_mode_opened:
-            log("�?Failed to open card mode (game was busy)")
-            # Check if we're still at RunButton (never left)
-            if simple_single_find("RunButton", "Main", 0.8):
-                log("�?Still at RunButton, no recovery needed")
-                return False
-            # Try to recover by going back
-            log("Attempting to return to visit mode...")
-            self._back_to_visit()
-            return False
+                # Step 3: Open card mode
+                if not self._open_card_mode():
+                    raise Exception("Failed to open card mode")
 
-        # Step 4: Pull AgainCard (only if card mode opened)
-        card_used = False
-        if single_find("CardMode"):
-            card_used = self._pull_again_card()
-            if not card_used:
-                log("⚠️ AgainCard not found or failed to pull")
-        else:
-            log("⚠️ CardMode not detected, skipping card pull")
+                # Step 4: Pull AgainCard
+                if not single_find("CardMode"):
+                    raise Exception("CardMode not detected")
+                
+                if not self._pull_again_card():
+                    raise Exception("AgainCard not found or failed to pull")
 
-        # Step 5: Close card mode
-        self._close_card_mode()
+                # Step 5: Close card mode
+                self._close_card_mode()
 
-        # Step 6: Back to visit mode
-        if not self._back_to_visit():
-            log("⚠️ Failed to return to visit mode cleanly")
-            # Don't return False here - we may still be in a usable state
+                # Step 6: Back to visit mode
+                if not self._back_to_visit():
+                    raise Exception("Failed to return to visit mode")
 
-        if card_used:
-            log("=" * 70)
-            log("�?Successfully used AgainCard!")
-            log("=" * 70)
-            return True
-        else:
-            log("=" * 70)
-            log("�?AgainCard not available")
-            log("=" * 70)
-            return False
+                # Success! Card was used
+                log("=" * 70)
+                log("�?Successfully used AgainCard!")
+                log("=" * 70)
+                return True
+                
+            except Exception as e:
+                log(f"�?Attempt {attempt} failed: {e}")
+                
+                # Try to recover - close card mode if open, then go back to visit
+                try:
+                    # If we're in CardMode, close it first
+                    if single_find("CardMode"):
+                        log("CardMode still open, closing it before recovery...")
+                        self._close_card_mode()
+                        time.sleep(2)
+                    
+                    # Now try to go back to visit mode if not at RunButton
+                    if not simple_single_find("RunButton", "Main", 0.8):
+                        log("Not at RunButton, attempting recovery...")
+                        self._back_to_visit()
+                except Exception as recovery_error:
+                    log(f"Recovery failed: {recovery_error}")
+                
+                if attempt < max_retries:
+                    log(f"Waiting 5 seconds before retry {attempt + 1}...")
+                    time.sleep(5)
+                else:
+                    log("�?All retry attempts exhausted")
+                    log("=" * 70)
+                    log("�?Card grab failed, continuing with normal visit")
+                    log("=" * 70)
+                    return False
 
 
 # Convenience function

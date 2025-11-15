@@ -81,6 +81,7 @@ single_find_map = {
     "VisitBack": get_image_path("visit_back.png"),
     "Confirm": get_image_path("confirm.png"),
     "HConfirm": get_image_path("hconfirm.png"),
+    "RollComplete": get_image_path("roll_complete.png"),
     "BackVisit": get_image_path("back_normal_visit.png"),
     "VisitFriend": get_image_path("friend_list.png"),
     "VisitButton": get_image_path("visiting_button.png"),
