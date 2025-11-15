@@ -13,6 +13,7 @@ Press Ctrl+C to exit.
 """
 
 import time
+import sys
 import pyautogui
 from common import get_center, get_scaling_factor
 import platform
@@ -68,18 +69,30 @@ def main():
     try:
         last_pos = None
         while True:
-            # Get current mouse position
+            # Get current mouse position (physical pixels on both Mac and Windows)
+            # pyautogui.position() returns screen coordinates that need scaling factor conversion
             current_pos = pyautogui.position()
             
             # Only print if position changed
             if last_pos != current_pos:
-                # Calculate delta
-                delta_x = current_pos.x - rb_x_logical
-                delta_y = current_pos.y - rb_y_logical
+                # Convert to logical coordinates (works on both Mac and Windows)
+                # Mac: handles Retina display scaling
+                # Windows: handles display scaling (125%, 150%, etc.)
+                current_x_logical = current_pos.x / sft
+                current_y_logical = current_pos.y / sft
                 
-                # Print position info
-                print(f"Mouse: ({current_pos.x:5.0f}, {current_pos.y:5.0f})  |  "
-                      f"Delta: (Δx={delta_x:+6.0f}, Δy={delta_y:+6.0f})", end="\r")
+                # Calculate delta in logical coordinates
+                delta_x = current_x_logical - rb_x_logical
+                delta_y = current_y_logical - rb_y_logical
+                
+                # Use sys.stdout for robust cross-platform real-time output
+                # Pad output to 70 chars to overwrite previous line completely (Windows compatibility)
+                output = f"Mouse: ({current_x_logical:5.0f}, {current_y_logical:5.0f})  |  " \
+                         f"Delta: (Δx={delta_x:+6.0f}, Δy={delta_y:+6.0f})"
+                # Pad to ensure previous line content is fully overwritten
+                output = output.ljust(70)
+                sys.stdout.write(f"\r{output}")
+                sys.stdout.flush()
                 
                 last_pos = current_pos
             
