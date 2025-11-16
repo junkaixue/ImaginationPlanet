@@ -92,6 +92,10 @@ single_find_map = {
     "OneMore": get_image_path("one_more.png"),
     "VisitGoHome": get_image_path("visit_go_home.png"),
 
+    # Repair
+    "Repair": get_image_path("repair.png"),
+    "RepairTop": get_image_path("repair_top.png"),
+
     # Fight
     "TaskMain": get_image_path("task_main.png"),
     "FightMain": get_image_path("fight_main.png"),

@@ -135,21 +135,17 @@ class SmartCardGrab:
         # Check if CardMode opened, or if we're still at RunButton (click didn't work)
         retry = 10
         while retry > 0:
-            # Check if visit already completed (rolling finished naturally)
-            if single_find("VisitComplete"):
-                log("✅ Visit already completed - no card mode needed!")
-                log("Visit finished naturally, skipping card grab")
-                return False  # Return False so retry logic is triggered, which will clean up
-            
+            # PRIORITY 1: Check if CardMode opened successfully (success case!)
             if single_find("CardMode"):
-                log("�?Card mode opened successfully!")
+                log("✅ Card mode opened successfully!")
                 time.sleep(1)
                 return True
 
-            # Check if RunButton is still visible (we never left main mode)
+            # PRIORITY 2: Check if RunButton is still visible (we never left main mode)
             if simple_single_find("RunButton", "Main", 0.8):
                 log("⚠️ RunButton still visible - card mode did not open (game was busy)")
                 return False
+
 
             log(f"Waiting for CardMode... (retry: {retry})")
             time.sleep(1)
@@ -309,6 +305,13 @@ class SmartCardGrab:
             log(f"Card grab attempt {attempt}/{max_retries}")
             
             try:
+
+                # PRIORITY 3: Check if visit already completed (rolling finished naturally)
+                if simple_single_find("VisitComplete", "Visit", 0.8):
+                    log("✅ Visit already completed - no card mode needed!")
+                    log("Visit finished naturally, skipping card grab")
+                    return False
+
                 # Step 1-2: Check RunButton and click card_button
                 if not self._check_and_click_card_button():
                     raise Exception("Failed to click card_button")
@@ -339,6 +342,15 @@ class SmartCardGrab:
                 
             except Exception as e:
                 log(f"�?Attempt {attempt} failed: {e}")
+                
+                # Special case: If visit completed naturally, just exit gracefully
+                # Let the visiting() loop handle the VisitComplete logic
+                if single_find("VisitComplete"):
+                    log("=" * 70)
+                    log("�?Visit completed naturally during card grab attempt")
+                    log("Exiting card grab, letting visiting() handle completion")
+                    log("=" * 70)
+                    return False  # Exit immediately, no recovery needed
                 
                 # Try to recover - close card mode if open, then go back to visit
                 try:
