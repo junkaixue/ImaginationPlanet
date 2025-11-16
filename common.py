@@ -195,7 +195,7 @@ resource_map = {
 but_list = {}
 
 no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm", "Challenge", "StarPick",
-                 "ShipFree", "Star", "BlackMarket", "AgainCard"]
+                 "ShipFree", "Star", "BlackMarket"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
