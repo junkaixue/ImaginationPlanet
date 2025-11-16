@@ -21,6 +21,7 @@ class MainRun:
     current_mode = None  # Track current mode: "ONEB" or "TWB"
     visit_roll_count = 0  # Count rolls within each visit
     again_card_used = False  # Track if AgainCard was used in current visit
+    friend_index = 0  # Track current friend slot for rotation (0-15)
 
     def __init__(self, skip_cat_grab, go_home, semi_auto=False, is_switch=False, is_niu=False):
         self.semi_auto = semi_auto
@@ -212,21 +213,56 @@ class MainRun:
                     time.sleep(1)
 
     def find_cat_house(self):
-        # Use relative coordinates from config instead of scrolling and image recognition
+        """Find and click cat house with friend rotation logic."""
         cat_house_coords = self.smart_grab.config.get_coord("cat_house")
         if not cat_house_coords:
             log("ERROR: cat_house coordinate not found in config!")
             return False
 
-        log("Clicking cat house using relative coordinates")
-        click_at(cat_house_coords[0], cat_house_coords[1])
-        time.sleep(1)
+        retry = 3
+        while not single_find("VisitGoHome") and retry > 0:
+            log(f"Attempting to find cat house (retry {4 - retry}/3)")
+            
+            # Scroll to top first
+            scroll_up = 500 if self.is_mac else 10
+            pyautogui.vscroll(scroll_up)
+            log("Scrolled to top of friend list")
+            time.sleep(1)
 
-        if not single_find("VisitGoHome"):
-            log("Not in visiting main page, retry!")
-            time.sleep(3)
+            # Calculate target slot based on friend index (0-15)
+            target_slot = self.friend_index % 16
+            scroll_per_slot = -70 if not self.is_mac else -100
+            
+            log(f"Visiting friend slot #{target_slot} (total visit #{self.visits})")
+            
+            # Scroll incrementally, one slot at a time with 1 second delay
+            for slot in range(target_slot):
+                pyautogui.vscroll(scroll_per_slot)
+                log(f"Scrolled to slot {slot + 1}/{target_slot}")
+                time.sleep(1)
+            
+            # Click cat house at the calculated position
+            log("Clicking cat house using relative coordinates")
+            click_at(cat_house_coords[0], cat_house_coords[1])
+            time.sleep(1)
+
+            # Check if we're in visiting page
+            if single_find("VisitGoHome"):
+                log("✅ Successfully entered visiting page!")
+                break
+            else:
+                log("⚠️ Not in visiting main page, retrying...")
+                retry -= 1
+                time.sleep(2)
+        
+        if retry <= 0:
+            log("❌ Failed to find cat house after 3 retries!")
             return False
-        log("Finish finding, go to visiting")
+        
+        # Increment friend index for next visit (rotate through 0-15)
+        self.friend_index = (self.friend_index + 1) % 16
+        log(f"Next visit will use friend slot #{self.friend_index}")
+        
         return True
 
     def map_repair(self):
@@ -238,15 +274,15 @@ class MainRun:
         
         log("🔧 Repair signal detected!")
         
-        # Step 2: Click repair button and wait
-        try:
-            center = get_center("Repair", "Single")
-            click_at(center.x / self.sft, center.y / self.sft)
-            log("Clicked repair button")
-            time.sleep(1)
-        except Exception as e:
-            log(f"Failed to click repair button: {e}")
+        # Step 2: Click repair entry button using config coordinates
+        repair_entry_coords = self.smart_grab.config.get_coord("repair_entry")
+        if not repair_entry_coords:
+            log("ERROR: repair_entry coordinates not found in config!")
             return False
+        
+        click_at(repair_entry_coords[0], repair_entry_coords[1])
+        log(f"Clicked repair entry at ({repair_entry_coords[0]:.1f}, {repair_entry_coords[1]:.1f})")
+        time.sleep(1)
         
         # Step 3-6: While loop to repair items
         repair_count = 0
@@ -565,4 +601,5 @@ class MainRun:
 
 if __name__ == '__main__':
     r = MainRun(False, False, False, True)
-    r.map_repair()
+    r.friend_index = 2
+    r.find_cat_house()

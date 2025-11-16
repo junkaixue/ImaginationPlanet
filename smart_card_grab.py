@@ -182,7 +182,10 @@ class SmartCardGrab:
 
         # Check if AgainCard exists
         if not single_find("AgainCard"):
-            log("AgainCard not found")
+            log("⚠️ AgainCard not found!")
+            log("Closing card mode before exiting...")
+            # Close card mode if AgainCard not found
+            self._close_card_mode()
             return False
 
         # Pull the AgainCard
@@ -208,7 +211,10 @@ class SmartCardGrab:
 
             return True
         except Exception as e:
-            log(f"Failed to pull AgainCard: {e}")
+            log(f"❌ Failed to pull AgainCard: {e}")
+            log("Closing card mode before exiting...")
+            # Close card mode if pull failed
+            self._close_card_mode()
             return False
 
     def _close_card_mode(self):
@@ -324,8 +330,17 @@ class SmartCardGrab:
                 if not single_find("CardMode"):
                     raise Exception("CardMode not detected")
                 
-                if not self._pull_again_card():
-                    raise Exception("AgainCard not found or failed to pull")
+                pull_result = self._pull_again_card()
+                if not pull_result:
+                    # AgainCard not found or pull failed - card mode already closed in _pull_again_card
+                    log("AgainCard not available, returning to visit mode...")
+                    # Return to visit mode
+                    if not self._back_to_visit():
+                        log("⚠️ Failed to return to visit mode, but continuing...")
+                    log("=" * 70)
+                    log("✅ Card grab completed (no AgainCard used)")
+                    log("=" * 70)
+                    return False  # Exit gracefully without retry
 
                 # Step 5: Close card mode
                 self._close_card_mode()
@@ -336,7 +351,7 @@ class SmartCardGrab:
 
                 # Success! Card was used
                 log("=" * 70)
-                log("�?Successfully used AgainCard!")
+                log("✅ Successfully used AgainCard!")
                 log("=" * 70)
                 return True
                 
