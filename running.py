@@ -20,6 +20,7 @@ class MainRun:
     smart_grab = None  # Smart card grab handler
     current_mode = None  # Track current mode: "ONEB" or "TWB"
     visit_roll_count = 0  # Count rolls within each visit
+    again_card_used = False  # Track if AgainCard was used in current visit
 
     def __init__(self, skip_cat_grab, go_home, semi_auto=False, is_switch=False, is_niu=False):
         self.semi_auto = semi_auto
@@ -108,24 +109,30 @@ class MainRun:
         log("In visiting mode!")
         self.visits += 1
 
-        # Reset roll counter for this visit
+        # Reset roll counter and AgainCard flag for this visit
         self.visit_roll_count = 0
+        self.again_card_used = False
         
         for i in range(1, 2000):
-            # Check for duplicate visit before each roll (but not if in ONEB mode)
-            if not self.sc:
+            # Check for duplicate visit before each roll (only after 30 rolls, not in ONEB mode, and AgainCard not used yet)
+            if not self.sc  and not self.again_card_used and not self.again_card_used and self.visit_roll_count > 30:
                 if self.current_mode == "ONEB":
                     # In ONEB mode, skip smart card grab
                     pass
                 else:
                     try:
                         if self.smart_grab._check_face_in_any_box():
-                            log("🎯 Duplicate visit detected in visiting loop, triggering smart card grab!")
-                            if self.smart_grab.smart_grab_cat():
-                                log("�?Successfully used AgainCard, returning to main mode!")
-                                return
+                            log(f"🎯 Duplicate visit detected after {self.visit_roll_count} rolls, triggering smart card grab!")
+                            grab_result = self.smart_grab.smart_grab_cat()
+                            if grab_result:
+                                log("✅ Successfully used AgainCard!")
+                                self.again_card_used = True  # Mark as used
+                                log("AgainCard used, continuing with new visit...")
+                                # Don't return - continue the visit with the new island
+                            # If grab failed, just continue - next loop iteration will handle VisitComplete if present
                     except Exception as e:
                         log(f"Smart grab check failed: {e}")
+                        # Continue loop - VisitComplete will be handled in the next iteration
 
             if single_find("RollComplete") and not self.is_mac:
                 try:
@@ -194,9 +201,15 @@ class MainRun:
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
             else:
-                log("Keep visiting!")
+                self.visit_roll_count += 1
+                log(f"Keep visiting! (Visit #{self.visits}, Roll #{self.visit_roll_count})")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
-                time.sleep(1)
+                # Slow down after 30 rolls to let game catch up
+                if not self.again_card_used and self.visit_roll_count > 30:
+                    time.sleep(3)
+                    log(f"⏱️ Extended wait (roll #{self.visit_roll_count} > 30)")
+                else:
+                    time.sleep(1)
 
     def find_cat_house(self):
         # Use relative coordinates from config instead of scrolling and image recognition
@@ -214,6 +227,59 @@ class MainRun:
             time.sleep(3)
             return False
         log("Finish finding, go to visiting")
+        return True
+
+    def map_repair(self):
+        """Repair map items by using tickets."""
+        # Step 1: Check if repair signal exists
+        if not single_find("Repair"):
+            log("No repair signal found, skipping repair")
+            return False
+        
+        log("🔧 Repair signal detected!")
+        
+        # Step 2: Click repair button and wait
+        try:
+            center = get_center("Repair", "Single")
+            click_at(center.x / self.sft, center.y / self.sft)
+            log("Clicked repair button")
+            time.sleep(1)
+        except Exception as e:
+            log(f"Failed to click repair button: {e}")
+            return False
+        
+        # Step 3-6: While loop to repair items
+        repair_count = 0
+        while single_find("RepairTop"):
+            repair_count += 1
+            log(f"🔨 Repairing item #{repair_count}...")
+            
+            # Step 4: Click repair_top from config
+            repair_top_coords = self.smart_grab.config.get_coord("repair_top")
+            if not repair_top_coords:
+                log("ERROR: repair_top coordinates not found in config!")
+                break
+            
+            click_at(repair_top_coords[0], repair_top_coords[1])
+            log(f"Clicked repair_top at ({repair_top_coords[0]:.1f}, {repair_top_coords[1]:.1f})")
+            time.sleep(2)
+            
+            # Step 5: Click use_ticket using single_find
+            if single_find("UseTicket"):
+                try:
+                    center = get_center("UseTicket", "Single")
+                    click_at(center.x / self.sft, center.y / self.sft)
+                    log("Clicked UseTicket button")
+                except Exception as e:
+                    log(f"Failed to click UseTicket: {e}")
+                    break
+            else:
+                log("UseTicket button not found, repair may be complete")
+                break
+            time.sleep(1)
+        
+        # Step 7: Nothing left, completed
+        log(f"✅ Map repair completed! Repaired {repair_count} items")
         return True
 
         # OLD IMPLEMENTATION - Kept for future reference
@@ -381,6 +447,9 @@ class MainRun:
                         self.current_mode = "ONEB"
                     self.switch("TW", "ONEB")
 
+            # Check for map repair before other actions
+            self.map_repair()
+
             bts = find_button("Main")
             if "Guess" in bts:
                 log("Found Guess! Let's guess!")
@@ -496,4 +565,4 @@ class MainRun:
 
 if __name__ == '__main__':
     r = MainRun(False, False, False, True)
-    r.switch_run()
+    r.map_repair()
