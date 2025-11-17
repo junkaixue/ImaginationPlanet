@@ -1,0 +1,113 @@
+================================================================================
+CARD MATCHING GAME - INSTRUCTIONS
+================================================================================
+
+OVERVIEW:
+---------
+Two Python scripts have been created to analyze and play a card matching game
+from the 5x6 grid image (pics/img.png). The game contains 30 cards with 15 
+matching pairs.
+
+SCRIPTS:
+--------
+
+1. card_matching_game.py
+   - Analyzes the grid image and extracts individual cards
+   - Uses OpenCV (cv2) for image processing
+   - Identifies matching pairs using histogram and template matching
+   - Outputs:
+     * extracted_cards/ folder - Individual card images (card_00_r0_c0.png, etc.)
+     * game_board.png - Visualization with card numbers
+     * Console output showing all 15 matching pairs
+
+2. play_matching_game.py
+   - Interactive matching game
+   - Two modes:
+     a) Demo mode (default) - Automatically plays first 5 pairs
+     b) Interactive mode - Play via console input
+   - Outputs:
+     * game_initial.png - Starting game board (all cards hidden)
+     * current_game.png - Current game state (interactive mode)
+     * solution.png - All cards revealed
+     * game_turn_X.png - State after each turn
+
+USAGE:
+------
+
+To analyze the cards and find matches:
+  python card_matching_game.py
+
+To play the demo:
+  python play_matching_game.py
+
+To play interactively:
+  1. Edit play_matching_game.py
+  2. Comment out: demo_game()
+  3. Uncomment: interactive_play()
+  4. Run: python play_matching_game.py
+  5. Open current_game.png to see the board
+  6. Enter two card IDs (0-29) to make guesses
+  7. Type 'solution' to reveal all cards
+  8. Type 'quit' to exit
+
+MATCHING PAIRS FOUND:
+--------------------
+1.  Card 0  (Piggy bank)        <--> Card 18 (Piggy bank)
+2.  Card 1  (Cat with glasses)  <--> Card 13 (Cat with glasses)
+3.  Card 2  (Hamster)           <--> Card 17 (Hamster)
+4.  Card 3  (Red hood)          <--> Card 28 (Red hood)
+5.  Card 4  (Paintbrush)        <--> Card 7  (Paintbrush)
+6.  Card 5  (Books)             <--> Card 6  (Books)
+7.  Card 8  (First aid kit)     <--> Card 29 (First aid kit)
+8.  Card 9  (Campfire)          <--> Card 23 (Campfire)
+9.  Card 10 (Green frog)        <--> Card 16 (Green frog)
+10. Card 11 (Sun)               <--> Card 27 (Sun)
+11. Card 12 (Shoes)             <--> Card 19 (Shoes)
+12. Card 14 (White container)   <--> Card 21 (White container)
+13. Card 15 (Lantern)           <--> Card 26 (Lantern)
+14. Card 20 (Rainbow bird)      <--> Card 24 (Rainbow bird)
+15. Card 22 (Orange cat)        <--> Card 25 (Orange cat)
+
+TECHNICAL DETAILS:
+-----------------
+- Uses cv2 (OpenCV) for image processing (already in codebase)
+- Uses log() function from log_helper.py for logging with timestamps
+- Histogram comparison (HSV color space) for matching
+- Template matching for verification
+- Combined similarity scoring for robust matching
+
+CARD GRID LAYOUT:
+----------------
+Row 0: Cards  0,  1,  2,  3,  4,  5
+Row 1: Cards  6,  7,  8,  9, 10, 11
+Row 2: Cards 12, 13, 14, 15, 16, 17
+Row 3: Cards 18, 19, 20, 21, 22, 23
+Row 4: Cards 24, 25, 26, 27, 28, 29
+
+FILES GENERATED:
+---------------
+- extracted_cards/card_XX_rY_cZ.png - Individual card images (30 files)
+- game_board.png - Numbered card grid
+- game_initial.png - Initial game state (cards hidden)
+- solution.png - All cards revealed with matched pairs highlighted
+- game_turn_X.png - Game state after turn X (demo mode)
+- current_game.png - Current state (interactive mode)
+
+FEATURES:
+--------
+✓ Automatic card extraction from grid image
+✓ Intelligent matching using multiple algorithms
+✓ Visual game board with card backs
+✓ Progress tracking (attempts, matched pairs)
+✓ Green borders for matched cards
+✓ Solution view to see all cards
+✓ Cross-platform compatible (Windows/macOS)
+✓ Uses existing codebase libraries (cv2, numpy, pyautogui)
+
+NOTES:
+------
+- All logging uses log_helper.py for timestamp consistency
+- Cards are numbered 0-29 for easy reference
+- Matching threshold tuned to 0.90 for reliable detection
+- Game state saves automatically after each turn
+================================================================================

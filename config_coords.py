@@ -61,7 +61,7 @@ class ConfigCoords:
             from collections import namedtuple
             Point = namedtuple('Point', ['x', 'y'])
             self.rb = Point(mock_rb[0], mock_rb[1])
-            print(f"\n🧪 MOCK MODE: Using mock Run Button at ({self.rb.x}, {self.rb.y})")
+            print(f"\nMOCK MODE: Using mock Run Button at ({self.rb.x}, {self.rb.y})")
             rb_x_logical = self.rb.x / self.sft
             rb_y_logical = self.rb.y / self.sft
             print(f"   Logical coordinates: ({rb_x_logical:.1f}, {rb_y_logical:.1f})")

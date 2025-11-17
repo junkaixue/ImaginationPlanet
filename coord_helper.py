@@ -6,7 +6,8 @@ Continuously prints the delta (x, y) from the run button to current mouse positi
 Useful for finding where to take screenshots of game elements.
 
 Usage:
-    python coord_helper.py
+    python coord_helper.py                    # Load from config, or auto-scan if not found
+    python coord_helper.py 2624 1169          # Use provided Run Button coordinates
     
 Then move your mouse to the element you want to capture and read the delta coordinates.
 Press Ctrl+C to exit.
@@ -31,31 +32,65 @@ def main():
     print(f"\nPlatform: {platform_name}")
     print(f"Scaling Factor: {sft}")
     
-    # Find run button
-    print("\nLooking for Run Button...")
-    retry = 10
-    rb_center = None
+    # Check for command line arguments for Run Button coords
+    rb_x_logical = None
+    rb_y_logical = None
     
-    while retry > 0 and rb_center is None:
+    if len(sys.argv) == 3:
         try:
-            rb_center = get_center("RunButton", "Main")
-            print(f"✅ Found Run Button at: ({rb_center.x}, {rb_center.y}) [pixel coords]")
-            # Convert to logical coordinates
-            rb_x = rb_center.x / sft
-            rb_y = rb_center.y / sft
-            print(f"   Logical coordinates: ({rb_x:.1f}, {rb_y:.1f})")
-        except:
-            print(f"Run Button not found, retrying... ({retry} attempts left)")
-            retry -= 1
-            time.sleep(1)
+            rb_x_logical = float(sys.argv[1])
+            rb_y_logical = float(sys.argv[2])
+            print(f"\nUsing provided Run Button coordinates:")
+            print(f"   ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
+        except ValueError:
+            print("\nERROR: Invalid coordinates provided. Must be numbers.")
+            print(f"Usage: python coord_helper.py <x> <y>")
+            return
+    elif len(sys.argv) == 1:
+        # Try to read run_button from config file first
+        import os
+        config_file = "cood_mac.cfg" if platform_name == "Darwin" else "cood_win.cfg"
+        config_path = os.path.join("configs", config_file)
+        
+        if os.path.exists(config_path):
+            with open(config_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('run_button:'):
+                        try:
+                            coords = line.split(':')[1].strip()
+                            x, y = coords.split(',')
+                            rb_x_logical = float(x.strip())
+                            rb_y_logical = float(y.strip())
+                            print(f"\nFound run_button in config: ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
+                            break
+                        except:
+                            pass
     
-    if rb_center is None:
-        print("❌ Failed to find Run Button. Make sure the game window is visible.")
-        return
-    
-    # Convert to logical coordinates for run button
-    rb_x_logical = rb_center.x / sft
-    rb_y_logical = rb_center.y / sft
+    if rb_x_logical is None or rb_y_logical is None:
+        # Find run button
+        print("\nLooking for Run Button...")
+        retry = 10
+        rb_center = None
+        
+        while retry > 0 and rb_center is None:
+            try:
+                rb_center = get_center("RunButton", "Main")
+                print(f"Found Run Button at: ({rb_center.x}, {rb_center.y}) [pixel coords]")
+                # Convert to logical coordinates
+                rb_x_logical = rb_center.x / sft
+                rb_y_logical = rb_center.y / sft
+                print(f"   Logical coordinates: ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
+            except:
+                print(f"Run Button not found, retrying... ({retry} attempts left)")
+                retry -= 1
+                time.sleep(1)
+        
+        if rb_center is None:
+            print("Failed to find Run Button. Make sure the game window is visible.")
+            print("\nAlternatively, provide Run Button coordinates:")
+            print(f"  python coord_helper.py <x> <y>")
+            return
     
     print("\n" + "=" * 70)
     print("READY! Move your mouse to any element in the game.")
