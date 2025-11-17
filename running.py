@@ -448,16 +448,14 @@ class MainRun:
                     click_at(center.x / self.sft, center.y / self.sft)
                     time.sleep(1)
                 self.long_click()
-            elif "RobotDetect" in bts:
-                log("Robot detected!")
-                if self.rd is None:
-                    self.rd = RobotCheck(self.sft)
-                self.rd.break_check()
-                time.sleep(1)
-                click_at(self.rb.x / self.sft, self.rb.y / self.sft)
-                time.sleep(1)
-                self.long_click()
-                time.sleep(1)
+            # elif "RobotDetect" in bts:
+            #     log("Robot detected!")
+            #     # RobotCheck disabled
+            #     time.sleep(1)
+            #     click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+            #     time.sleep(1)
+            #     self.long_click()
+            #     time.sleep(1)
             elif single_find("PKG"):
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft + 100)
                 time.sleep(1)
@@ -493,6 +491,41 @@ class MainRun:
                 time.sleep(2)
                 continue
             elif "VisitMain" in bts:
+                # In ONEB mode, go home directly instead of visiting friends
+                if self.current_mode == "ONEB":
+                    log("ONEB mode - Going home directly!")
+                    log(f"Friend slot #{self.friend_index % 16} not used (going home, slot stays at {self.friend_index})")
+                    self.visits += 1
+                    center = get_center("VisitFriend", "Single")
+                    click_at(center.x / self.sft, center.y / self.sft)
+                    time.sleep(1)
+                    click_at(center.x / self.sft, center.y / self.sft)
+                    time.sleep(1)
+                    click_at(center.x / self.sft, center.y / self.sft - 200)
+                    time.sleep(2)
+                    
+                    # Go home logic
+                    while single_find("VisitGoHome"):
+                        try:
+                            center = get_center("VisitGoHome", "Single")
+                            click_at(center.x / self.sft, center.y / self.sft)
+                            log("Clicked go home!")
+                            time.sleep(2)
+                            center = get_center("Confirm", "Single")
+                            click_at(center.x / self.sft, center.y / self.sft)
+                            log("Clicked confirm button!")
+                            time.sleep(2)
+                            if single_find("VisitBack"):
+                                center = get_center("VisitBack", "Single")
+                                click_at(center.x / self.sft, center.y / self.sft)
+                                time.sleep(2)
+                        except:
+                            log("Super slow in loading animation")
+                    log("Go home completed")
+                    time.sleep(1)
+                    continue
+                
+                # TWB mode - visit friends normally
                 log("Visiting! This is " + str(self.visits) + " visit!")
                 center = get_center("VisitFriend", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
