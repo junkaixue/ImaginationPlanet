@@ -389,13 +389,13 @@ def main():
         log("\n*** DRY RUN MODE - Will not actually click ***\n")
     
     log("\nStarting in 2 seconds...")
-    time.sleep(2)
+    #time.sleep(2)
     
     matcher = TemplateCardMatcher()
     matcher.solve_and_click(
         threshold=0.7,              # Template match threshold
-        click_delay_between=0.2,    # Delay between cards in pair
-        click_delay_after=0.0,      # Delay after pair
+        click_delay_between=0.5,    # Delay between cards in pair
+        click_delay_after=1,      # Delay after pair
         dry_run=dry_run
     )
 
