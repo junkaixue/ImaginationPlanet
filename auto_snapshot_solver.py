@@ -170,7 +170,7 @@ class AutoSnapshotSolver:
             return False
         
         log("\nStep 3: Waiting 1 second after flip back...")
-        time.sleep(1.0)
+        time.sleep(2.0)
         
         log("\nStep 4: Running template card matcher...")
         log("="*70)
@@ -179,8 +179,8 @@ class AutoSnapshotSolver:
         matcher = TemplateCardMatcher()
         success = matcher.solve_and_click(
             threshold=0.7,
-            click_delay_between=0.0,
-            click_delay_after=0.2,
+            click_delay_between=0.1,
+            click_delay_after=0.35,
             dry_run=dry_run
         )
         

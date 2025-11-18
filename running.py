@@ -81,32 +81,44 @@ class MainRun:
         time.sleep(1)
 
     def visiting(self):
-        time.sleep(4 if self.is_mac else 2)
         # Disable grab cat
         # if not self.sc:
         #     self.grab_cat()
 
-        if self.go_home or self.is_niu:
+        while not single_find("VisitGoHome"):
+            log("Visit Go Home was not found! Sleep for 1 second")
+            time.sleep(1)
+
+        log("Visit Go home found! In visiting main mode now!")
+
+        if self.go_home or self.is_niu or (self.current_mode == "ONEB" and not single_find("33")):
             log("Going home!")
-            while single_find("VisitGoHome"):
+            
+            # Click go home and confirm until we return to main page
+            while simple_single_find("VisitGoHome", "Single", 0.8):
                 try:
                     center = get_center("VisitGoHome", "Single")
                     click_at(center.x / self.sft, center.y / self.sft)
                     log("Clicked go home!")
                     time.sleep(2)
-                    center = get_center("Confirm", "Single")
-                    click_at(center.x / self.sft, center.y / self.sft)
-                    log("Clicked confirm button!")
+                    
+                    # Use config coordinate for go home confirm
+                    gohome_confirm_coords = self.smart_grab.config.get_coord("gohome_confirm")
+                    if gohome_confirm_coords:
+                        click_at(gohome_confirm_coords[0], gohome_confirm_coords[1])
+                        log(f"Clicked go home confirm at ({gohome_confirm_coords[0]:.1f}, {gohome_confirm_coords[1]:.1f})")
+                    else:
+                        log("ERROR: gohome_confirm coordinates not found in config!")
                     time.sleep(2)
-                    if single_find("VisitBack"):
-                        center = get_center("VisitBack", "Single")
-                        click_at(center.x / self.sft, center.y / self.sft)
-                        time.sleep(2)
                 except:
                     log("Super slow in loading animation")
-
-            log("Go home directly")
-            return
+                    time.sleep(1)
+            if not simple_single_find("VisitComplete", "Visit", 0.8):
+                log("Go home completed - returned to main page")
+                # If ONEB mode, reset friend_index back (since we're going home, not visiting)
+                self.friend_index = self.friend_index - 1
+                log(f"ONEB mode - friend slot reset back to #{self.friend_index}")
+                return
         log("In visiting mode!")
         self.visits += 1
 
@@ -175,10 +187,18 @@ class MainRun:
                 log("Complete Rolling!")
             elif "VisitComplete" in btl:
                 log(f"Complete visiting! (Visit #{self.visits}, Total rolls: {self.visit_roll_count})")
-                while single_find("VisitBack"):
-                    cc = get_center("VisitBack", "Single")
-                    click_at(cc.x / self.sft, cc.y / self.sft)
-                    time.sleep(1)
+                
+                # While loop to ensure complete is gone
+                while simple_single_find("VisitComplete", "Visit", 0.8):
+                    if simple_single_find("VisitBack", "Single", 0.8):
+                        cc = get_center("VisitBack", "Single")
+                        click_at(cc.x / self.sft, cc.y / self.sft)
+                        log("Clicked VisitBack to clear complete")
+                        time.sleep(1)
+                    else:
+                        time.sleep(1)
+                
+                log("VisitComplete is gone, continuing...")
                 return
             elif "Timeout" in btl:
                 log("Visit timeout!")
@@ -469,7 +489,7 @@ class MainRun:
 
     def switch_run(self):
         while True:
-            if simple_single_find("FACE_UP_LEFT", "Single", 0.65):
+            if simple_single_find("FACE_UP_LEFT", "Single", 0.64):
                 if self.current_mode != "TWB":
                     log("🔄 Switching to TWB mode")
                     self.current_mode = "TWB"
@@ -491,41 +511,6 @@ class MainRun:
                 time.sleep(2)
                 continue
             elif "VisitMain" in bts:
-                # In ONEB mode, go home directly instead of visiting friends
-                if self.current_mode == "ONEB":
-                    log("ONEB mode - Going home directly!")
-                    log(f"Friend slot #{self.friend_index % 16} not used (going home, slot stays at {self.friend_index})")
-                    self.visits += 1
-                    center = get_center("VisitFriend", "Single")
-                    click_at(center.x / self.sft, center.y / self.sft)
-                    time.sleep(1)
-                    click_at(center.x / self.sft, center.y / self.sft)
-                    time.sleep(1)
-                    click_at(center.x / self.sft, center.y / self.sft - 200)
-                    time.sleep(2)
-                    
-                    # Go home logic
-                    while single_find("VisitGoHome"):
-                        try:
-                            center = get_center("VisitGoHome", "Single")
-                            click_at(center.x / self.sft, center.y / self.sft)
-                            log("Clicked go home!")
-                            time.sleep(2)
-                            center = get_center("Confirm", "Single")
-                            click_at(center.x / self.sft, center.y / self.sft)
-                            log("Clicked confirm button!")
-                            time.sleep(2)
-                            if single_find("VisitBack"):
-                                center = get_center("VisitBack", "Single")
-                                click_at(center.x / self.sft, center.y / self.sft)
-                                time.sleep(2)
-                        except:
-                            log("Super slow in loading animation")
-                    log("Go home completed")
-                    time.sleep(1)
-                    continue
-                
-                # TWB mode - visit friends normally
                 log("Visiting! This is " + str(self.visits) + " visit!")
                 center = get_center("VisitFriend", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
@@ -533,9 +518,11 @@ class MainRun:
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
                 click_at(center.x / self.sft, center.y / self.sft - 200)
+                
                 if not self.find_cat_house():
                     time.sleep(1)
                     self.find_cat_house()
+                
                 self.visiting()
                 time.sleep(1)
                 continue

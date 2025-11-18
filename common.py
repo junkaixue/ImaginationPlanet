@@ -91,6 +91,7 @@ single_find_map = {
     "VisitBusy": get_image_path("visit_busy.png"),
     "OneMore": get_image_path("one_more.png"),
     "VisitGoHome": get_image_path("visit_go_home.png"),
+    "33": get_image_path("33.png"),
 
     # Repair
     "Repair": get_image_path("repair.png"),
