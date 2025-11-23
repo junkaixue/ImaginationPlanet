@@ -259,51 +259,66 @@ def get_center(but, map_scope):
 
 
 def simple_single_find(but, map_scope, th):
+    """
+    Find a button on screen using template matching.
+    Mac-compatible - uses cv2.matchTemplate instead of pyautogui.locateOnScreen.
+    """
     try:
-        pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=th)
-        return True
-    except:
+        template_path = resource_map[map_scope][but]
+        print(f"[DEBUG] Looking for '{but}' in scope '{map_scope}'")
+        print(f"[DEBUG] Template path: {template_path}")
+        result = single_find_with_path(template_path, None, th)
+        print(f"[DEBUG] Result: {result}")
+        return result
+    except Exception as e:
+        print(f"[DEBUG] Error in simple_single_find: {e}")
         return False
 
 
 def get_center_h(but, map_scope, th):
     """
     Get the center coordinates of a button on the screen.
+    Mac-compatible - uses cv2.matchTemplate instead of pyautogui.locateOnScreen.
     """
     if but in no_cache_list or but not in coor_dict:  # Sometimes scroll can change the position
         try:
-            location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=th)
-            if location is not None:
-                coor_dict[but] = pyautogui.center(location)
+            template_path = resource_map[map_scope][but]
+            center = get_center_with_path(template_path, None, th)
+            if center is not None:
+                coor_dict[but] = center
             else:
                 print(f"Warning: Button '{but}' not found on screen.")
                 return None
-        except:
-            location = pyautogui.locateOnScreen(resource_map[map_scope][but], confidence=th)
-            if location is not None:
-                coor_dict[but] = pyautogui.center(location)
-            else:
-                print(f"Warning: Button '{but}' not found on screen.")
-                return None
+        except Exception as e:
+            print(f"Error finding button '{but}': {e}")
+            return None
     return coor_dict.get(but)
 
 
 def get_all(but, map_scope):
     """
     Get all matching locations of a button on the screen.
+    Mac-compatible - uses cv2.matchTemplate and adjusts for scaling factor.
     """
-    matches = []
     try:
-        matches = list(pyautogui.locateAllOnScreen(resource_map[map_scope][but], confidence=0.8))
-    except:
-        matches = list(pyautogui.locateAllOnScreen(resource_map[map_scope][but]))
-    coors = []
-    prev = None
-    for match in matches:
-        if prev is None or abs(prev.top - match.top) > 20:
-            prev = match
-            coors.append(pyautogui.center(match))
-    return coors
+        template_path = resource_map[map_scope][but]
+        matches = find_all_with_path(template_path, None, 0.8)
+        
+        # Get scaling factor for coordinate conversion
+        sft = get_scaling_factor()
+        
+        # Filter out matches that are too close vertically (same as before)
+        coors = []
+        prev_y = None
+        for cx, cy, confidence in matches:
+            if prev_y is None or abs(prev_y - cy) > 20:
+                prev_y = cy
+                # Convert to logical coordinates for clicking
+                coors.append((cx / sft, cy / sft))
+        return coors
+    except Exception as e:
+        print(f"Error finding all instances of '{but}': {e}")
+        return []
 
 
 def get_all_with_cache(but, map_scope):
@@ -330,6 +345,7 @@ def find_button(map_scope):
 def single_find(but):
     """
     Find a single button using its pre-defined template path.
+    Mac-compatible - uses cv2.matchTemplate via single_find_with_path.
     """
     return single_find_with_path(single_find_map[but], None, 0.8)
 
@@ -337,19 +353,120 @@ def single_find(but):
 def single_find_with_path(but_path, gs, th):
     """
     Perform template matching using a specified template path.
+    Mac-compatible - uses cv2.matchTemplate with grayscale images.
+    
+    Args:
+        but_path: Path to template image
+        gs: Grayscale screenshot (or None to take new one)
+        th: Confidence threshold
+    
+    Returns:
+        True if found, False otherwise
+    """
+    gray_screen = screen_shot() if gs is None else gs
+    template = cv2.imread(but_path, 0)
+    if template is None:
+        print(f"[ERROR] Unable to load template from '{but_path}'.")
+        return False
+    
+    print(f"[DEBUG] Template size: {template.shape[1]}x{template.shape[0]}")
+    print(f"[DEBUG] Screen size: {gray_screen.shape[1]}x{gray_screen.shape[0]}")
+    
+    # Perform template matching
+    result = cv2.matchTemplate(gray_screen, template, cv2.TM_CCOEFF_NORMED)
+    threshold = th
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
+    
+    print(f"[DEBUG] Best match confidence: {max_val:.4f} (threshold: {threshold})")
+    print(f"[DEBUG] Best match location: {max_loc}")
+    
+    if max_val >= threshold:
+        print(f"[DEBUG] ✅ FOUND (confidence {max_val:.4f} >= {threshold})")
+        return True
+    else:
+        print(f"[DEBUG] ❌ NOT FOUND (confidence {max_val:.4f} < {threshold})")
+        return False
+
+
+def find_all_with_path(but_path, gs, th):
+    """
+    Find all instances of a template and return their center coordinates.
+    
+    Args:
+        but_path: Path to template image
+        gs: Grayscale screenshot (or None to take new one)
+        th: Confidence threshold
+    
+    Returns:
+        List of (cx, cy, confidence) tuples for all matches, or empty list if none found
     """
     gray_screen = screen_shot() if gs is None else gs
     template = cv2.imread(but_path, 0)
     if template is None:
         print(f"Error: Unable to load template from '{but_path}'.")
-        return False
+        return []
+    
     # Perform template matching
     result = cv2.matchTemplate(gray_screen, template, cv2.TM_CCOEFF_NORMED)
-    threshold = th
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
-    if max_val >= threshold:
-        return True
-    return False
+    h, w = template.shape[:2]
+    
+    matches = []
+    temp_result = result.copy()
+    
+    # Find all matches by iterating and masking
+    while True:
+        min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(temp_result)
+        
+        if max_val < th:
+            break
+        
+        # Found a match - calculate center
+        x, y = max_loc
+        cx = x + w // 2
+        cy = y + h // 2
+        matches.append((cx, cy, max_val))
+        
+        # Mask this region to find next match
+        mask_size = int(max(w, h) * 1.2)
+        y1 = max(0, y - mask_size // 2)
+        y2 = min(temp_result.shape[0], y + mask_size // 2)
+        x1 = max(0, x - mask_size // 2)
+        x2 = min(temp_result.shape[1], x + mask_size // 2)
+        temp_result[y1:y2, x1:x2] = 0
+    
+    return matches
+
+
+def get_center_with_path(but_path, gs, th):
+    """
+    Find a template and return its center coordinates.
+    Mac-compatible - uses cv2.matchTemplate and adjusts for scaling factor.
+    
+    Args:
+        but_path: Path to template image
+        gs: Grayscale screenshot (or None to take new one)
+        th: Confidence threshold
+    
+    Returns:
+        Tuple (cx, cy) in logical coordinates if found, None otherwise
+    """
+    matches = find_all_with_path(but_path, gs, th)
+    if matches:
+        cx, cy = matches[0][0], matches[0][1]
+        
+        # On Mac, cv2.matchTemplate returns physical pixel coordinates
+        # but pyautogui.click expects logical coordinates
+        # So we need to divide by scaling factor
+        sft = get_scaling_factor()
+        cx_logical = cx / sft
+        cy_logical = cy / sft
+        
+        print(f"[DEBUG] Physical pixels: ({cx}, {cy})")
+        print(f"[DEBUG] Scaling factor: {sft}")
+        print(f"[DEBUG] Logical coords: ({cx_logical:.1f}, {cy_logical:.1f})")
+        
+        return (cx_logical, cy_logical)
+    return None
 
 
 def screen_shot():
