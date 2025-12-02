@@ -38,6 +38,11 @@ class BossFight:
                     exit(0)
                 time.sleep(1)
         print("Found the Run Button!")
+        
+        # Update platform-specific config file with run button coordinate
+        rb_x_logical = self.rb.x / self.sft
+        rb_y_logical = self.rb.y / self.sft
+        ConfigCoords.update_run_button_in_config(rb_x_logical, rb_y_logical)
 
     def combo_fight(self):
         self.go_to_fight(0)
@@ -137,6 +142,8 @@ class BossFight:
                 if self.use_config_diamond and self.config_coords:
                     coords = self.config_coords.get_coord("use_diamond")
                     if coords:
+                        click_at(coords[0], coords[1] + 60)
+                        time.sleep(1)
                         click_at(coords[0], coords[1])
                         time.sleep(1)
                         print("Use high Diamond to fight boss (from config)")
@@ -156,7 +163,7 @@ class BossFight:
                     click_at(center.x / self.sft, center.y / self.sft)
                     time.sleep(2)
                     print("Use default ticket to fight boss")
-            elif simple_single_find("BossFree", "Single", 0.8):
+            elif not use_diam and simple_single_find("BossFree", "Single", 0.8):
                 center = get_center("BossFree", "Single")
                 click_at(center.x / self.sft, center.y / self.sft + 50)
                 time.sleep(1)

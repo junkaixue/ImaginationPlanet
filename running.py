@@ -5,6 +5,7 @@ from click import *
 from common import *
 from smart_card_grab import SmartCardGrab
 from log_helper import log
+from config_coords import ConfigCoords
 
 
 class MainRun:
@@ -60,6 +61,11 @@ class MainRun:
         self.smart_grab = SmartCardGrab(sft=self.sft, rb=self.rb)
 
         log("Found the Run Button!")
+        
+        # Update platform-specific config file with run button coordinate
+        rb_x_logical = self.rb.x / self.sft
+        rb_y_logical = self.rb.y / self.sft
+        ConfigCoords.update_run_button_in_config(rb_x_logical, rb_y_logical)
 
     def long_click(self):
         # Move to the position (if necessary)

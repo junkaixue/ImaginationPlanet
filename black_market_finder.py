@@ -5,6 +5,7 @@ import platform
 import pyautogui
 
 from common import *
+from config_coords import ConfigCoords
 
 Point = namedtuple('Point', ['x', 'y'])
 
@@ -69,6 +70,11 @@ class BlackMarketFinder:
                     exit(0)
                 time.sleep(1)
         print("Found the Run Button!")
+        
+        # Update platform-specific config file with run button coordinate
+        rb_x_logical = self.rb.x / self.sft
+        rb_y_logical = self.rb.y / self.sft
+        ConfigCoords.update_run_button_in_config(rb_x_logical, rb_y_logical)
         
         # Enter star entry
         self.enter_star_world()
