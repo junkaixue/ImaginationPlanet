@@ -91,7 +91,7 @@ class MainRun:
 
         log("Visit Go home found! In visiting main mode now!")
 
-        if self.go_home or self.is_niu or (self.current_mode == "ONEB" and not single_find("33")):
+        if self.go_home or self.is_niu or (self.current_mode == "ONEB" and not simple_single_find("33", "Single", 0.7)):
             log("Going home!")
             
             # Click go home and confirm until we return to main page
@@ -489,16 +489,30 @@ class MainRun:
 
     def switch_run(self):
         while True:
-            if simple_single_find("FACE_UP_LEFT", "Single", 0.64):
-                if self.current_mode != "TWB":
+            # Debug: Check what's on screen
+            face_detected = simple_single_find("FACE_UP_LEFT", "Single", 0.6)
+            twb_bar_detected = simple_single_find("TW", "Single", 0.7)
+            oneb_bar_detected = simple_single_find("ONE", "Single", 0.7)
+            if self.current_mode is None:
+                if oneb_bar_detected:
+                    self.current_mode = "ONEB"
+                else:
+                    self.current_mode = "TWB"
+            
+            log(f"🔍 Detection: FACE={face_detected}, TWB_bar={twb_bar_detected}, ONEB_bar={oneb_bar_detected}, mode={self.current_mode}")
+            
+            # Simple idempotent checks:
+            # 1. If FACE detected, switch to TWB
+            # 2. Else, if not in ONEB, switch to ONEB
+            if face_detected:
+                if oneb_bar_detected:
                     log("🔄 Switching to TWB mode")
                     self.current_mode = "TWB"
-                self.switch("ONE", "TWB")
+                    self.switch("ONE", "TWB")
             else:
-                if single_find("TW"):
-                    if self.current_mode != "ONEB":
-                        log("🔄 Switching to ONEB mode (smart grab disabled)")
-                        self.current_mode = "ONEB"
+                if twb_bar_detected:
+                    log("🔄 Switching to ONEB mode (smart grab disabled)")
+                    self.current_mode = "ONEB"
                     self.switch("TW", "ONEB")
 
             # Check for map repair before other actions
@@ -606,7 +620,7 @@ class MainRun:
                 time.sleep(0.5)
 
     def switch(self, from_s, to_s):
-        while simple_single_find(from_s, "Single", 0.5):
+        while simple_single_find(from_s, "Single", 0.7):
             center = get_center(from_s, "Single")
             click_at(center.x / self.sft, center.y / self.sft)
             time.sleep(1)
