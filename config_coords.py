@@ -120,6 +120,9 @@ class ConfigCoords:
                 rb_x_logical = self.rb.x / self.sft
                 rb_y_logical = self.rb.y / self.sft
                 print(f"   Logical coordinates: ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
+                
+                # Update config file with run button coordinate
+                ConfigCoords.update_run_button_in_config(rb_x_logical, rb_y_logical)
             except:
                 print(f"Run Button not found, retrying... ({retry} attempts left)")
                 retry -= 1
@@ -188,6 +191,53 @@ class ConfigCoords:
         print("\nAvailable coordinates:")
         for name, (delta_x, delta_y) in sorted(self.coords.items()):
             print(f"  {name}: Δx={delta_x:+.1f}, Δy={delta_y:+.1f}")
+    
+    @staticmethod
+    def update_run_button_in_config(rb_x, rb_y):
+        """Update the run_button coordinate in the platform-specific config file.
+        
+        Args:
+            rb_x: Run Button x coordinate (logical)
+            rb_y: Run Button y coordinate (logical)
+        """
+        # Determine platform-specific config file
+        is_mac = (platform.system() == "Darwin")
+        config_file = "cood_mac.cfg" if is_mac else "cood_win.cfg"
+        config_path = os.path.join("configs", config_file)
+        
+        if not os.path.exists(config_path):
+            print(f"Warning: Config file not found at {config_path}, cannot update run_button")
+            return
+        
+        # Read all lines from config
+        with open(config_path, 'r') as f:
+            lines = f.readlines()
+        
+        # Update or add run_button line
+        run_button_line = f"run_button:{rb_x:.0f},{rb_y:.0f}\n"
+        found_run_button = False
+        
+        for i, line in enumerate(lines):
+            if line.strip().startswith('run_button:'):
+                lines[i] = run_button_line
+                found_run_button = True
+                break
+        
+        # If run_button not found, add it after comments/blank lines
+        if not found_run_button:
+            # Find a good position to insert (after initial comments)
+            insert_pos = 0
+            for i, line in enumerate(lines):
+                if line.strip() and not line.strip().startswith('#'):
+                    insert_pos = i
+                    break
+            lines.insert(insert_pos, run_button_line)
+        
+        # Write back to config file
+        with open(config_path, 'w') as f:
+            f.writelines(lines)
+        
+        print(f"✅ Updated {config_file} with run_button: ({rb_x:.0f}, {rb_y:.0f})")
 
 
 # Convenience function for one-off clicks
