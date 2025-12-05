@@ -496,7 +496,7 @@ class MainRun:
     def switch_run(self):
         while True:
             # Debug: Check what's on screen
-            face_detected = simple_single_find("FACE_UP_LEFT", "Single", 0.6)
+            face_detected = simple_single_find("FACE_UP_LEFT", "Single", 0.5) and self.smart_grab.check_run_face_in_box()
             twb_bar_detected = simple_single_find("TW", "Single", 0.7)
             oneb_bar_detected = simple_single_find("ONE", "Single", 0.7)
             if self.current_mode is None:

@@ -95,6 +95,45 @@ class SmartCardGrab:
 
         return False
 
+    def check_run_face_in_box(self):
+        """Check if FACE_UP_LEFT appears within a specific visit box.
+
+        Args:
+            box_name: Name of the visit box (e.g., "visit_last_c1")
+
+        Returns:
+            True if face found in box, False otherwise
+        """
+        # Get the center coordinates of the box
+        box_coords = self.config.get_coord("change_33")
+        if box_coords is None:
+            log(f"Warning: Could not get coordinates for change_33")
+            return False
+
+        box_x, box_y = box_coords
+
+        # Try to find all FACE_UP_LEFT occurrences
+        try:
+            faces = get_all("VISIT_FACE_UP_LEFT", "Single")
+        except:
+            # No faces found at all
+            return False
+
+        if len(faces) == 0:
+            return False
+
+        # Check if any face is within the box area
+        for face in faces:
+            face_x = face.x / self.sft
+            face_y = face.y / self.sft
+
+            # Check if face is within box bounds
+            if (face_x <= box_x) and (face_y >= box_y):
+                log(f"�?Found VISIT_FACE_UP_LEFT in change_33 box at ({face_x:.1f}, {face_y:.1f})")
+                return True
+
+        return False
+
     def _check_and_click_card_button(self):
         """Step 1: Click card_button to enter card selection UI."""
         log("Clicking card_button from config...")
