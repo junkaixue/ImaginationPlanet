@@ -327,7 +327,7 @@ class MainRun:
             time.sleep(2)
             
             # Step 5: Click use_ticket using single_find
-            if single_find("UseTicket"):
+            while single_find("UseTicket"):
                 try:
                     center = get_center("UseTicket", "Single")
                     click_at(center.x / self.sft, center.y / self.sft)
@@ -335,10 +335,7 @@ class MainRun:
                 except Exception as e:
                     log(f"Failed to click UseTicket: {e}")
                     break
-            else:
-                log("UseTicket button not found, repair may be complete")
-                break
-            time.sleep(1)
+                time.sleep(1)
         
         # Step 7: Nothing left, completed
         log(f"✅ Map repair completed! Repaired {repair_count} items")
@@ -496,7 +493,7 @@ class MainRun:
     def switch_run(self):
         while True:
             # Debug: Check what's on screen
-            face_detected = simple_single_find("FACE_UP_LEFT", "Single", 0.5) and self.smart_grab.check_run_face_in_box()
+            face_detected = simple_single_find("FACE_UP_LEFT", "Single", 0.45) and self.smart_grab.check_run_face_in_box()
             twb_bar_detected = simple_single_find("TW", "Single", 0.7)
             oneb_bar_detected = simple_single_find("ONE", "Single", 0.7)
             if self.current_mode is None:
@@ -523,6 +520,13 @@ class MainRun:
 
             # Check for map repair before other actions
             self.map_repair()
+
+            if simple_single_find("DingHao", "Single", 0.7):
+                # Guosha ding le
+                log("Guo sha ding le.... Sleep 10 mins")
+                time.sleep(10 * 60)
+                self.restart_game()
+                continue
 
             bts = find_button("Main")
             if "Guess" in bts:
@@ -638,8 +642,86 @@ class MainRun:
                 log("Switch failed, retry...")
         log("Switched to " + to_s)
 
+    def restart_game(self):
+        close_name = self.smart_grab.config.get_coord("close_game")
+        close_announce = self.smart_grab.config.get_coord("close_announce")
+        start_game = self.smart_grab.config.get_coord("start_game")
+        setup = self.smart_grab.config.get_coord("setup")
+        setup_confirm = self.smart_grab.config.get_coord("setup_confirm")
+
+        while simple_single_find("DingHao", "Single", 0.7):
+            click_at(close_name[0], close_name[1])
+            time.sleep(2)
+            log("Closing the game.....")
+
+        log("Game closed!")
+
+        while not single_find("ClickGame"):
+            log("Waiting for game button shows up....")
+            time.sleep(2)
+
+        log("Game button shows up now!")
+
+        while single_find("ClickGame"):
+            center = get_center("ClickGame", "Single")
+            click_at(center.x / self.sft, center.y / self.sft)
+            time.sleep(2)
+            log("Game button clicked!")
+
+        log("Game button clicked!")
+
+        while not single_find("Announcement"):
+            log("Waiting for announcement shows up....")
+            time.sleep(2)
+
+        log("Announcement shows up now!")
+
+        while single_find("Announcement"):
+            click_at(close_announce[0], close_announce[1])
+            time.sleep(2)
+            log("Announcement clicked!")
+
+        log("Announcement clicked!")
+
+        while not single_find("StartGame"):
+            log("Waiting for game button shows up....")
+            time.sleep(2)
+
+        log("Game button shows up now!")
+
+        while not single_find("StartGame"):
+            log("Waiting starting game shows up....")
+            time.sleep(2)
+
+        log("Start game shows up!")
+
+        while single_find("StartGame"):
+            click_at(start_game[0], start_game[1])
+            time.sleep(2)
+            log("Start game clicking!")
+
+        while not single_find("RunButton"):
+            click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+            time.sleep(1)
+            log("Waiting for main page and click empty place to close ads")
+
+        while not single_find("AutoPick"):
+            log("Clicking auto configs....")
+            click_at(setup[0], setup[1])
+            time.sleep(2)
+
+        log("Auto configs clicked!")
+
+        while single_find("AutoPick"):
+            log("Auto configs starts...")
+            click_at(setup_confirm[0], setup_confirm[1])
+            time.sleep(2)
+
+        log("Auto configs started! Everything is done! Continue!")
+        time.sleep(2)
+
 
 if __name__ == '__main__':
     r = MainRun(False, False, False, True)
     r.friend_index = 2
-    r.find_cat_house()
+    r.restart_game()
