@@ -62,6 +62,7 @@ common_map = {
 
 single_find_map = {
     # Main
+    "RunButton": get_image_path("throwbutton.png"),
     "ThankGift": get_image_path("thank_gift.png"),
     "PKG": get_image_path("package.png"),
     "TW": get_image_path("twenty_throw.png"),
@@ -183,6 +184,13 @@ single_find_map = {
     
     # Black Market (part of star feature)
     "BlackMarket": get_image_path("star/black_market.png"),
+
+    # Restart Game
+    "DingHao": get_image_path("dinghao.png"),
+    "ClickGame": get_image_path("click_game.png"),
+    "StartGame": get_image_path("start_game.png"),
+    "AutoPick": get_image_path("auto_pick.png"),
+    "Announcement": get_image_path("announcement.png"),
 }
 
 resource_map = {
