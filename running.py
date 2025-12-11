@@ -102,6 +102,13 @@ class MainRun:
             
             # Click go home and confirm until we return to main page
             while simple_single_find("VisitGoHome", "Single", 0.8):
+                if simple_single_find("DingHao", "Single", 0.7):
+                    # Guosha ding le
+                    log("Guo sha ding le.... Sleep 10 mins")
+                    time.sleep(10 * 60)
+                    self.restart_game()
+                    return
+
                 try:
                     center = get_center("VisitGoHome", "Single")
                     click_at(center.x / self.sft, center.y / self.sft)
@@ -133,6 +140,14 @@ class MainRun:
         self.again_card_used = False
         
         for i in range(1, 2000):
+
+            if simple_single_find("DingHao", "Single", 0.7):
+                # Guosha ding le
+                log("Guo sha ding le.... Sleep 10 mins")
+                time.sleep(10 * 60)
+                self.restart_game()
+                return
+
             # Check for duplicate visit before each roll (only after 30 rolls, not in ONEB mode, and AgainCard not used yet)
             if not self.sc  and not self.again_card_used and not self.again_card_used and self.visit_roll_count > 30:
                 if self.current_mode == "ONEB":
