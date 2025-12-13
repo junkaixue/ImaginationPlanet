@@ -660,6 +660,7 @@ class MainRun:
     def restart_game(self):
         close_name = self.smart_grab.config.get_coord("close_game")
         close_announce = self.smart_grab.config.get_coord("close_announce")
+        main_game = self.smart_grab.config.get_coord("main_game")
         start_game = self.smart_grab.config.get_coord("start_game")
         setup = self.smart_grab.config.get_coord("setup")
         setup_confirm = self.smart_grab.config.get_coord("setup_confirm")
@@ -678,8 +679,7 @@ class MainRun:
         log("Game button shows up now!")
 
         while single_find("ClickGame"):
-            center = get_center("ClickGame", "Single")
-            click_at(center.x / self.sft, center.y / self.sft)
+            click_at(main_game[0], main_game[1])
             time.sleep(2)
             log("Game button clicked!")
 
