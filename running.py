@@ -657,6 +657,50 @@ class MainRun:
                 log("Switch failed, retry...")
         log("Switched to " + to_s)
 
+    def refresh_run_button_and_coords(self, retry=30):
+        found_rb = False
+        while not found_rb and retry > 0:
+            try:
+                self.rb = get_center("RunButton", "Main")
+                found_rb = True
+            except:
+                retry -= 1
+                log(f"Run Button was not found during refresh! retries left: {retry}")
+                time.sleep(1)
+
+        if not found_rb:
+            log("ERROR: Failed to refresh Run Button")
+            return False
+
+        if self.is_mac:
+            self.sft = 1
+        else:
+            self.sft = get_scaling_factor()
+
+        rb_x_logical = self.rb.x / self.sft
+        rb_y_logical = self.rb.y / self.sft
+        ConfigCoords.update_run_button_in_config(rb_x_logical, rb_y_logical)
+
+        try:
+            coor_dict.clear()
+        except:
+            pass
+        try:
+            but_list.clear()
+        except:
+            pass
+
+        try:
+            self.smart_grab.sft = self.sft
+            self.smart_grab.rb = self.rb
+            self.smart_grab.config = ConfigCoords(mock_rb=(int(self.rb.x), int(self.rb.y)))
+        except Exception as e:
+            log(f"ERROR: Failed to refresh smart_grab config: {e}")
+            self.smart_grab = SmartCardGrab(sft=self.sft, rb=self.rb)
+
+        log(f"Refresh complete. Run Button at ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
+        return True
+
     def restart_game(self):
         close_name = self.smart_grab.config.get_coord("close_game")
         close_announce = self.smart_grab.config.get_coord("close_announce")
@@ -666,7 +710,17 @@ class MainRun:
         setup_confirm = self.smart_grab.config.get_coord("setup_confirm")
 
         while simple_single_find("DingHao", "Single", 0.7):
-            click_at(close_name[0], close_name[1])
+            try:
+                location = pyautogui.locateOnScreen(resource_map["Single"]["CloseTab"], confidence=0.7)
+                if location is not None:
+                    click_x = (location.left + (location.width - 5)) / self.sft
+                    click_y = (location.top + (location.height / 2)) / self.sft
+                    click_at(click_x, click_y)
+                else:
+                    click_at(close_name[0], close_name[1])
+            except:
+                click_at(close_name[0], close_name[1])
+
             time.sleep(2)
             log("Closing the game.....")
 
@@ -733,6 +787,7 @@ class MainRun:
             time.sleep(2)
 
         log("Auto configs started! Everything is done! Continue!")
+        self.refresh_run_button_and_coords()
         time.sleep(2)
 
 
