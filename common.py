@@ -191,6 +191,7 @@ single_find_map = {
     "StartGame": get_image_path("start_game.png"),
     "AutoPick": get_image_path("auto_pick.png"),
     "Announcement": get_image_path("announcement.png"),
+    "CloseTab": get_image_path("close_tab.png"),
 }
 
 resource_map = {
