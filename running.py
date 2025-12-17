@@ -93,6 +93,12 @@ class MainRun:
 
         while not single_find("VisitGoHome"):
             log("Visit Go Home was not found! Sleep for 1 second")
+            if simple_single_find("DingHao", "Single", 0.7):
+                # Guosha ding le
+                log("Guo sha ding le.... Sleep 10 mins")
+                time.sleep(10 * 60)
+                self.restart_game()
+                continue
             time.sleep(1)
 
         log("Visit Go home found! In visiting main mode now!")
