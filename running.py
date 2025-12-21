@@ -29,6 +29,7 @@ class MainRun:
     def __init__(self, skip_cat_grab, go_home, semi_auto=False, is_switch=False, is_niu=False):
         self.semi_auto = semi_auto
         self.go_home = go_home
+        self.consecutive_clicks = 0
         self.sft = get_scaling_factor()
         self.is_switch = is_switch
         self.is_niu = is_niu
@@ -471,6 +472,7 @@ class MainRun:
         while True:
             bts = find_button("Main")
             if "VisitMain" in bts:
+                self.consecutive_clicks = 0
                 log("Visiting! This is " + str(self.visits) + " visit!")
                 center = get_center("VisitFriend", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
@@ -558,6 +560,7 @@ class MainRun:
                 time.sleep(2)
                 continue
             elif "VisitMain" in bts:
+                self.consecutive_clicks = 0
                 log("Visiting! This is " + str(self.visits) + " visit!")
                 center = get_center("VisitFriend", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
@@ -600,8 +603,14 @@ class MainRun:
                 time.sleep(1)
             else:
                 self.count += 1
-                log("Keep running! This is " + str(self.count) + " clicks")
+                self.consecutive_clicks += 1
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                log("Keep running! This is " + str(self.count) + " clicks, " + str(self.consecutive_clicks) + " consecutive clicks")
+                if self.consecutive_clicks > 100:
+                    log(f"Consecutive clicks exceeded 100 ({self.consecutive_clicks}), restarting game...")
+                    self.consecutive_clicks = 0
+                    self.restart_game()
+                    continue
                 time.sleep(4.5)
 
     def run(self):
@@ -613,6 +622,7 @@ class MainRun:
                 time.sleep(2)
                 continue
             elif "VisitMain" in bts:
+                self.consecutive_clicks = 0
                 log("Visiting! This is " + str(self.visits) + " visit!")
                 center = get_center("VisitFriend", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
@@ -650,6 +660,12 @@ class MainRun:
                 self.count += 1
                 log("Keep running! This is " + str(self.count) + " clicks")
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+                self.consecutive_clicks += 1
+                if self.consecutive_clicks > 100:
+                    log(f"Consecutive clicks exceeded 100 ({self.consecutive_clicks}), restarting game...")
+                    self.consecutive_clicks = 0
+                    self.restart_game()
+                    continue
                 time.sleep(0.5)
 
     def switch(self, from_s, to_s):
@@ -838,6 +854,7 @@ class MainRun:
 
         log("Auto configs started! Everything is done! Continue!")
         self.refresh_run_button_and_coords()
+        self.consecutive_clicks = 0
         time.sleep(2)
         return True
 
