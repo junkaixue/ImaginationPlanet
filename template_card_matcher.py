@@ -27,6 +27,8 @@ class TemplateCardMatcher:
         self.card_positions = []  # List of (template_idx, center_x, center_y, row, col)
         self.config = None
         self.pair_top_left = None
+        self.snapshot_offset_x = 0  # Offset due to snapshot extension
+        self.snapshot_offset_y = 0  # Offset due to snapshot extension
         
     def load_config_rectangle(self):
         """Load the card area coordinates from config file."""
@@ -59,15 +61,36 @@ class TemplateCardMatcher:
         else:
             self.config = ConfigCoords()
         
-        # Get pair_top_left (center of first card)
+        # Get pair_top_left and pair_bottom_right
         top_left = self.config.get_coord("pair_top_left")
+        bottom_right = self.config.get_coord("pair_bottom_right")
         
-        if not top_left:
-            log("ERROR: pair_top_left not found in config file!")
+        if not top_left or not bottom_right:
+            log("ERROR: pair_top_left or pair_bottom_right not found in config file!")
             return False
-            
+        
+        # Calculate snapshot extension (same logic as auto_snapshot_solver.py)
+        card_width = bottom_right[0] - top_left[0]
+        card_height = bottom_right[1] - top_left[1]
+        
+        if platform.system() == "Darwin":
+            # Mac: Fixed extension
+            extend_left = 39
+            extend_up = 58
+            log(f"Mac: Using fixed snapshot extension (L={extend_left}, U={extend_up})")
+        else:
+            # Windows: Half dimensions
+            extend_left = card_width // 2
+            extend_up = card_height // 2
+            log(f"Windows: Using half-dimension extension (L={extend_left}, U={extend_up})")
+        
+        # Store the snapshot offsets
+        self.snapshot_offset_x = -extend_left  # Snapshot extends LEFT, so offset is negative
+        self.snapshot_offset_y = -extend_up    # Snapshot extends UP, so offset is negative
+        
         self.pair_top_left = top_left
-        log(f"Card grid top-left (card 0,0 center): ({self.pair_top_left[0]:.1f}, {self.pair_top_left[1]:.1f})")
+        log(f"Card grid top-left: ({self.pair_top_left[0]:.1f}, {self.pair_top_left[1]:.1f})")
+        log(f"Snapshot offset: ({self.snapshot_offset_x}, {self.snapshot_offset_y})")
         
         return True
         
@@ -79,6 +102,9 @@ class TemplateCardMatcher:
             log(f"ERROR: Template directory not found: {self.template_dir}")
             return False
         
+        # Files to skip (not used for matching)
+        skip_files = {'flipback.png'}
+        
         template_files = sorted([f for f in os.listdir(self.template_dir) 
                                 if f.lower().endswith(('.png', '.jpg', '.jpeg'))])
         
@@ -86,7 +112,12 @@ class TemplateCardMatcher:
             log(f"ERROR: No template images found in {self.template_dir}")
             return False
         
-        for idx, filename in enumerate(template_files):
+        for filename in template_files:
+            # Skip excluded files
+            if filename in skip_files:
+                log(f"  Skipping {filename} (not used for matching)")
+                continue
+            
             filepath = os.path.join(self.template_dir, filename)
             template = cv2.imread(filepath, cv2.IMREAD_COLOR)
             
@@ -94,16 +125,17 @@ class TemplateCardMatcher:
                 log(f"WARNING: Could not load {filename}")
                 continue
             
-            # Store template info
+            # Store template info - ID is based on templates list length
+            template_id = len(self.templates)
             h, w = template.shape[:2]
             self.templates.append({
-                'id': idx,
+                'id': template_id,
                 'filename': filename,
                 'image': template,
                 'height': h,
                 'width': w
             })
-            log(f"  Loaded template {idx}: {filename} ({w}x{h})")
+            log(f"  Loaded template {template_id}: {filename} ({w}x{h})")
         
         log(f"Loaded {len(self.templates)} card templates")
         return len(self.templates) > 0
@@ -285,10 +317,23 @@ class TemplateCardMatcher:
         return pairs
         
     def calculate_click_position(self, row, col):
-        """Calculate click position from grid coordinates."""
-        horizontal_spacing = 123
-        vertical_spacing = 170
+        """Calculate click position from grid coordinates.
         
+        Grid (row, col) comes from clustering cards in the snapshot image.
+        pair_top_left is the screen position of card (0,0) center.
+        """
+        # Platform-specific spacing (measured from actual game screen)
+        import platform
+        if platform.system() == "Darwin":
+            # Mac physical pixel spacing
+            horizontal_spacing = 123
+            vertical_spacing = 170
+        else:
+            # Windows spacing
+            horizontal_spacing = 123
+            vertical_spacing = 170
+        
+        # Calculate screen position
         abs_x = self.pair_top_left[0] + (col * horizontal_spacing)
         abs_y = self.pair_top_left[1] + (row * vertical_spacing)
         
