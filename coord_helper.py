@@ -16,8 +16,8 @@ Press Ctrl+C to exit.
 import time
 import sys
 import pyautogui
-from common import get_center, get_scaling_factor
 import platform
+from common import get_center, get_scaling_factor
 
 
 def main():
@@ -38,9 +38,10 @@ def main():
     
     if len(sys.argv) == 3:
         try:
+            # Command line args are in logical coordinates
             rb_x_logical = float(sys.argv[1])
             rb_y_logical = float(sys.argv[2])
-            print(f"\nUsing provided Run Button coordinates:")
+            print(f"\nUsing provided Run Button coordinates (logical):")
             print(f"   ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
         except ValueError:
             print("\nERROR: Invalid coordinates provided. Must be numbers.")
@@ -58,17 +59,25 @@ def main():
                     line = line.strip()
                     if line.startswith('run_button:'):
                         try:
-                            coords = line.split(':')[1].strip()
+                            coords = line.split(':')[1].strip().rstrip('.')
                             x, y = coords.split(',')
-                            rb_x_logical = float(x.strip())
-                            rb_y_logical = float(y.strip())
-                            print(f"\nFound run_button in config: ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
+                            rb_x_physical = float(x.strip())
+                            rb_y_physical = float(y.strip())
+                            
+                            # Config stores physical pixels
+                            # Convert to logical for pyautogui.position() comparison
+                            rb_x_logical = rb_x_physical / sft
+                            rb_y_logical = rb_y_physical / sft
+                            
+                            print(f"\nFound run_button in config:")
+                            print(f"  Physical pixels: ({rb_x_physical:.1f}, {rb_y_physical:.1f})")
+                            print(f"  Logical coords:  ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
                             break
                         except:
                             pass
     
     if rb_x_logical is None or rb_y_logical is None:
-        # Find run button
+        # Find run button using template matching
         print("\nLooking for Run Button...")
         retry = 10
         rb_center = None
@@ -76,11 +85,16 @@ def main():
         while retry > 0 and rb_center is None:
             try:
                 rb_center = get_center("RunButton", "Main")
-                print(f"Found Run Button at: ({rb_center.x}, {rb_center.y}) [pixel coords]")
-                # Convert to logical coordinates
-                rb_x_logical = rb_center.x / sft
-                rb_y_logical = rb_center.y / sft
-                print(f"   Logical coordinates: ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
+                # get_center now returns logical coordinates (after scaling factor division)
+                rb_x_logical = rb_center[0]
+                rb_y_logical = rb_center[1]
+                
+                rb_x_physical = rb_x_logical * sft
+                rb_y_physical = rb_y_logical * sft
+                
+                print(f"Found Run Button:")
+                print(f"  Logical coords:  ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
+                print(f"  Physical pixels: ({rb_x_physical:.1f}, {rb_y_physical:.1f})")
             except:
                 print(f"Run Button not found, retrying... ({retry} attempts left)")
                 retry -= 1
@@ -88,7 +102,7 @@ def main():
         
         if rb_center is None:
             print("Failed to find Run Button. Make sure the game window is visible.")
-            print("\nAlternatively, provide Run Button coordinates:")
+            print("\nAlternatively, provide Run Button coordinates (logical):")
             print(f"  python coord_helper.py <x> <y>")
             return
     
@@ -98,34 +112,38 @@ def main():
     print("Press Ctrl+C to exit.")
     print("=" * 70 + "\n")
     
-    print(f"{'Current Mouse Position':<30} | {'Delta from RunButton':<30}")
+    is_mac = (platform_name == "Darwin")
+    print(f"{'Mouse Position':<30} | {'Delta for Config':<30}")
     print("-" * 70)
     
     try:
         last_pos = None
         while True:
-            # Get current mouse position (physical pixels on both Mac and Windows)
-            # pyautogui.position() returns screen coordinates that need scaling factor conversion
+            # Get current mouse position
+            # pyautogui.position() returns logical coordinates on Mac (e.g., 1280, 832)
             current_pos = pyautogui.position()
             
             # Only print if position changed
             if last_pos != current_pos:
-                # Convert to logical coordinates (works on both Mac and Windows)
-                # Mac: handles Retina display scaling
-                # Windows: handles display scaling (125%, 150%, etc.)
-                current_x_logical = current_pos.x / sft
-                current_y_logical = current_pos.y / sft
+                # Current position in logical coordinates
+                current_x_logical = current_pos.x
+                current_y_logical = current_pos.y
                 
                 # Calculate delta in logical coordinates
-                delta_x = current_x_logical - rb_x_logical
-                delta_y = current_y_logical - rb_y_logical
+                delta_x_logical = current_x_logical - rb_x_logical
+                delta_y_logical = current_y_logical - rb_y_logical
                 
-                # Use sys.stdout for robust cross-platform real-time output
-                # Pad output to 70 chars to overwrite previous line completely (Windows compatibility)
-                output = f"Mouse: ({current_x_logical:5.0f}, {current_y_logical:5.0f})  |  " \
-                         f"Delta: (Δx={delta_x:+6.0f}, Δy={delta_y:+6.0f})"
+                # Convert delta to physical pixels for config file
+                # Config file stores physical pixel deltas
+                delta_x_config = int(delta_x_logical * sft)
+                delta_y_config = int(delta_y_logical * sft)
+                
+                # Show both logical position and physical delta for config
+                output = f"Logical: ({current_x_logical:6.1f}, {current_y_logical:6.1f})  |  " \
+                         f"Config: (Δx={delta_x_config:+6d}, Δy={delta_y_config:+6d})"
+                
                 # Pad to ensure previous line content is fully overwritten
-                output = output.ljust(70)
+                output = output.ljust(80)
                 sys.stdout.write(f"\r{output}")
                 sys.stdout.flush()
                 
@@ -137,6 +155,15 @@ def main():
         print("\n\n" + "=" * 70)
         print("Coordinate Helper stopped.")
         print("=" * 70)
+        print("\n📝 How to use the Delta values:")
+        print("")
+        print("   The 'Config' delta values are in PHYSICAL PIXELS")
+        print("   Add them to your config file (cood_mac.cfg or cood_win.cfg)")
+        print("")
+        if platform_name == "Darwin":
+            print(f"   Mac Resolution: 2560×1664 logical ({int(2560*sft)}×{int(1664*sft)} physical)")
+            print(f"   Scaling Factor: {sft}")
+        print("")
 
 
 if __name__ == "__main__":
