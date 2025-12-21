@@ -240,6 +240,69 @@ class AutoSnapshotSolver:
             
             time.sleep(check_interval)
         
+    def solve_without_waiting(self, dry_run=False):
+        """Solve cards after waiting for flipback.
+        
+        Used by auto_card_game.py when cards are already revealed.
+        Takes snapshot, waits for cards to flip back, then solves.
+        
+        Args:
+            dry_run: If True, don't actually click
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        # Load configuration
+        if not self.load_config():
+            log("ERROR: Failed to load configuration")
+            return False
+        
+        # Take snapshot
+        log("Taking snapshot...")
+        self.take_snapshot()
+        
+        # Wait for cards to flip back (flipback.png appears)
+        log("\nWaiting for cards to flip back...")
+        if not self.wait_for_flipback():
+            log("ERROR: Failed to detect flipback")
+            return False
+        
+        # Wait a moment after flipback for stability
+        log("Waiting 1 second after flip back...")
+        time.sleep(1.0)
+        
+        log("\nRunning card matcher...")
+        log("="*70)
+        
+        # Use platform-specific matcher
+        if platform.system() == "Darwin":
+            log("Using MacCardMatcher (Mac)")
+            snapshot_offset = (self.card_area['x1'], self.card_area['y1'])
+            matcher = MacCardMatcher(snapshot_offset=snapshot_offset)
+            threshold = 0.75
+        else:
+            log("Using TemplateCardMatcher (Windows)")
+            matcher = TemplateCardMatcher()
+            threshold = 0.7
+        
+        success = matcher.solve_and_click(
+            threshold=threshold,
+            click_delay_between=0.25,
+            click_delay_after=0.45,
+            dry_run=dry_run
+        )
+        
+        if success:
+            log("\n" + "="*70)
+            log("SOLVER COMPLETE - SUCCESS")
+            log("="*70)
+        else:
+            log("\n" + "="*70)
+            log("SOLVER FAILED")
+            log("="*70)
+        
+        return success
+    
     def run(self, dry_run=False):
         """Main automation flow."""
         log("="*70)
@@ -290,7 +353,7 @@ class AutoSnapshotSolver:
             # Pass snapshot offset so matcher can convert image coords to screen coords
             snapshot_offset = (self.card_area['x1'], self.card_area['y1'])
             matcher = MacCardMatcher(snapshot_offset=snapshot_offset)
-            threshold = 0.75  # Mac templates might need slightly lower threshold
+            threshold = 0.92  # Mac templates might need slightly lower threshold
         else:
             log("Using TemplateCardMatcher (Windows)")
             matcher = TemplateCardMatcher()
@@ -298,8 +361,8 @@ class AutoSnapshotSolver:
         
         success = matcher.solve_and_click(
             threshold=threshold,
-            click_delay_between=0.25,
-            click_delay_after=0.45,
+            click_delay_between=0.2,
+            click_delay_after=0.28,
             dry_run=dry_run
         )
         
