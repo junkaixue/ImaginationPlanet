@@ -65,7 +65,7 @@ class MacCardMatcher:
         log(f"Loaded {len(self.templates)} card templates")
         return len(self.templates) > 0
     
-    def find_all_cards(self, threshold=0.7):
+    def find_all_cards(self, threshold=0.75):
         """Find all cards in snapshot image using template matching.
         
         NOTE: Snapshot is scaled 2x in auto_snapshot_solver to match template resolution.
@@ -162,7 +162,7 @@ class MacCardMatcher:
         click_at(cx2, cy2)
         time.sleep(delay_after)
     
-    def solve_and_click(self, threshold=0.7, click_delay_between=0.2, click_delay_after=0.35, dry_run=False):
+    def solve_and_click(self, threshold=0.75, click_delay_between=0.2, click_delay_after=0.35, dry_run=False):
         """Main function to find and click all pairs."""
         log("="*70)
         log("MAC CARD MATCHER - Starting")
