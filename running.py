@@ -1,6 +1,8 @@
 import time
 import platform
 
+from sympy import false
+
 from click import *
 from common import *
 from smart_card_grab import SmartCardGrab
@@ -708,6 +710,15 @@ class MainRun:
         return True
 
     def restart_game(self):
+        while not self.restart_games():
+            log("Game restart failed, retrying...")
+            time.sleep(5)
+        
+
+
+    def restart_games(self):
+        start_time = time.time()
+        timeout = 5 * 60
         close_name = self.smart_grab.config.get_coord("close_game")
         close_announce = self.smart_grab.config.get_coord("close_announce")
         main_game = self.smart_grab.config.get_coord("main_game")
@@ -716,6 +727,9 @@ class MainRun:
         setup_confirm = self.smart_grab.config.get_coord("setup_confirm")
 
         while simple_single_find("DingHao", "Single", 0.7):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             try:
                 location = pyautogui.locateOnScreen(resource_map["Single"]["CloseTab"], confidence=0.7)
                 if location is not None:
@@ -733,12 +747,18 @@ class MainRun:
         log("Game closed!")
 
         while not single_find("ClickGame"):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             log("Waiting for game button shows up....")
             time.sleep(2)
 
         log("Game button shows up now!")
 
         while single_find("ClickGame"):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             click_at(main_game[0], main_game[1])
             time.sleep(2)
             log("Game button clicked!")
@@ -746,12 +766,18 @@ class MainRun:
         log("Game button clicked!")
 
         while not single_find("Announcement"):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             log("Waiting for announcement shows up....")
             time.sleep(2)
 
         log("Announcement shows up now!")
 
         while single_find("Announcement"):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             click_at(close_announce[0], close_announce[1])
             time.sleep(2)
             log("Announcement clicked!")
@@ -759,28 +785,43 @@ class MainRun:
         log("Announcement clicked!")
 
         while not single_find("StartGame"):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             log("Waiting for game button shows up....")
             time.sleep(2)
 
         log("Game button shows up now!")
 
         while not single_find("StartGame"):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             log("Waiting starting game shows up....")
             time.sleep(2)
 
         log("Start game shows up!")
 
         while single_find("StartGame"):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             click_at(start_game[0], start_game[1])
             time.sleep(2)
             log("Start game clicking!")
 
         while not single_find("RunButton"):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             click_at(self.rb.x / self.sft, self.rb.y / self.sft)
             time.sleep(1)
             log("Waiting for main page and click empty place to close ads")
 
         while not single_find("AutoPick"):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             log("Clicking auto configs....")
             click_at(setup[0], setup[1])
             time.sleep(2)
@@ -788,6 +829,9 @@ class MainRun:
         log("Auto configs clicked!")
 
         while single_find("AutoPick"):
+            if time.time() - start_time > timeout:
+                log("Game restart timeout!")
+                return False
             log("Auto configs starts...")
             click_at(setup_confirm[0], setup_confirm[1])
             time.sleep(2)
@@ -795,6 +839,7 @@ class MainRun:
         log("Auto configs started! Everything is done! Continue!")
         self.refresh_run_button_and_coords()
         time.sleep(2)
+        return True
 
 
 if __name__ == '__main__':
