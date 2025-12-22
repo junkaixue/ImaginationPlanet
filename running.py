@@ -8,6 +8,7 @@ from common import *
 from smart_card_grab import SmartCardGrab
 from log_helper import log
 from config_coords import ConfigCoords
+from collections import namedtuple
 
 
 class MainRun:
@@ -25,6 +26,14 @@ class MainRun:
     visit_roll_count = 0  # Count rolls within each visit
     again_card_used = False  # Track if AgainCard was used in current visit
     friend_index = 0  # Track current friend slot for rotation (0-15)
+    close_name = None
+    close_announce = None
+    main_game = None
+    start_game = None
+    setup = None
+    setup_confirm = None
+    chess_man = None
+
 
     def __init__(self, skip_cat_grab, go_home, semi_auto=False, is_switch=False, is_niu=False):
         self.semi_auto = semi_auto
@@ -42,11 +51,14 @@ class MainRun:
         self.sc = skip_cat_grab
         self.back_visit = None
         self.card_button = None
+        Point = namedtuple('Point', ['x', 'y'])
         found_rb = False
         retry = 50
         while not found_rb:
             try:
                 self.rb = get_center("RunButton", "Main")
+                if isinstance(self.rb, tuple):
+                    self.rb = Point(self.rb[0], self.rb[1])
                 found_rb = True
             except:
                 log("Run Botton was not found!")
@@ -63,12 +75,23 @@ class MainRun:
         # Initialize smart card grab handler
         self.smart_grab = SmartCardGrab(sft=self.sft, rb=self.rb)
 
+        self.reload_cached_coords()
+
         log("Found the Run Button!")
         
         # Update platform-specific config file with run button coordinate
         rb_x_logical = self.rb.x / self.sft
         rb_y_logical = self.rb.y / self.sft
         ConfigCoords.update_run_button_in_config(rb_x_logical, rb_y_logical)
+
+    def reload_cached_coords(self):
+        self.close_name = self.smart_grab.config.get_coord("close_game")
+        self.close_announce = self.smart_grab.config.get_coord("close_announce")
+        self.main_game = self.smart_grab.config.get_coord("main_game")
+        self.start_game = self.smart_grab.config.get_coord("start_game")
+        self.setup = self.smart_grab.config.get_coord("setup")
+        self.setup_confirm = self.smart_grab.config.get_coord("setup_confirm")
+        self.chess_man = self.smart_grab.config.get_coord("chessman")
 
     def long_click(self):
         # Move to the position (if necessary)
@@ -598,6 +621,14 @@ class MainRun:
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
+            elif "ChessMan" in bts:
+                log("Found ChessMan! Let's play chess!")
+                while single_find("ChessMan"):
+                    click_at(self.chess_man[0], self.chess_man[1])
+                    time.sleep(1)
+                    log("Exit chess!")
+                time.sleep(2)
+                continue
             elif single_find("PKG"):
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft + 100)
                 time.sleep(1)
@@ -606,8 +637,8 @@ class MainRun:
                 self.consecutive_clicks += 1
                 click_at(self.rb.x / self.sft, self.rb.y / self.sft)
                 log("Keep running! This is " + str(self.count) + " clicks, " + str(self.consecutive_clicks) + " consecutive clicks")
-                if self.consecutive_clicks > 100:
-                    log(f"Consecutive clicks exceeded 100 ({self.consecutive_clicks}), restarting game...")
+                if self.consecutive_clicks > 150:
+                    log(f"Consecutive clicks exceeded 150 ({self.consecutive_clicks}), restarting game...")
                     self.consecutive_clicks = 0
                     self.restart_game()
                     continue
@@ -682,10 +713,13 @@ class MainRun:
         log("Switched to " + to_s)
 
     def refresh_run_button_and_coords(self, retry=30):
+        Point = namedtuple('Point', ['x', 'y'])
         found_rb = False
         while not found_rb and retry > 0:
             try:
                 self.rb = get_center("RunButton", "Main")
+                if isinstance(self.rb, tuple):
+                    self.rb = Point(self.rb[0], self.rb[1])
                 found_rb = True
             except:
                 retry -= 1
@@ -722,6 +756,8 @@ class MainRun:
             log(f"ERROR: Failed to refresh smart_grab config: {e}")
             self.smart_grab = SmartCardGrab(sft=self.sft, rb=self.rb)
 
+        self.reload_cached_coords()
+
         log(f"Refresh complete. Run Button at ({rb_x_logical:.1f}, {rb_y_logical:.1f})")
         return True
 
@@ -735,12 +771,7 @@ class MainRun:
     def restart_games(self):
         start_time = time.time()
         timeout = 5 * 60
-        close_name = self.smart_grab.config.get_coord("close_game")
-        close_announce = self.smart_grab.config.get_coord("close_announce")
-        main_game = self.smart_grab.config.get_coord("main_game")
-        start_game = self.smart_grab.config.get_coord("start_game")
-        setup = self.smart_grab.config.get_coord("setup")
-        setup_confirm = self.smart_grab.config.get_coord("setup_confirm")
+
 
         while simple_single_find("DingHao", "Single", 0.7):
             if time.time() - start_time > timeout:
@@ -753,9 +784,9 @@ class MainRun:
                     click_y = (location.top + (location.height / 2)) / self.sft
                     click_at(click_x, click_y)
                 else:
-                    click_at(close_name[0], close_name[1])
+                    click_at(self.close_name[0], self.close_name[1])
             except:
-                click_at(close_name[0], close_name[1])
+                click_at(self.close_name[0], self.close_name[1])
 
             time.sleep(2)
             log("Closing the game.....")
@@ -775,7 +806,7 @@ class MainRun:
             if time.time() - start_time > timeout:
                 log("Game restart timeout!")
                 return False
-            click_at(main_game[0], main_game[1])
+            click_at(self.main_game[0], self.main_game[1])
             time.sleep(2)
             log("Game button clicked!")
 
@@ -794,7 +825,7 @@ class MainRun:
             if time.time() - start_time > timeout:
                 log("Game restart timeout!")
                 return False
-            click_at(close_announce[0], close_announce[1])
+            click_at(self.close_announce[0], self.close_announce[1])
             time.sleep(2)
             log("Announcement clicked!")
 
@@ -822,7 +853,7 @@ class MainRun:
             if time.time() - start_time > timeout:
                 log("Game restart timeout!")
                 return False
-            click_at(start_game[0], start_game[1])
+            click_at(self.start_game[0], self.start_game[1])
             time.sleep(2)
             log("Start game clicking!")
 
@@ -830,7 +861,7 @@ class MainRun:
             if time.time() - start_time > timeout:
                 log("Game restart timeout!")
                 return False
-            click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+            click_at(self.setup[0], self.setup[1])
             time.sleep(1)
             log("Waiting for main page and click empty place to close ads")
 
@@ -839,7 +870,7 @@ class MainRun:
                 log("Game restart timeout!")
                 return False
             log("Clicking auto configs....")
-            click_at(setup[0], setup[1])
+            click_at(self.setup[0], self.setup[1])
             time.sleep(2)
 
         log("Auto configs clicked!")
@@ -849,7 +880,7 @@ class MainRun:
                 log("Game restart timeout!")
                 return False
             log("Auto configs starts...")
-            click_at(setup_confirm[0], setup_confirm[1])
+            click_at(self.setup_confirm[0], self.setup_confirm[1])
             time.sleep(2)
 
         log("Auto configs started! Everything is done! Continue!")
