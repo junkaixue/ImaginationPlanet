@@ -7,6 +7,11 @@ import cv2
 import numpy as np
 import pyautogui
 from platform_config import get_image_path
+from collections import namedtuple
+
+DEBUG = False
+
+Point = namedtuple('Point', ['x', 'y'])
 
 # Platform-specific imports
 if platform.system() == "Windows":
@@ -36,6 +41,7 @@ main_map = {
 
     # Visit Main
     "VisitMain": get_image_path("visiting_main.png"),
+    "ChessMan": get_image_path("chessman.png"),
 }
 
 visit_map = {
@@ -93,6 +99,7 @@ single_find_map = {
     "OneMore": get_image_path("one_more.png"),
     "VisitGoHome": get_image_path("visit_go_home.png"),
     "33": get_image_path("33.png"),
+    "ChessMan": get_image_path("chessman.png"),
 
     # Repair
     "Repair": get_image_path("repair.png"),
@@ -265,13 +272,16 @@ def simple_single_find(but, map_scope, th):
     """
     try:
         template_path = resource_map[map_scope][but]
-        print(f"[DEBUG] Looking for '{but}' in scope '{map_scope}'")
-        print(f"[DEBUG] Template path: {template_path}")
+        if DEBUG:
+            print(f"[DEBUG] Looking for '{but}' in scope '{map_scope}'")
+            print(f"[DEBUG] Template path: {template_path}")
         result = single_find_with_path(template_path, None, th)
-        print(f"[DEBUG] Result: {result}")
+        if DEBUG:
+            print(f"[DEBUG] Result: {result}")
         return result
     except Exception as e:
-        print(f"[DEBUG] Error in simple_single_find: {e}")
+        if DEBUG:
+            print(f"[DEBUG] Error in simple_single_find: {e}")
         return False
 
 
@@ -314,7 +324,7 @@ def get_all(but, map_scope):
             if prev_y is None or abs(prev_y - cy) > 20:
                 prev_y = cy
                 # Convert to logical coordinates for clicking
-                coors.append((cx / sft, cy / sft))
+                coors.append(Point(cx / sft, cy / sft))
         return coors
     except Exception as e:
         print(f"Error finding all instances of '{but}': {e}")
@@ -366,25 +376,30 @@ def single_find_with_path(but_path, gs, th):
     gray_screen = screen_shot() if gs is None else gs
     template = cv2.imread(but_path, 0)
     if template is None:
-        print(f"[ERROR] Unable to load template from '{but_path}'.")
+        if DEBUG:
+            print(f"[ERROR] Unable to load template from '{but_path}'.")
         return False
-    
-    print(f"[DEBUG] Template size: {template.shape[1]}x{template.shape[0]}")
-    print(f"[DEBUG] Screen size: {gray_screen.shape[1]}x{gray_screen.shape[0]}")
+
+    if DEBUG:
+        print(f"[DEBUG] Template size: {template.shape[1]}x{template.shape[0]}")
+        print(f"[DEBUG] Screen size: {gray_screen.shape[1]}x{gray_screen.shape[0]}")
     
     # Perform template matching
     result = cv2.matchTemplate(gray_screen, template, cv2.TM_CCOEFF_NORMED)
     threshold = th
     min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(result)
     
-    print(f"[DEBUG] Best match confidence: {max_val:.4f} (threshold: {threshold})")
-    print(f"[DEBUG] Best match location: {max_loc}")
+    if DEBUG:
+        print(f"[DEBUG] Best match confidence: {max_val:.4f} (threshold: {threshold})")
+        print(f"[DEBUG] Best match location: {max_loc}")
     
     if max_val >= threshold:
-        print(f"[DEBUG] ✅ FOUND (confidence {max_val:.4f} >= {threshold})")
+        if DEBUG:
+            print(f"[DEBUG] ✅ FOUND (confidence {max_val:.4f} >= {threshold})")
         return True
     else:
-        print(f"[DEBUG] ❌ NOT FOUND (confidence {max_val:.4f} < {threshold})")
+        if DEBUG:
+            print(f"[DEBUG] ❌ NOT FOUND (confidence {max_val:.4f} < {threshold})")
         return False
 
 
@@ -460,12 +475,13 @@ def get_center_with_path(but_path, gs, th):
         sft = get_scaling_factor()
         cx_logical = cx / sft
         cy_logical = cy / sft
+
+        if DEBUG:
+            print(f"[DEBUG] Physical pixels: ({cx}, {cy})")
+            print(f"[DEBUG] Scaling factor: {sft}")
+            print(f"[DEBUG] Logical coords: ({cx_logical:.1f}, {cy_logical:.1f})")
         
-        print(f"[DEBUG] Physical pixels: ({cx}, {cy})")
-        print(f"[DEBUG] Scaling factor: {sft}")
-        print(f"[DEBUG] Logical coords: ({cx_logical:.1f}, {cy_logical:.1f})")
-        
-        return (cx_logical, cy_logical)
+        return Point(cx_logical, cy_logical)
     return None
 
 

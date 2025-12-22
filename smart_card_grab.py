@@ -12,10 +12,19 @@ from common import get_center, get_scaling_factor, single_find, get_all, simple_
 from click import click_at
 from config_coords import ConfigCoords
 from log_helper import log
+from collections import namedtuple
 
 
 class SmartCardGrab:
     """Check for faces in visit boxes and use again_card when available."""
+
+    def _as_point(self, p):
+        Point = namedtuple('Point', ['x', 'y'])
+        if p is None:
+            return None
+        if isinstance(p, tuple):
+            return Point(p[0], p[1])
+        return p
 
     def __init__(self, sft=0, rb=None):
         """Initialize SmartCardGrab.
@@ -29,12 +38,12 @@ class SmartCardGrab:
         else:
             self.sft = sft
 
-        self.rb = rb
+        self.rb = self._as_point(rb)
 
         # Initialize config immediately
         self.config = ConfigCoords()
         if rb:
-            self.rb = rb
+            self.rb = self._as_point(rb)
         else:
             self.rb = self.config.rb
 
@@ -84,6 +93,7 @@ class SmartCardGrab:
 
         # Check if any face is within the box area
         for face in faces:
+            face = self._as_point(face)
             face_x = face.x / self.sft
             face_y = face.y / self.sft
 
@@ -124,6 +134,7 @@ class SmartCardGrab:
 
         # Check if any face is within the box area
         for face in faces:
+            face = self._as_point(face)
             face_x = face.x / self.sft
             face_y = face.y / self.sft
 
@@ -162,7 +173,7 @@ class SmartCardGrab:
         if single_find("VisitBusy"):
             log("Visit busy, clicking confirm...")
             try:
-                center = get_center("Confirm", "Single")
+                center = self._as_point(get_center("Confirm", "Single"))
                 click_at(center.x / self.sft, center.y / self.sft)
             except:
                 log("Could not find Confirm button")
@@ -229,7 +240,7 @@ class SmartCardGrab:
 
         # Pull the AgainCard
         try:
-            ac = get_center("AgainCard", "Single")
+            ac = self._as_point(get_center("AgainCard", "Single"))
             log(f"Pulling AgainCard at ({ac.x / self.sft:.1f}, {ac.y / self.sft:.1f})")
 
             # Drag the card (similar to CatCard drag)
@@ -243,7 +254,7 @@ class SmartCardGrab:
             retry = 3
             while single_find("VisitBusy") and retry > 0:
                 log("Visit busy, clicking confirm...")
-                center = get_center("Confirm", "Single")
+                center = self._as_point(get_center("Confirm", "Single"))
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(2)
                 retry -= 1
