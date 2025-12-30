@@ -1,6 +1,8 @@
 import platform
 import pyautogui
 
+pyautogui.FAILSAFE = False
+
 # Platform-specific imports and click implementation
 if platform.system() == "Darwin":  # macOS
     import Quartz
