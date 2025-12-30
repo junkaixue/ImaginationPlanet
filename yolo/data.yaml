@@ -1,0 +1,8 @@
+# 这里的路径建议使用“绝对路径”，防止 Windows 环境下找不到图
+path: C:/Users/junka/OneDrive/Documents/GitHub/ImaginationPlanet/conda/datasets
+train: train/images  # 训练集位置
+val: train/images    # 如果没有专门的验证集，先共用同一个文件夹跑通
+
+# 类别定义 (必须和生成脚本里的 ID 对上)
+names:
+  0: face_left_up   # 你之前生成脚本里默认写入的是 0

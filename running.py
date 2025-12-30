@@ -124,7 +124,7 @@ class MainRun:
                 log("Guo sha ding le.... Sleep 10 mins")
                 time.sleep(10 * 60)
                 self.restart_game()
-                continue
+                return
             time.sleep(1)
 
         log("Visit Go home found! In visiting main mode now!")
@@ -762,38 +762,50 @@ class MainRun:
         return True
 
     def restart_game(self):
-        while not self.restart_games():
+        success_flag = False
+        while not success_flag:
+            try:
+                success_flag = self.restart_games()
+            except:
+                log("Got error when restarting game, retrying...")
             log("Game restart failed, retrying...")
             time.sleep(5)
-        
+
+    def close_game(self):
+        try:
+            location = pyautogui.locateOnScreen(resource_map["Single"]["CloseTab"], confidence=0.7)
+            if location is not None:
+                click_x = (location.left + (location.width - 5)) / self.sft
+                click_y = (location.top + (location.height / 2)) / self.sft
+                click_at(click_x, click_y)
+            else:
+                click_at(self.close_name[0], self.close_name[1])
+        except:
+            click_at(self.close_name[0], self.close_name[1])
+        log("Still game is running try to close it!")
+        time.sleep(2)
 
 
     def restart_games(self):
         start_time = time.time()
         timeout = 5 * 60
 
+        # while simple_single_find("DingHao", "Single", 0.7):
+        #     if time.time() - start_time > timeout:
+        #         log("Game restart timeout!")
+        #         return False
+        #     self.close_game()
+        #     log("Closing the game.....")
 
-        while simple_single_find("DingHao", "Single", 0.7):
+        while single_find("CloseTab"):
+            self.close_game()
             if time.time() - start_time > timeout:
                 log("Game restart timeout!")
                 return False
-            try:
-                location = pyautogui.locateOnScreen(resource_map["Single"]["CloseTab"], confidence=0.7)
-                if location is not None:
-                    click_x = (location.left + (location.width - 5)) / self.sft
-                    click_y = (location.top + (location.height / 2)) / self.sft
-                    click_at(click_x, click_y)
-                else:
-                    click_at(self.close_name[0], self.close_name[1])
-            except:
-                click_at(self.close_name[0], self.close_name[1])
-
-            time.sleep(2)
-            log("Closing the game.....")
-
         log("Game closed!")
 
         while not single_find("ClickGame"):
+
             if time.time() - start_time > timeout:
                 log("Game restart timeout!")
                 return False
@@ -857,13 +869,13 @@ class MainRun:
             time.sleep(2)
             log("Start game clicking!")
 
-        while not single_find("RunButton"):
-            if time.time() - start_time > timeout:
-                log("Game restart timeout!")
-                return False
-            click_at(self.setup[0], self.setup[1])
-            time.sleep(1)
-            log("Waiting for main page and click empty place to close ads")
+        # while not single_find("RunButton"):
+        #     if time.time() - start_time > timeout:
+        #         log("Game restart timeout!")
+        #         return False
+        #     click_at(self.setup[0], self.setup[1])
+        #     time.sleep(1)
+        #     log("Waiting for main page and click empty place to close ads")
 
         while not single_find("AutoPick"):
             if time.time() - start_time > timeout:

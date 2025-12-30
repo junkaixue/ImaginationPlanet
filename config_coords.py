@@ -26,7 +26,7 @@ Usage:
 
 import os
 import platform
-from common import get_center, get_scaling_factor
+from common import Point, get_center, get_scaling_factor
 from click import click_at
 
 
@@ -59,10 +59,10 @@ class ConfigCoords:
         # Find run button (or use mock)
         if mock_rb:
             # mock_rb is provided as logical coordinates
-            self.rb = (mock_rb[0], mock_rb[1])
-            print(f"\nMOCK MODE: Using mock Run Button at ({self.rb[0]:.1f}, {self.rb[1]:.1f}) [logical]")
-            rb_x_physical = self.rb[0] * self.sft
-            rb_y_physical = self.rb[1] * self.sft
+            self.rb = Point(mock_rb[0], mock_rb[1])
+            print(f"\nMOCK MODE: Using mock Run Button at ({self.rb.x:.1f}, {self.rb.y:.1f}) [logical]")
+            rb_x_physical = self.rb.x * self.sft
+            rb_y_physical = self.rb.y * self.sft
             print(f"   Physical pixels: ({rb_x_physical:.0f}, {rb_y_physical:.0f})")
         else:
             self._find_run_button()
