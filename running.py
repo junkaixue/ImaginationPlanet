@@ -538,8 +538,8 @@ class MainRun:
                 log("In running!")
                 time.sleep(5)
 
-    def switch_run(self, runIndex = 0):
-        self.visit_roll_count = runIndex
+    def switch_run(self, run_index = 0):
+        self.friend_index = run_index
         while True:
             # Debug: Check what's on screen
             face_detected = simple_single_find("FACE_UP_LEFT", "Single", 0.45) and self.smart_grab.check_run_face_in_box()
