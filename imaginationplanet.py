@@ -38,7 +38,7 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--niu", action='store_true', help="Run for niu mode")
     parser.add_argument("-sp", "--starpick", action='store_true', help="Star picking")
     parser.add_argument("-bm", "--blackmarket", action='store_true', help="Find black market")
-    parser.add_argument("-ri", "--runindex", action='store_true', help="Run for index mode")
+    parser.add_argument("-ri", "--runindex", type=int, default=0, help="Run index")
 
     args = parser.parse_args()
 
@@ -58,7 +58,7 @@ if __name__ == "__main__":
             datetime.datetime.now() - time) + "!\nTotal " + str(run.visits) + " visits\n"
     elif args.switchrun:
         run = MainRun(args.skipcat, args.gohome, True)
-        run.switch_run()
+        run.switch_run(args.runindex)
         print("Total visits " + str(run.visits) + " times")
         content = "The run starts at: " + str(time) + "\n Takes " + str(
             datetime.datetime.now() - time) + "!\nTotal " + str(run.visits) + " visits\n"
