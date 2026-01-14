@@ -38,6 +38,7 @@ if __name__ == "__main__":
     parser.add_argument("-n", "--niu", action='store_true', help="Run for niu mode")
     parser.add_argument("-sp", "--starpick", action='store_true', help="Star picking")
     parser.add_argument("-bm", "--blackmarket", action='store_true', help="Find black market")
+    parser.add_argument("-ri", "--runindex", action='store_true', help="Run for index mode")
 
     args = parser.parse_args()
 
