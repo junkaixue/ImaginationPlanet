@@ -29,6 +29,7 @@ class MainRun:
     close_name = None
     close_announce = None
     main_game = None
+    start_button = None
     start_game = None
     setup = None
     setup_confirm = None
@@ -88,6 +89,7 @@ class MainRun:
         self.close_name = self.smart_grab.config.get_coord("close_game")
         self.close_announce = self.smart_grab.config.get_coord("close_announce")
         self.main_game = self.smart_grab.config.get_coord("main_game")
+        self.start_button = self.smart_grab.config.get_coord("start_button")
         self.start_game = self.smart_grab.config.get_coord("start_game")
         self.setup = self.smart_grab.config.get_coord("setup")
         self.setup_confirm = self.smart_grab.config.get_coord("setup_confirm")
@@ -769,7 +771,8 @@ class MainRun:
                 success_flag = self.restart_games()
             except:
                 log("Got error when restarting game, retrying...")
-            log("Game restart failed, retrying...")
+            if not success_flag:
+                log("Game restart failed, retrying...")
             time.sleep(5)
 
     def close_game(self):
@@ -819,7 +822,8 @@ class MainRun:
             if time.time() - start_time > timeout:
                 log("Game restart timeout!")
                 return False
-            click_at(self.main_game[0], self.main_game[1])
+            center = get_center("ClickGame", "Single")
+            click_at(center.x + self.start_button[0] - self.rb.x, center.y + self.start_button[1] - self.rb.y)
             time.sleep(2)
             log("Game button clicked!")
 
