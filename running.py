@@ -35,6 +35,11 @@ class MainRun:
     setup_confirm = None
     chess_man = None
 
+    dianfeng_first = None
+
+    dianfeng_to_right = 150
+    dianfeng_to_down = 150
+
 
     def __init__(self, skip_cat_grab, go_home, semi_auto=False, is_switch=False, is_niu=False):
         self.semi_auto = semi_auto
@@ -604,8 +609,8 @@ class MainRun:
                 continue
             elif "Replace" in bts:
                 log("Found replacement let's wait!")
-                # center = get_center("Replace", "Main")
-                # click_at(center.x / self.sft, center.y / self.sft)
+                center = get_center("Replace", "Main")
+                click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(5)
                 continue
             elif "Gift" in bts:
@@ -906,8 +911,47 @@ class MainRun:
         time.sleep(2)
         return True
 
+    def niudan(self):
+        niudan = self.smart_grab.config.get_coord("niudan")
+        while True:
+            click_at(niudan[0], niudan[1])
+            time.sleep(2)
+            click_at(self.rb.x / self.sft, self.rb.y / self.sft)
+            time.sleep(2)
+
+    def dianfeng(self, index, page):
+        index %= 30
+        self.dianfeng_first = self.smart_grab.config.get_coord("first_block")
+        next_page = self.smart_grab.config.get_coord("next_page")
+        dian_fight = self.smart_grab.config.get_coord("dian_fight")
+        cood_x = self.dianfeng_first[0] + (index - 1) % 5 * self.dianfeng_to_right
+        cood_y = self.dianfeng_first[1] + (int)((index - 1) / 5) * self.dianfeng_to_down
+        path = "pics/dianfeng/" + str(page) + ".png"
+        print("Index image path: " + path)
+        fight_button = "pics/dianfeng/fight_button.png"
+        main_page = "pics/dianfeng/back.png"
+        while True:
+            if page > 1:
+                start = 1
+                while not single_find_with_path(path, None, 0.9):
+                    click_at(next_page[0], next_page[1])
+                    print("Go to page " + str(start))
+                    time.sleep(3)
+
+            while not single_find_with_path(fight_button, None, 0.8):
+                click_at(cood_x, cood_y)
+                time.sleep(2)
+
+            while single_find_with_path(fight_button, None, 0.8):
+                click_at(dian_fight[0], dian_fight[1])
+                time.sleep(2)
+
+            while not single_find_with_path(main_page, None, 0.8):
+                click_at(next_page[0] - 100, next_page[1])
+                time.sleep(2)
 
 if __name__ == '__main__':
     r = MainRun(False, False, False, True)
     r.friend_index = 2
-    r.restart_game()
+    time.sleep(5)
+    r.dianfeng(52, 2)
