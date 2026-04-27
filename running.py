@@ -99,6 +99,7 @@ class MainRun:
         self.setup = self.smart_grab.config.get_coord("setup")
         self.setup_confirm = self.smart_grab.config.get_coord("setup_confirm")
         self.chess_man = self.smart_grab.config.get_coord("chessman")
+        self.chess_maninner = self.smart_grab.config.get_coord("chessmaninner")
 
     def long_click(self):
         # Move to the position (if necessary)
@@ -310,7 +311,7 @@ class MainRun:
             time.sleep(1)
 
             # Calculate target slot based on friend index (0-15)
-            target_slot = self.friend_index % 16
+            target_slot = self.friend_index % 10
             scroll_per_slot = -70 if not self.is_mac else -100
             
             log(f"Visiting friend slot #{target_slot} (total visit #{self.visits})")
@@ -565,14 +566,14 @@ class MainRun:
             # 2. Else, if not in ONEB, switch to ONEB
             if face_detected:
                 if oneb_bar_detected:
-                    log("🔄 Switching to TWB mode")
-                    self.current_mode = "TWB"
-                    self.switch("ONE", "TWB")
+                    if self.switch("ONE", "TWB", "TW"):
+                        self.current_mode = "TWB"
+                        log("🔄 Switching to TWB mode")
             else:
                 if twb_bar_detected:
-                    log("🔄 Switching to ONEB mode (smart grab disabled)")
-                    self.current_mode = "ONEB"
-                    self.switch("TW", "ONEB")
+                    if self.switch("TW", "ONEB", "ONE"):
+                        self.current_mode = "ONEB"
+                        log("🔄 Switching to ONEB mode (smart grab disabled)")
 
             # Check for map repair before other actions
             self.map_repair()
@@ -629,6 +630,18 @@ class MainRun:
                 center = get_center("Confirm", "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
+            elif "ChessManInner" in bts:
+                while single_find("ChessManInner"):
+                    click_at(self.chess_maninner[0], self.chess_maninner[1])
+                    time.sleep(1)
+                    log("Exit chess inner!")
+                time.sleep(2)
+                while single_find("ChessMan"):
+                    click_at(self.chess_man[0], self.chess_man[1])
+                    time.sleep(1)
+                    log("Exit chess!")
+                time.sleep(2)
+                continue
             elif "ChessMan" in bts:
                 log("Found ChessMan! Let's play chess!")
                 while single_find("ChessMan"):
@@ -707,18 +720,24 @@ class MainRun:
                     continue
                 time.sleep(0.5)
 
-    def switch(self, from_s, to_s):
-        while simple_single_find(from_s, "Single", 0.7):
-            center = get_center(from_s, "Single")
-            click_at(center.x / self.sft, center.y / self.sft)
-            time.sleep(1)
+    def switch(self, from_s, to_s, to_f):
+        # First try to click from_s if it exists
+        while simple_single_find(from_s, "Single", 0.7) or not simple_single_find(to_f, "Single", 0.7):
+            try:
+                center = get_center(from_s, "Single")
+                click_at(center.x / self.sft, center.y / self.sft)
+                time.sleep(1)
+            except:
+                return False
             try:
                 center = get_center(to_s, "Single")
                 click_at(center.x / self.sft, center.y / self.sft)
                 time.sleep(1)
+                if not simple_single_find(from_s, "Single", 0.7):
+                    return False
             except:
                 log("Switch failed, retry...")
-        log("Switched to " + to_s)
+            return True
 
     def refresh_run_button_and_coords(self, retry=30):
         Point = namedtuple('Point', ['x', 'y'])
@@ -964,4 +983,4 @@ if __name__ == '__main__':
     r = MainRun(False, False, False, True)
     r.friend_index = 2
     time.sleep(5)
-    r.dianfeng(13, 1)
+    r.dianfeng(3, 1)
