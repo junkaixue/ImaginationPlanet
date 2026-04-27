@@ -101,6 +101,7 @@ single_find_map = {
     "VisitGoHome": get_image_path("visit_go_home.png"),
     "33": get_image_path("33.png"),
     "ChessMan": get_image_path("chessman.png"),
+    "ChessManInner": get_image_path("chessman_inner.png"),
 
     # Repair
     "Repair": get_image_path("repair.png"),
