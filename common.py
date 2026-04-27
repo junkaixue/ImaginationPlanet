@@ -42,6 +42,7 @@ main_map = {
     # Visit Main
     "VisitMain": get_image_path("visiting_main.png"),
     "ChessMan": get_image_path("chessman.png"),
+    "ChessManInner": get_image_path("chessman_inner.png"),
 }
 
 visit_map = {

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-
+import time
 from datetime import timedelta
 
 from pynput.keyboard import Controller, Key
@@ -105,5 +105,6 @@ class RedPack:
 
 
 if __name__ == '__main__':
-    r = RedPack(0)
-    r.get_red_pack()
+    while True:
+        click_at(2448, 927)
+        time.sleep(2)
