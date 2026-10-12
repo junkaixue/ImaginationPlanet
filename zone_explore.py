@@ -403,19 +403,21 @@ class ZoneExplore:
         return Point(base.x + dx, base.y + dy)
 
     # ------------------------------------------------------------------ helpers
-    def click(self, x, y, delay=1.0, what=""):
-        if self.dry_run:
+    def click(self, x, y, delay=1.0, what="", force=False):
+        """Click in the reference frame. Dry runs only log, except for `force` clicks (closing
+        popups, zoom): without them a dry run gets stuck behind the first dialog it opens."""
+        if self.dry_run and not force:
             log(f"[DRY] would click {what} at ({x:.0f},{y:.0f})")
             return
         self.raw_click(x, y)
         time.sleep(delay)
 
-    def click_button(self, but, delay=1.5, retries=4):
+    def click_button(self, but, delay=1.5, retries=4, force=False):
         """Click a template button; returns True if it was found and clicked."""
         for _ in range(retries):
             c = get_center(but, "Single")
             if c is not None:
-                self.click(c.x, c.y, delay, but)
+                self.click(c.x, c.y, delay, but, force=force)
                 return True
             time.sleep(0.5)
         return False
@@ -471,29 +473,29 @@ class ZoneExplore:
         return f("ZExplore") and not f("ZCloseHint") and not f("ZContinueHint") and not f("ZBuyPrompt")
 
     def close_popup(self, tries=6):
-        """Get back to the map from any dialog."""
+        """Get back to the map from any dialog. Clicks for real even in dry runs."""
         for _ in range(tries):
             if self.on_map():
                 return True
             if single_find("ZBuyPrompt"):
-                self.click_button("ZBuyCancel")
+                self.click_button("ZBuyCancel", force=True)
             elif single_find("ZContinueHint"):
-                self.click_button("ZContinueHint")
+                self.click_button("ZContinueHint", force=True)
             elif single_find("ZCancel"):
-                self.click_button("ZCancel")
+                self.click_button("ZCancel", force=True)
             elif single_find("ZCloseHint"):
                 c = get_center("ZCloseHint", "Single")
-                self.click(c.x, c.y + 30, 1.5, "empty space")
+                self.click(c.x, c.y + 30, 1.5, "empty space", force=True)
             elif single_find("ZBackArrow"):
-                self.click_button("ZBackArrow")
+                self.click_button("ZBackArrow", force=True)
+            elif single_find("ZFleetSpeed"):
+                self.close_fleet_panel(self.last_dispatched or 1)
             elif single_find("ZGo"):
                 region = self.map_region()
                 if region:
-                    self.click(region[0] + 15, region[3] - 15, 1.5, "map (close target popup)")
+                    self.click(region[0] + 15, region[3] - 15, 1.5, "map (close target popup)", force=True)
             else:
                 time.sleep(1)
-            if self.dry_run:
-                return True
         return self.on_map()
 
     def zoom75_selected(self):
@@ -709,9 +711,10 @@ class ZoneExplore:
             if attempt:
                 # a drag that did not move the map without the frame line in view: a popup may
                 # have opened, or the finger landed on something. Close popups, pick again.
-                self.close_popup()
                 sx, sy, ex, ey = self.pick_gesture(region, dx, dy)
                 dx, dy = ex - sx, ey - sy
+            if not self.on_map():
+                self.close_popup()
             before = self.grab_region(region)
             rsx, rsy = self.to_real(sx, sy)
             rex, rey = self.to_real(ex, ey)
@@ -734,6 +737,10 @@ class ZoneExplore:
             if got >= DRAG_LAYOUT["edge_frac"] * asked:
                 log(f"Drag ({dx:.0f},{dy:.0f}): moved ({shift[0]:.0f},{shift[1]:.0f})")
                 return "moved"
+            if not self.on_map():
+                log(f"Drag ({dx:.0f},{dy:.0f}): a dialog opened instead of dragging, closing it and retrying")
+                self.close_popup()
+                continue
             sides = self.boundary_sides(region)
             if want_side in sides:
                 log(f"Drag ({dx:.0f},{dy:.0f}): moved ({shift[0]:.0f},{shift[1]:.0f}), {want_side} frame line at {sides[want_side]:.0f} -> edge")
@@ -1288,7 +1295,9 @@ class ZoneExplore:
                            base.y + SHIP_LAYOUT["status_dy"] + BOOST_LAYOUT["icon_dy"])
             time.sleep(1.5)
         if single_find("ZFleetSpeed"):
-            self.close_popup()
+            region = self.map_region()
+            if region:
+                self.click(region[0] + 15, region[1] + 15, 1.5, "map (close fleet panel)", force=True)
         return not single_find("ZFleetSpeed")
 
     def boost_ship(self, index, booster="ZQuantumBoost"):
