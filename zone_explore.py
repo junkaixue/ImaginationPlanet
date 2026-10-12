@@ -133,6 +133,7 @@ MAP_LAYOUT = {"x_min_dx": 15, "x_max_dx": 430, "y_min_dy": 120, "y_max_team_dy":
 # Parts of the map area covered by fixed UI (right column: 冰封探索礼, 通缉榜, 任务榜, 我的基地,
 # zone thumbnail). Resources under them cannot be clicked; the sweep sees them one stop later.
 MAP_EXCLUDE = [(375, 440, 95, 315), (375, 440, 585, 820)]      # (x0, x1, y0, y1) relative to ZBase
+MEASURE_X_MAX_DX = 365      # drag movement is measured left of the right UI column (it never moves)
 
 # Map dragging. A drag moves the map content by (dx, dy); the real movement is measured by
 # finding a patch of the old screen in the new one. |measured| < edge_frac * |asked| = edge.
@@ -639,6 +640,15 @@ class ZoneExplore:
         return (top.x + MAP_LAYOUT["x_min_dx"], top.y + MAP_LAYOUT["y_min_dy"],
                 top.x + MAP_LAYOUT["x_max_dx"], bottom.y + MAP_LAYOUT["y_max_team_dy"])
 
+    def measure_region(self):
+        """The map area without the fixed right-hand UI column: static icons inside the
+        overlap strip would otherwise match at zero shift and hide a real move."""
+        region = self.map_region()
+        base = self.anchor("ZBase")
+        if region is None or base is None:
+            return region
+        return (region[0], region[1], min(region[2], base.x + MEASURE_X_MAX_DX), region[3])
+
     def grab_region(self, region):
         """Grayscale physical-pixel crop of the map area."""
         gray = self.shot()[1]
@@ -782,17 +792,19 @@ class ZoneExplore:
                 dx, dy = ex - sx, ey - sy
             if not self.on_map():
                 self.close_popup()
-            before = self.grab_region(region)
+            mregion = self.measure_region()
+            before = self.grab_region(mregion)
             rsx, rsy = self.to_real(sx, sy)
             rex, rey = self.to_real(ex, ey)
             drag(rsx, rsy, rex, rey)
             self.invalidate_shot()
             time.sleep(DRAG_LAYOUT["settle"])
-            after = self.grab_region(region)
+            after = self.grab_region(mregion)
             shift = self.measure_shift(before, after, dx, dy)
             if shift is None:
                 time.sleep(1.0)          # maybe still animating (rubber band at the edge); look again
-                after = self.grab_region(region)
+                self.invalidate_shot()
+                after = self.grab_region(mregion)
                 shift = self.measure_shift(before, after, dx, dy)
             self.last_drag_unknown = shift is None
             if shift is None:
@@ -1104,13 +1116,14 @@ class ZoneExplore:
         self.visited[self.spot_key(cand.x, cand.y)] = time.time()
         contested = self.contested.pop(self.spot_key(cand.x, cand.y), None) is not None
         idle_before = set(self.idle_ships(self.scan_ships()))
-        region = self.map_region()
+        region = self.measure_region()
         before = self.grab_region(region) if region else None
         ok = self._dispatch(cand, allow_buy)
         self.last_shift = (0.0, 0.0)
         if before is not None and self.on_map():
             # the game sometimes recenters the view after a dispatch: keep offsets and the
             # candidate's position consistent for everything that follows
+            self.invalidate_shot()
             shift = self.measure_shift(before, self.grab_region(region), 0, 0)
             if shift is not None and (abs(shift[0]) > 5 or abs(shift[1]) > 5):
                 self.offset[0] += shift[0]
