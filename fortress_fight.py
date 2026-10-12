@@ -98,9 +98,45 @@ class FortressFight(ZoneExplore):
         log(f"FortressFight ready (code={_code_version()})")
 
     # ------------------------------------------------------------------ fleet page
+    EDIT_PAGES = ("ZEditFleetTitle", "ZEditCatTitle", "ZEditGearTitle", "ZEditArtifactTitle")
+
+    def edit_page_open(self):
+        return next((k for k in self.EDIT_PAGES if single_find(k)), None)
+
+    def confirm_edit(self, what="edit page"):
+        """Press 确认 on an edit sub-page and wait until it is gone. Never 取消: that would undo
+        every removal made on the page."""
+        for attempt in range(3):
+            page = self.edit_page_open()
+            if page is None:
+                return True
+            ok = get_center("ZRepairOk", "Single")
+            if ok is None:
+                log(f"确认 not found on {page}")
+                self.save_debug("no_confirm")
+                return False
+            self.click(ok.x, ok.y, 2, f"确认 ({what})", force=True)
+            for _ in range(8):
+                if not single_find(page):
+                    return True
+                time.sleep(0.5)
+            log(f"{page} still open after 确认 (attempt {attempt + 1})")
+        self.save_debug("confirm_stuck")
+        return False
+
+    def close_popup(self, tries=6):
+        """Edit sub-pages are confirmed, not cancelled; then the generic popup handling."""
+        if self.edit_page_open():
+            self.confirm_edit("close_popup")
+        return super().close_popup(tries)
+
     def open_fleet_page(self):
         if single_find("ZMyFleet"):
             return True
+        if self.edit_page_open():
+            self.confirm_edit("open_fleet_page")
+            if single_find("ZMyFleet"):
+                return True
         if not self.on_map():
             log("Not on the map page, closing what is open")
             self.close_popup()
@@ -135,8 +171,8 @@ class FortressFight(ZoneExplore):
         """Close 我的舰队 (and anything on top of it). The top bar is dimmed under the panel, so
         ship status and hp can only be read once it is closed."""
         for _ in range(4):
-            if single_find("ZEditFleetTitle") or single_find("ZEditGearTitle") or single_find("ZEditArtifactTitle"):
-                self.click_button("ZCancel", 1.5, force=True)
+            if self.edit_page_open():
+                self.confirm_edit("close_fleet_page")
                 continue
             title = self.fleet_title()
             if title is None or not single_find("ZMyFleet"):
@@ -289,8 +325,8 @@ class FortressFight(ZoneExplore):
                     self.click(et.x + dx, et.y + dy, 0.8, f"{name} item (remove)", force=True)
                     n += 1
             log(f"  {name}: {n} removal click(s)")
-        ok = self.click_button("ZRepairOk", 2, force=True)      # the "确认" button shares the template
-        log("Gear removed and confirmed" if ok else "确认 not found after removing gear")
+        ok = self.confirm_edit("编辑舰队")
+        log("Gear removed and confirmed" if ok else "编辑舰队 could not be confirmed")
         if ok:
             self.unequip_cats(index)
         if ok and UNEQUIP_BOTTOM_ARTIFACTS:
@@ -314,8 +350,8 @@ class FortressFight(ZoneExplore):
         ix, iy = CAT_LAYOUT["item"]
         for _ in range(CAT_LAYOUT["count"]):
             self.click(ct.x + ix, ct.y + iy, 0.8, "cat (remove)", force=True)
-        ok = self.click_button("ZRepairOk", 2, force=True)
-        log("Cats removed" if ok else "确认 not found on 编辑猫护法")
+        ok = self.confirm_edit("编辑猫护法")
+        log("Cats removed" if ok else "编辑猫护法 could not be confirmed")
         return ok
 
     def unequip_bottom_artifacts(self, index):
@@ -335,8 +371,8 @@ class FortressFight(ZoneExplore):
             self.click(gt.x + tab_dx, gt.y + GEAR_LAYOUT["tab_dy"], 1.5, "gear tab", force=True)
             px, py = GEAR_LAYOUT["preview"]
             self.click(gt.x + px, gt.y + py, 1.0, "equipped artifact (remove)", force=True)
-        ok = self.click_button("ZRepairOk", 2, force=True)
-        log("Bottom artifacts cleared" if ok else "确认 not found on 编辑装备")
+        ok = self.confirm_edit("编辑装备")
+        log("Bottom artifacts cleared" if ok else "编辑装备 could not be confirmed")
         return ok
 
     def auto_equip(self, index):
@@ -373,8 +409,8 @@ class FortressFight(ZoneExplore):
             self.click_button("ZCancel", 2, force=True)
             return True
         self.click(target.x, target.y, 1.5, "残骸本源", force=True)
-        ok = self.click_button("ZRepairOk", 2, force=True)
-        log("Artifact set to 残骸本源" if ok else "确认 not found on the artifact page")
+        ok = self.confirm_edit("编辑低级神器")
+        log("Artifact set to 残骸本源" if ok else "编辑低级神器 could not be confirmed")
         return ok
 
     def repair_fleet(self, index):
