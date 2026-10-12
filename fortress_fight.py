@@ -52,17 +52,20 @@ EQUIP_LAYOUT = {
 # ---- 编辑舰队 page, relative to its title center. The equipped items sit in the bottom area;
 # clicking one removes it and the rest shift left, an empty place shows a "+" placeholder.
 EDIT_LAYOUT = {
-    "tab_dy": 65,
-    "tabs": [   # (tab dx, possible item positions)
-        (-76, [(-40, 500), (35, 500)]),                                  # 飞行器 (2)
-        (-26, [(0, 500), (-40, 500), (35, 500)]),                        # 主题皮肤
-        (24, [(0, 500), (-40, 500), (35, 500)]),                         # 骰子皮肤
-        (75, [(dx, dy) for dy in (465, 542.5) for dx in (-152.5, -76.5, 0, 76, 152.5)]),   # 棋子 (10)
+    "tab_dy": 64,
+    # (tab dx, [(click dx, click dy, times)]) -- user's recipe: keep tapping the leftmost item,
+    # the rest shift left; chess: leftmost twice clears the first column, then the second
+    # position eight times clears the remaining ones.
+    "tabs": [
+        ("飞行器", -151, [(-40, 500, 2)]),
+        ("主题皮肤", -51, [(-40, 500, 2)]),
+        ("骰子皮肤", 49, [(0, 500, 1), (-40, 500, 1)]),
+        ("棋子", 149, [(-152.5, 465, 2), (-76.5, 465, 8)]),
     ],
     "plus_radius": 45,
 }
 # ---- 编辑装备 page (bottom-row artifacts 炬团令牌/烙印/战旗/密契), relative to its title center
-GEAR_LAYOUT = {"tab_dx": (-75, -25, 25, 75), "tab_dy": 62, "preview": (0, 470)}
+GEAR_LAYOUT = {"tab_dx": (-150, -50, 50, 150), "tab_dy": 62, "preview": (0, 470)}   # 令牌/烙印/战旗/密契
 UNEQUIP_BOTTOM_ARTIFACTS = True     # the four bottom slots (not the lv.6 shield); flow unverified
 # ---- 派遣舰队 list, card centers relative to the "派遣舰队" title
 DISPATCH_CARDS = {"dx": -15, "dy0": 105, "spacing": 125}
@@ -272,21 +275,18 @@ class FortressFight(ZoneExplore):
             self.close_popup()
             return False
         et = get_center("ZEditFleetTitle", "Single")
-        for tab_dx, slots in EDIT_LAYOUT["tabs"]:
-            self.click(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_dy"], 1.5, "edit tab", force=True)
-            removed = 0
-            for _ in range(len(slots) + 2):
-                pluses = get_all("ZPlusSlot", "Single")
-                occupied = [Point(et.x + dx, et.y + dy) for dx, dy in slots
-                            if not any(abs(p.x - et.x - dx) < EDIT_LAYOUT["plus_radius"]
-                                       and abs(p.y - et.y - dy) < EDIT_LAYOUT["plus_radius"] for p in pluses)]
-                if not occupied or (pluses and removed >= len(slots)):
-                    break
-                self.click(occupied[0].x, occupied[0].y, 1.0, "equipped item (remove)", force=True)
-                removed += 1
-                if not pluses and removed >= len(slots):
-                    break
-            log(f"  tab {tab_dx:+}: {removed} removal click(s)")
+        for name, tab_dx, clicks in EDIT_LAYOUT["tabs"]:
+            self.click(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_dy"], 1.5, f"tab {name}", force=True)
+            n = 0
+            for dx, dy, times in clicks:
+                for _ in range(times):
+                    pluses = get_all("ZPlusSlot", "Single")
+                    if any(abs(p.x - et.x - dx) < EDIT_LAYOUT["plus_radius"] and abs(p.y - et.y - dy) < EDIT_LAYOUT["plus_radius"]
+                           for p in pluses):
+                        break                   # this position is already the "+" placeholder
+                    self.click(et.x + dx, et.y + dy, 0.8, f"{name} item (remove)", force=True)
+                    n += 1
+            log(f"  {name}: {n} removal click(s)")
         ok = self.click_button("ZRepairOk", 2, force=True)      # the "确认" button shares the template
         log("Gear removed and confirmed" if ok else "确认 not found after removing gear")
         if ok and UNEQUIP_BOTTOM_ARTIFACTS:
