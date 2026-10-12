@@ -285,6 +285,7 @@ single_find_map = {
     "ZLoadoutStandard": get_image_path("zone/loadout_standard.png"),  # the complete best loadout (我的舰队 grid)
     "ZPlusSlot": get_image_path("zone/plus_slot.png"),                # "+" empty slot in 编辑舰队
     "ZEditGearTitle": get_image_path("zone/edit_gear_title.png"),     # "编辑装备" (bottom-row artifacts)
+    "ZEditCatTitle": get_image_path("zone/edit_cat_title.png"),       # "编辑猫护法"
     # Run (dice) mode, used by the monitor to switch into zone explore when the dice run out
     "ZStarExplore": get_image_path("zone/star_explore.png"),        # "星际探险" button, main page bottom right
     "ZAutoThrowing": get_image_path("zone/auto_throwing.png"),      # "自动投掷中..." overlay
@@ -319,7 +320,7 @@ no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "C
                  "ZFleetSpeed", "ZAccelerate", "ZReturnHome", "ZBoostPage", "ZQuantumBoost", "ZSuperBoost", "ZLargeBoost", "ZUseButton",
                  "ZZoneList", "ZSelectZone", "ZRivalPanel",
                  "ZFortressTitle", "ZGuardAttack", "ZAutoEquip", "ZEditFleetTitle", "ZEditArtifactTitle",
-                 "ZArtifactTarget", "ZArtifactCheck", "ZArtifactSlot", "ZLoadoutStandard", "ZPlusSlot", "ZEditGearTitle", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
+                 "ZArtifactTarget", "ZArtifactCheck", "ZArtifactSlot", "ZLoadoutStandard", "ZPlusSlot", "ZEditGearTitle", "ZEditCatTitle", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function

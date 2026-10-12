@@ -66,6 +66,8 @@ EDIT_LAYOUT = {
 }
 # ---- 编辑装备 page (bottom-row artifacts 炬团令牌/烙印/战旗/密契), relative to its title center
 GEAR_LAYOUT = {"tab_dx": (-150, -50, 50, 150), "tab_dy": 62, "preview": (0, 470)}   # 令牌/烙印/战旗/密契
+# ---- 编辑猫护法 page (opened from the cat slot left of the artifact), relative to its title
+CAT_LAYOUT = {"slot": (76.5, 132.5), "item": (-76, 511), "count": 3}
 UNEQUIP_BOTTOM_ARTIFACTS = True     # the four bottom slots (not the lv.6 shield); flow unverified
 # ---- 派遣舰队 list, card centers relative to the "派遣舰队" title
 DISPATCH_CARDS = {"dx": -15, "dy0": 105, "spacing": 125}
@@ -289,8 +291,31 @@ class FortressFight(ZoneExplore):
             log(f"  {name}: {n} removal click(s)")
         ok = self.click_button("ZRepairOk", 2, force=True)      # the "确认" button shares the template
         log("Gear removed and confirmed" if ok else "确认 not found after removing gear")
+        if ok:
+            self.unequip_cats(index)
         if ok and UNEQUIP_BOTTOM_ARTIFACTS:
             self.unequip_bottom_artifacts(index)
+        return ok
+
+    def unequip_cats(self, index):
+        """The cat slot (left of the artifact) opens 编辑猫护法; the three equipped cats sit at
+        the bottom, tapping the leftmost one repeatedly removes them."""
+        if not self.open_fleet_page():
+            return False
+        self.select_tab(index)
+        title = self.fleet_title()
+        dx, dy = CAT_LAYOUT["slot"]
+        self.click(title.x + dx, title.y + dy, 2, "cat slot", force=True)
+        if not self.wait_for("ZEditCatTitle", 8):
+            log("编辑猫护法 did not open")
+            self.close_popup()
+            return False
+        ct = get_center("ZEditCatTitle", "Single")
+        ix, iy = CAT_LAYOUT["item"]
+        for _ in range(CAT_LAYOUT["count"]):
+            self.click(ct.x + ix, ct.y + iy, 0.8, "cat (remove)", force=True)
+        ok = self.click_button("ZRepairOk", 2, force=True)
+        log("Cats removed" if ok else "确认 not found on 编辑猫护法")
         return ok
 
     def unequip_bottom_artifacts(self, index):
