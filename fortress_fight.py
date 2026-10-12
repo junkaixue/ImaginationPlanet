@@ -21,7 +21,9 @@ Only one fleet fights at a time (there is one set of best gear). No zoom or map 
 
 Usage:
     python fortress_fight.py --dry      # does the gear swap and repair for real, cancels at the attack
-    python fortress_fight.py            # full loop
+    python fortress_fight.py            # full loop (started on the zone map)
+    python fortress_fight.py -m         # monitor: wait on the dice board until the dice run out
+                                        # (更多骰子 popup / 长按自动 idle), enter 星际探险, then fight
 """
 
 import argparse
@@ -36,7 +38,7 @@ from common import single_find, get_center, get_all, single_find_map
 from log_helper import log
 from click import click_at
 from zone_explore import (ZoneExplore, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH,
-                          _code_version)
+                          MONITOR_POLL, RUN_IDLE_SECONDS, _code_version)
 
 # ---- 我的舰队 page, logical px relative to the "我的舰队" title center (ZMyFleet)
 EQUIP_LAYOUT = {
@@ -766,8 +768,39 @@ class FortressFight(ZoneExplore):
             time.sleep(POLL)
         return False
 
-    def run(self):
+    def wait_for_dice_run(self):
+        """Same watch as zone_explore's monitor: stay on the dice board while the game's own
+        auto-throw runs; when the dice run out (更多骰子) or the button sits on 长按自动 for
+        RUN_IDLE_SECONDS, enter 星际探险. Returns once the zone map is open."""
+        log("Monitor: waiting for the dice run to end before the fortress fight")
+        idle_since = None
+        while True:
+            if single_find("ZExplore") or single_find("ZFortressTitle"):
+                return True
+            if single_find("ZMoreDice"):
+                log("Dice ran out -> entering 星际探险")
+                if self.enter_zone_explore():
+                    return True
+            elif single_find("ZAutoThrowing"):
+                idle_since = None
+                log("Run in progress")
+            elif single_find("ZLongPressAuto"):
+                idle_since = idle_since or time.time()
+                waited = time.time() - idle_since
+                log(f"Run button idle for {waited:.0f}s")
+                if waited >= RUN_IDLE_SECONDS:
+                    log("Run has been idle long enough -> entering 星际探险")
+                    if self.enter_zone_explore():
+                        return True
+                    idle_since = None
+            else:
+                log("Unknown page, waiting")
+            time.sleep(MONITOR_POLL)
+
+    def run(self, monitor=False):
         self.calibrate_scale()
+        if monitor:
+            self.wait_for_dice_run()
         while True:
             if not self.on_map():
                 self.close_popup()
@@ -829,9 +862,11 @@ if __name__ == "__main__":
     parser.add_argument("--dry", action="store_true", help="Detect and log only")
     parser.add_argument("--delay", type=int, default=3)
     parser.add_argument("--debug-shots", action="store_true", help="Save OCR crops to pics/<platform>/zone/debug/")
+    parser.add_argument("-m", "--monitor", action="store_true",
+                        help="Wait on the dice board until the dice run out, enter 星际探险, then fight")
     args = parser.parse_args()
     if args.debug_shots:
         DEBUG_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "debug")
         os.makedirs(DEBUG_DIR, exist_ok=True)
     time.sleep(args.delay)
-    FortressFight(dry_run=args.dry).run()
+    FortressFight(dry_run=args.dry).run(monitor=args.monitor)
