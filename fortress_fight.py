@@ -68,6 +68,9 @@ EDIT_LAYOUT = {
 GEAR_LAYOUT = {"tab_dx": (-150, -50, 50, 150), "tab_dy": 62, "preview": (0, 470)}   # 令牌/烙印/战旗/密契
 # ---- 编辑猫护法 page (opened from the cat slot left of the artifact), relative to its title
 CAT_LAYOUT = {"slot": (76.5, 132.5), "item": (-76, 511), "count": 3}
+# ---- right-column artifact slots (rows 1-2: 低级 / 高级 / 顶级 pages): on the page the equipped
+# artifact is shown in the preview area above the buttons; tapping it removes it.
+ARTIFACT_SLOTS = {"rows": (0, 1), "preview_from_confirm": (-92, -147)}
 UNEQUIP_BOTTOM_ARTIFACTS = True     # the four bottom slots (not the lv.6 shield); flow unverified
 # ---- 派遣舰队 list, card centers relative to the "派遣舰队" title
 DISPATCH_CARDS = {"dx": -15, "dy0": 105, "spacing": 125}
@@ -101,7 +104,10 @@ class FortressFight(ZoneExplore):
     EDIT_PAGES = ("ZEditFleetTitle", "ZEditCatTitle", "ZEditGearTitle", "ZEditArtifactTitle")
 
     def edit_page_open(self):
-        return next((k for k in self.EDIT_PAGES if single_find(k)), None)
+        k = next((k for k in self.EDIT_PAGES if single_find(k)), None)
+        if k is None and single_find("ZCloseHint") and not single_find("ZMyFleet") and get_center("ZRepairOk", "Single"):
+            k = "ZCloseHint"        # an edit page without a learned title (e.g. 编辑高级/顶级神器)
+        return k
 
     def confirm_edit(self, what="edit page"):
         """Press 确认 on an edit sub-page and wait until it is gone. Never 取消: that would undo
@@ -329,9 +335,33 @@ class FortressFight(ZoneExplore):
         log("Gear removed and confirmed" if ok else "编辑舰队 could not be confirmed")
         if ok:
             self.unequip_cats(index)
+            self.unequip_right_artifacts(index)
         if ok and UNEQUIP_BOTTOM_ARTIFACTS:
             self.unequip_bottom_artifacts(index)
         return ok
+
+    def unequip_right_artifacts(self, index):
+        """The artifact slots in the right column (rows 1 and 2) each open their own edit page;
+        the equipped artifact sits in the preview area above 取消/确认, tapping it removes it."""
+        for row in ARTIFACT_SLOTS["rows"]:
+            if not self.open_fleet_page():
+                return False
+            self.select_tab(index)
+            title = self.fleet_title()
+            self.click(title.x + EQUIP_LAYOUT["slot_dx"][4], title.y + EQUIP_LAYOUT["row_dy"][row], 2,
+                       f"artifact slot row {row + 1}", force=True)
+            if not self.wait_for("ZCloseHint", 6):
+                log(f"Artifact page for row {row + 1} did not open")
+                continue
+            ok = get_center("ZRepairOk", "Single")
+            if ok is None:
+                log("确认 not found on the artifact page")
+                self.close_popup()
+                continue
+            px, py = ARTIFACT_SLOTS["preview_from_confirm"]
+            self.click(ok.x + px, ok.y + py, 1.0, "equipped artifact (remove)", force=True)
+            self.confirm_edit(f"artifact row {row + 1}")
+        return True
 
     def unequip_cats(self, index):
         """The cat slot (left of the artifact) opens 编辑猫护法; the three equipped cats sit at
