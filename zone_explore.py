@@ -1618,9 +1618,12 @@ class ZoneExplore:
         return mx + self.offset[0], my + self.offset[1]
 
     def can_dispatch(self):
-        """(idle ship count, allow_buy) or (0, False) when nothing can be sent right now."""
+        """(idle ship count, allow_buy) or (0, False) when nothing can be sent right now.
+        A dry run pretends all ships are idle so the whole flow can be exercised any time."""
         ships = self.scan_ships()
         idle = self.idle_ships(ships) if ships else []
+        if self.dry_run:
+            return SHIP_LAYOUT["slots"], False
         if not idle:
             return 0, False
         actions = self.read_actions()
@@ -1815,12 +1818,14 @@ class ZoneExplore:
                 ships = self.scan_ships()
                 break
         if not self.idle_ships(ships):
-            log("No idle ship")
-            return True
+            log("No idle ship" + (" (dry run continues anyway)" if self.dry_run else ""))
+            if not self.dry_run:
+                return True
         actions = self.read_actions()
         if actions and actions[0] <= 0 and (not ACTION_BUY_ENABLED or self.packs_bought >= MAX_PACKS_PER_RUN):
             log("No free actions left and buying is off -> wait for regeneration")
-            return True
+            if not self.dry_run:
+                return True
         if not SWEEP_ENABLED:
             return self.process_screen() or True
         if DISPATCH_MODE != "survey":
