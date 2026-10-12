@@ -286,6 +286,16 @@ single_find_map = {
     "ZPlusSlot": get_image_path("zone/plus_slot.png"),                # "+" empty slot in 编辑舰队
     "ZEditGearTitle": get_image_path("zone/edit_gear_title.png"),     # "编辑装备" (bottom-row artifacts)
     "ZEditCatTitle": get_image_path("zone/edit_cat_title.png"),       # "编辑猫护法"
+    # 金秋赏月 festival (sit in a pavilion seat)
+    "ZFestTitle": get_image_path("zone/fest_title.png"),        # 金秋赏月 banner on the activity page
+    "ZFestGo": get_image_path("zone/fest_go.png"),              # 前往>> buttons on the activity page
+    "ZFestMe": get_image_path("zone/fest_me.png"),              # yellow "我" bubble = already seated
+    "ZFestPav1": get_image_path("zone/fest_pav1.png"),          # 巅峰I号赏月亭 label
+    "ZFestBack": get_image_path("zone/fest_back.png"),          # back arrow bottom-left
+    "ZFestOccupy": get_image_path("zone/fest_occupy.png"),      # 占据 (free seat)
+    "ZFestEmpty": get_image_path("zone/fest_empty.png"),        # 无人占领
+    "ZFestRow": get_image_path("zone/fest_row.png"),            # "观赏位" part of a row label
+    "ZFestChallenge": get_image_path("zone/fest_challenge.png"),  # 挑战 (never clicked)
     # Run (dice) mode, used by the monitor to switch into zone explore when the dice run out
     "ZStarExplore": get_image_path("zone/star_explore.png"),        # "星际探险" button, main page bottom right
     "ZAutoThrowing": get_image_path("zone/auto_throwing.png"),      # "自动投掷中..." overlay
@@ -320,7 +330,8 @@ no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "C
                  "ZFleetSpeed", "ZAccelerate", "ZReturnHome", "ZBoostPage", "ZQuantumBoost", "ZSuperBoost", "ZLargeBoost", "ZUseButton",
                  "ZZoneList", "ZSelectZone", "ZRivalPanel",
                  "ZFortressTitle", "ZGuardAttack", "ZAutoEquip", "ZEditFleetTitle", "ZEditArtifactTitle",
-                 "ZArtifactTarget", "ZArtifactCheck", "ZArtifactSlot", "ZLoadoutStandard", "ZPlusSlot", "ZEditGearTitle", "ZEditCatTitle", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
+                 "ZArtifactTarget", "ZArtifactCheck", "ZArtifactSlot", "ZLoadoutStandard", "ZPlusSlot",
+                 "ZFestTitle", "ZFestGo", "ZFestMe", "ZFestPav1", "ZFestBack", "ZFestOccupy", "ZFestEmpty", "ZFestRow", "ZEditGearTitle", "ZEditCatTitle", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
