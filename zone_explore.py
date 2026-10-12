@@ -192,9 +192,9 @@ RIVAL_LAYOUT = {"etas_dx0": -80, "etas_dy0": 8, "etas_dx1": 360, "etas_dy1": 58,
 # only a fallback because it misreads some numbers ("04" -> "0").
 ZONE_TITLE_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "zone_titles")
 SURVEY_TTL = 10 * 60                  # seconds a zone's memorized spots stay valid before re-surveying
-# Outer zones are surveyed for these kinds only, without colour / route checks (fast scan);
+# Outer zones are surveyed for these kinds only and without the route-line checks (fast scan);
 # the central zone is surveyed for everything.
-OUTER_KINDS = ("ZFactory1", "ZFactory2", "ZFactory3", "ZFactory4", "ZYellowBox", "ZYellowBoss")
+OUTER_KINDS = ("ZFactory1", "ZFactory2", "ZFactory3", "ZFactory4", "ZYellowBox", "ZYellowBoss", "ZBox")
 SHOT_TTL = 0.3                        # seconds a screenshot is reused by the detectors of one stop
 MIN_IDLE_FOR_OTHER_ZONES = 2          # outer zones are only surveyed with at least this many idle ships
 
@@ -997,7 +997,7 @@ class ZoneExplore:
                 if base is not None and any(base.x + ex0 < x < base.x + ex1 and base.y + ey0 < y < base.y + ey1
                                             for ex0, ex1, ey0, ey1 in MAP_EXCLUDE):
                     continue
-                if not light and not self.color_ok(kind, color, x, y):
+                if not self.color_ok(kind, color, x, y):     # cheap, kept in light mode too
                     wrong_color += 1
                     continue
                 if self.spot_key(x, y) in self.visited:
