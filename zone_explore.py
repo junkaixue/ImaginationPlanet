@@ -188,7 +188,8 @@ RIVAL_LAYOUT = {"etas_dx0": -80, "etas_dy0": 8, "etas_dx1": 360, "etas_dy1": 58,
 # learned on earlier visits (pics/<platform>/zone/zone_titles/<zone>.png); OCR of the digits is
 # only a fallback because it misreads some numbers ("04" -> "0").
 ZONE_TITLE_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "zone_titles")
-SURVEY_TTL = 20 * 60                  # seconds a zone's memorized spots stay valid before re-surveying
+SURVEY_TTL = 10 * 60                  # seconds a zone's memorized spots stay valid before re-surveying
+MIN_IDLE_FOR_OTHER_ZONES = 2          # outer zones are only surveyed with at least this many idle ships
 
 # Reference window: every layout and template was captured when the ZBase->ZTeam distance was
 # this many physical px. The emulator window can be resized; the round start re-measures it and
@@ -307,6 +308,7 @@ class ZoneExplore:
         self.spots = []            # memorized resources of the current round (map coordinates)
         self.last_dispatched = None   # ship index that left in the last successful dispatch
         self.last_shift = (0.0, 0.0)  # how far the view moved during the last dispatch
+        self.rescan_needed = False    # set when a memorized resource is gone (zone memory dropped)
         self.zone = None           # current zone name ("central", "02", ...) or None when unknown
         self.zone_spots = {}       # zone -> {"time": t, "spots": [Spot]} memorized across rounds
         self.win_scale = 1.0       # current window size / reference window size
@@ -1651,12 +1653,19 @@ class ZoneExplore:
             entry["spots"].remove(spot)
 
     def survey_zones(self):
-        """Survey every zone in ZONES whose memory is older than SURVEY_TTL; collect all spots."""
+        """Survey the zones whose memory is older than SURVEY_TTL (or was invalidated) and collect
+        all spots. The central zone is the main one; outer zones are only surveyed while at least
+        MIN_IDLE_FOR_OTHER_ZONES ships are idle."""
         now = time.time()
         for name in ZONES:
             entry = self.zone_spots.get(name)
             if entry and now - entry["time"] < SURVEY_TTL:
                 continue
+            if name != "central":
+                n, _ = self.can_dispatch()
+                if n < MIN_IDLE_FOR_OTHER_ZONES:
+                    log(f"Zone {name}: only {n} idle ship(s), outer zones need {MIN_IDLE_FOR_OTHER_ZONES} -> skipped")
+                    break
             if self.dry_run and name != (self.zone or name):
                 log(f"[DRY] would switch to zone {name} and survey it")
                 continue
@@ -1700,9 +1709,10 @@ class ZoneExplore:
             sx, sy = self.to_screen(spot.mx, spot.my)
             near = self.verify_spot(spot)
             if not near:
-                log(f"{spot.kind} no longer at {spot.zone}({spot.mx:.0f},{spot.my:.0f}) (taken or already targeted)")
-                self.spots.remove(spot)
-                self.forget_spot(spot)
+                log(f"{spot.kind} no longer at {spot.zone}({spot.mx:.0f},{spot.my:.0f}) -> zone memory invalidated")
+                self.spots = [s for s in self.spots if s.zone != spot.zone]
+                self.zone_spots.pop(spot.zone, None)
+                self.rescan_needed = True
                 continue
             if self.dispatch(near[0], allow_buy=allow_buy):
                 sent += 1
@@ -1742,9 +1752,19 @@ class ZoneExplore:
             return self.process_screen() or True
         if DISPATCH_MODE != "survey":
             return self.sweep()
-        if not self.survey_zones():
-            return False
-        return self.dispatch_memorized()
+        # survey -> dispatch; when a memorized resource turned out to be gone, that zone is
+        # re-surveyed and dispatching continues from the fresh list (once per round)
+        for _ in range(2):
+            self.rescan_needed = False
+            if not self.survey_zones():
+                return False
+            if not self.dispatch_memorized():
+                return False
+            n, _ = self.can_dispatch()
+            if not self.rescan_needed or n <= 0:
+                break
+            log("Memorized resources disappeared -> rescanning")
+        return True
 
     def enter_zone_explore(self):
         """From the main (dice) page: close the dice popup and click 星际探险 until the map shows."""
