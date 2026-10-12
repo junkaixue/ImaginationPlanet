@@ -68,7 +68,7 @@ EDIT_LAYOUT = {
 GEAR_LAYOUT = {"tab_dx": (-150, -50, 50, 150), "tab_dy": 62, "preview": (0, 470)}   # 令牌/烙印/战旗/密契
 # ---- 编辑猫护法 page (opened from the cat slot left of the artifact), relative to its title
 CAT_LAYOUT = {"slot": (76.5, 132.5), "item": (-76, 511), "count": 3}
-# ---- right-column artifact slots (rows 1-2: 低级 / 高级 / 顶级 pages): on the page the equipped
+# ---- right-column artifact slots (row 1 = 高级, holds 残骸本源; row 2 = 顶级, lv.14): on the page the equipped
 # artifact is shown in the preview area above the buttons; tapping it removes it.
 ARTIFACT_SLOTS = {"rows": (0, 1), "preview_from_confirm": (-92, -147)}
 UNEQUIP_BOTTOM_ARTIFACTS = True     # the four bottom slots (not the lv.6 shield); flow unverified
@@ -424,8 +424,14 @@ class FortressFight(ZoneExplore):
         title = self.fleet_title()
         dx, dy = EQUIP_LAYOUT["artifact_slot"]
         self.click(title.x + dx, title.y + dy, 2, "artifact slot", force=True)
-        if not self.wait_for("ZEditArtifactTitle", 8):
-            log("编辑低级神器 did not open")
+        opened = False
+        for _ in range(16):
+            if self.edit_page_open():
+                opened = True
+                break
+            time.sleep(0.5)
+        if not opened:
+            log("The artifact page did not open")
             self.close_popup()
             return False
         target = get_center("ZArtifactTarget", "Single")
