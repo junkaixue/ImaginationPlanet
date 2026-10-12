@@ -713,9 +713,18 @@ class ZoneExplore:
         cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
         clamp = lambda v, lo, hi: max(lo, min(hi, v))
         base = self.anchor("ZBase")
+        # the finger must stay inside the map frame: a gesture that ends beyond a visible frame
+        # line (outside the zone) is not accepted by the game, so the usable span shrinks there
+        sides = self.boundary_sides(region)
+        fx1 = max(x1 + m, sides["left"] + 15) if "left" in sides else x1 + m
+        fx2 = min(x2 - m, sides["right"] - 15) if "right" in sides else x2 - m
+        fy1 = max(y1 + m, sides["top"] + 15) if "top" in sides else y1 + m
+        fy2 = min(y2 - m, sides["bottom"] - 15) if "bottom" in sides else y2 - m
+        x1, x2, y1, y2 = fx1 - m, fx2 + m, fy1 - m, fy2 + m      # so that x1 + m == fx1 below
         cands = []
         if dy == 0 and base is not None:
-            bx1, bx2 = base.x + DRAG_LAYOUT["band_x_min_dx"], base.x + DRAG_LAYOUT["band_x_max_dx"]
+            bx1 = max(base.x + DRAG_LAYOUT["band_x_min_dx"], fx1)
+            bx2 = min(base.x + DRAG_LAYOUT["band_x_max_dx"], fx2)
             bcx = (bx1 + bx2) / 2
             for ddy in DRAG_LAYOUT["band_y_dys"]:
                 by = base.y + ddy
