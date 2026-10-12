@@ -279,6 +279,10 @@ _SCREENSHOT = {"orig": None, "scale": 1.0}
 
 def _scaled_screenshot(*a, **k):
     img = _SCREENSHOT["orig"](*a, **k)
+    if img.mode != "RGB":
+        # macOS screenshots come back RGBA; every colour sampler here reshapes to (-1, 3)
+        # and would scramble the channels on a 4-channel array
+        img = img.convert("RGB")
     s = _SCREENSHOT["scale"]
     if abs(s - 1.0) > 0.005:
         img = img.resize((round(img.width / s), round(img.height / s)))
@@ -582,7 +586,7 @@ class ZoneExplore:
         cx, cy = c.x + ZOOM_LAYOUT["dx75"], c.y
         x1, x2 = int((cx - ZOOM_LAYOUT["half_w"]) * self.sft), int((cx + ZOOM_LAYOUT["half_w"]) * self.sft)
         y1, y2 = int((cy - ZOOM_LAYOUT["half_h"]) * self.sft), int((cy + ZOOM_LAYOUT["half_h"]) * self.sft)
-        mean = color[y1:y2, x1:x2].reshape(-1, 3).mean(axis=0)   # RGB
+        mean = color[y1:y2, x1:x2, :3].reshape(-1, 3).mean(axis=0)   # RGB
         return bool(mean[0] > ZOOM_LAYOUT["selected_min_r"] and mean[2] > ZOOM_LAYOUT["selected_min_b"])
 
     def ensure_zoom(self):
@@ -988,7 +992,7 @@ class ZoneExplore:
         """Mean RGB of the bright pixels around a logical point."""
         x1, x2 = int((x - half) * self.sft), int((x + half) * self.sft)
         y1, y2 = int((y - half) * self.sft), int((y + half) * self.sft)
-        p = color[max(0, y1):y2, max(0, x1):x2].reshape(-1, 3).astype(int)
+        p = color[max(0, y1):y2, max(0, x1):x2, :3].reshape(-1, 3).astype(int)
         bright = p[p.sum(axis=1) > 400]
         return tuple(bright.mean(axis=0)) if len(bright) else (0, 0, 0)
 
