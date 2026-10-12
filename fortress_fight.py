@@ -67,6 +67,11 @@ FORTRESS = {
     "bright_min": 75,         # mean grey of the cell: attackable guards ~86-104, dim ones ~46-65
     "building_bright_min": 75,
     "grid_top_dy": 200,       # guard grid lies below the title by at least this (logical px)
+    "scroll_dy": 380,         # the page is taller than the screen: scroll this much per step
+    "scroll_x_dx": 0,         # scroll gesture column, relative to the title
+    "scroll_y0_dy": 650,      # gesture from title+y0 up to title+y1 (content moves up)
+    "scroll_y1_dy": 270,
+    "max_scrolls": 6,
 }
 FULL_HP = 100
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
@@ -311,7 +316,7 @@ class FortressFight(ZoneExplore):
             out.append((name, p.x, p.y - 35, float(patch.mean()) >= FORTRESS["building_bright_min"]))
         return out
 
-    def pick_target(self):
+    def visible_target(self):
         cells = self.guard_cells()
         bright = [c for c in cells if c[2]]
         log(f"Guards: {len(cells)} cells, {len(bright)} attackable")
@@ -322,6 +327,46 @@ class FortressFight(ZoneExplore):
         for name, x, y, ok in self.buildings():
             if ok:
                 return name, x, y
+        return None
+
+    def scroll_fortress(self, up=True):
+        """Scroll the fortress page (it is taller than the screen). Returns False when the page
+        did not move, i.e. the end was reached."""
+        from zone_explore import drag as _drag
+        title = get_center("ZFortressTitle", "Single")
+        if title is None:
+            return False
+        x = title.x + FORTRESS["scroll_x_dx"]
+        y0, y1 = title.y + FORTRESS["scroll_y0_dy"], title.y + FORTRESS["scroll_y1_dy"]
+        if not up:
+            y0, y1 = y1, y0
+        self.invalidate_shot()
+        before = self.shot()[1]
+        rx0, ry0 = self.to_real(x, y0)
+        rx1, ry1 = self.to_real(x, y1)
+        if self.dry_run:
+            log(f"[DRY] would scroll the fortress page {'up' if up else 'down'}")
+        _drag(rx0, ry0, rx1, ry1)
+        self.invalidate_shot()
+        time.sleep(0.6)
+        self.wait_still()
+        after = self.shot()[1]
+        moved = float(np.abs(before.astype(int) - after.astype(int)).mean()) > 3.0
+        log(f"Fortress page scroll {'up' if up else 'down'}: {'moved' if moved else 'end'}")
+        return moved
+
+    def pick_target(self):
+        """First attackable thing on the page, scrolling down through it when the visible part
+        has none. Scrolls back up when nothing is found at all."""
+        for i in range(FORTRESS["max_scrolls"] + 1):
+            t = self.visible_target()
+            if t is not None:
+                return t
+            if i == FORTRESS["max_scrolls"] or not self.scroll_fortress(up=True):
+                break
+        for _ in range(FORTRESS["max_scrolls"]):
+            if not self.scroll_fortress(up=False):
+                break
         return None
 
     def pick_dispatch_card(self, index):
