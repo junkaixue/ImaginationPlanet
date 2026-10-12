@@ -489,9 +489,30 @@ class ZoneExplore:
 
     # ------------------------------------------------------------------ page state
     def on_map(self):
+        """True only when the map is clear: no dialog, no target popup (前往), no fleet panel.
+        Template matching ignores dimming, so the map's own markers stay visible under a popup."""
         gs = self.shot()[1]
         f = lambda key: single_find_with_path(single_find_map[key], gs, MATCH_TH)
-        return f("ZExplore") and not f("ZCloseHint") and not f("ZContinueHint") and not f("ZBuyPrompt")
+        return (f("ZExplore") and not f("ZCloseHint") and not f("ZContinueHint") and not f("ZBuyPrompt")
+                and not f("ZGo") and not f("ZFleetSpeed") and not f("ZDispatchTitle"))
+
+    def plain_spot(self):
+        """A calm point on the map area (no icon, no button) to tap for closing popups."""
+        region = self.map_region()
+        if region is None:
+            return None
+        x1, y1, x2, y2 = region
+        gray = self.shot()[1]
+        h = int(DRAG_LAYOUT["finger_half"] * self.sft)
+        best = None
+        for fx, fy in [(0.1, 0.9), (0.5, 0.9), (0.1, 0.5), (0.5, 0.5), (0.3, 0.7), (0.7, 0.7), (0.1, 0.3)]:
+            x, y = x1 + (x2 - x1) * fx, y1 + (y2 - y1) * fy
+            px, py = int(x * self.sft), int(y * self.sft)
+            win = gray[max(0, py - h):py + h, max(0, px - h):px + h]
+            std = float(win.std()) if win.size else 999.0
+            if best is None or std < best[0]:
+                best = (std, x, y)
+        return Point(best[1], best[2])
 
     def close_popup(self, tries=6):
         """Get back to the map from any dialog. Clicks for real even in dry runs."""
@@ -511,10 +532,10 @@ class ZoneExplore:
                 self.click_button("ZBackArrow", force=True)
             elif single_find("ZFleetSpeed"):
                 self.close_fleet_panel(self.last_dispatched or 1)
-            elif single_find("ZGo"):
-                region = self.map_region()
-                if region:
-                    self.click(region[0] + 15, region[3] - 15, 1.5, "map (close target popup)", force=True)
+            elif single_find("ZGo") or single_find("ZDispatchTitle"):
+                p = self.plain_spot()
+                if p is not None:
+                    self.click(p.x, p.y, 1.5, "map (close target popup)", force=True)
             else:
                 time.sleep(1)
         return self.on_map()
