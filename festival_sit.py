@@ -28,7 +28,7 @@ from log_helper import log
 from zone_explore import ZoneExplore, drag, _code_version
 
 FEST = {
-    "row_skip": 1,            # rows to skip from the top (row 1 is never used)
+    "row_skip_first_pavilion": 1,   # pavilion I: row 1 is never used; other pavilions use every row
     "row_gap_min": 60,        # logical px below the first row label where row 2 starts
     "scroll_dy": 300,         # pavilion list scroll per step (logical px)
     "card_dx": 155, "card_dy": 94,   # name card of the left seat, relative to the row label
@@ -112,17 +112,6 @@ class FestivalSit(ZoneExplore):
         self.click(label.x - 60, label.y - 60, 2.5, name, force=True)
         return self.wait_for("ZFestRow", 8)
 
-    def free_seats(self):
-        """占据 buttons below the first row, top first."""
-        rows = get_all("ZFestRow", "Single")
-        seats = get_all("ZFestOccupy", "Single")
-        if not rows:
-            return seats
-        top = min(r.y for r in rows)
-        rows_sorted = sorted(r.y for r in rows)
-        cutoff = rows_sorted[FEST["row_skip"]] - 30 if len(rows_sorted) > FEST["row_skip"] else top + FEST["row_gap_min"]
-        return sorted([s for s in seats if s.y > cutoff], key=lambda s: s.y)
-
     def scroll_pavilion(self):
         rows = get_all("ZFestRow", "Single")
         if not rows:
@@ -188,12 +177,12 @@ class FestivalSit(ZoneExplore):
         time.sleep(2)
         return True
 
-    def sit(self):
-        """Rows from the second one down; inside a row slide the carousel until a 占据 shows;
-        then scroll the page for more rows."""
+    def sit(self, skip_rows=0):
+        """Rows top to bottom (minus `skip_rows` at the top); inside a row slide the carousel
+        until a 占据 shows."""
         for i in range(FEST["max_scrolls"] + 1):
             rows = sorted(get_all("ZFestRow", "Single"), key=lambda r: r.y)
-            usable = rows[FEST["row_skip"]:] if i == 0 else rows
+            usable = rows[skip_rows:] if i == 0 else rows
             log(f"Pavilion screen {i + 1}: {len(rows)} row label(s), {len(usable)} usable")
             for n, label in enumerate(usable):
                 for k in range(FEST["max_row_drags"] + 1):
@@ -245,7 +234,7 @@ class FestivalSit(ZoneExplore):
                 if not self.open_pavilion(label, f"pavilion {n}"):
                     log(f"Pavilion {n} did not open")
                     continue
-                ok = self.sit()
+                ok = self.sit(FEST["row_skip_first_pavilion"] if n == 1 else 0)
                 self.back()
                 time.sleep(1.5)
                 if ok or (not self.dry_run and self.seated()):
@@ -261,7 +250,7 @@ class FestivalSit(ZoneExplore):
             self.back()
             return False
         if pg == "pavilion":
-            ok = self.sit()
+            ok = self.sit(FEST["row_skip_first_pavilion"])
             self.back()
             return ok
         log("Not on a festival page: start on the game main screen or the 月满华诞 activity page")
