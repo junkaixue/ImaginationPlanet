@@ -34,6 +34,7 @@ import pyautogui
 
 from common import single_find, get_center, get_all, single_find_map
 from log_helper import log
+from click import click_at
 from zone_explore import (ZoneExplore, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH,
                           _code_version)
 
@@ -57,12 +58,15 @@ EDIT_LAYOUT = {
     # the rest shift left; chess: leftmost twice clears the first column, then the second
     # position eight times clears the remaining ones.
     "tabs": [
-        ("飞行器", -151, [(-40, 500, 2)]),
-        ("主题皮肤", -51, [(-40, 500, 2)]),
-        ("骰子皮肤", 49, [(0, 500, 1), (-40, 500, 1)]),
-        ("棋子", 149, [(-152.5, 465, 2), (-76.5, 465, 8)]),
+        ("飞行器", -151, [(-40, 500, 6)]),
+        ("主题皮肤", -51, [(-40, 500, 6)]),
+        ("骰子皮肤", 49, [(0, 500, 4), (-40, 500, 4)]),
+        ("棋子", 149, [(-152.5, 465, 6), (-76.5, 465, 30)]),
     ],
-    "plus_radius": 45,
+    "burst_gap": 0.12,         # seconds between removal taps (bursts are cheap, extra taps hit "+")
+    "tab_underline_dy": 82,    # the selected tab has a bright underline this far below the title (mean ~209 vs ~36)
+    "tab_half_w": 40,
+    "tab_retries": 4,
 }
 # ---- 编辑装备 page (bottom-row artifacts 炬团令牌/烙印/战旗/密契), relative to its title center
 GEAR_LAYOUT = {"tab_dx": (-150, -50, 50, 150), "tab_dy": 62, "preview": (0, 470)}   # 令牌/烙印/战旗/密契
@@ -320,17 +324,15 @@ class FortressFight(ZoneExplore):
             return False
         et = get_center("ZEditFleetTitle", "Single")
         for name, tab_dx, clicks in EDIT_LAYOUT["tabs"]:
-            self.click(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_dy"], 1.5, f"tab {name}", force=True)
+            if not self.select_edit_tab(et, name, tab_dx):
+                log(f"  {name}: tab could not be selected, skipped")
+                self.save_debug(f"tab_{name}")
+                continue
             n = 0
             for dx, dy, times in clicks:
-                for _ in range(times):
-                    pluses = get_all("ZPlusSlot", "Single")
-                    if any(abs(p.x - et.x - dx) < EDIT_LAYOUT["plus_radius"] and abs(p.y - et.y - dy) < EDIT_LAYOUT["plus_radius"]
-                           for p in pluses):
-                        break                   # this position is already the "+" placeholder
-                    self.click(et.x + dx, et.y + dy, 0.8, f"{name} item (remove)", force=True)
-                    n += 1
-            log(f"  {name}: {n} removal click(s)")
+                n += self.burst(et.x + dx, et.y + dy, times)
+            log(f"  {name}: {n} removal tap(s)")
+            time.sleep(0.5)
         ok = self.confirm_edit("编辑舰队")
         log("Gear removed and confirmed" if ok else "编辑舰队 could not be confirmed")
         if ok:
@@ -359,9 +361,37 @@ class FortressFight(ZoneExplore):
                 self.close_popup()
                 continue
             px, py = ARTIFACT_SLOTS["preview_from_confirm"]
-            self.click(ok.x + px, ok.y + py, 1.0, "equipped artifact (remove)", force=True)
+            self.burst(ok.x + px, ok.y + py, 3)
             self.confirm_edit(f"artifact row {row + 1}")
         return True
+
+    def burst(self, x, y, times):
+        """Tap the same spot many times quickly: removal taps on an already empty position do
+        nothing, so over-tapping is harmless and far more reliable than counting."""
+        rx, ry = self.to_real(x, y)
+        for _ in range(times):
+            click_at(rx, ry)
+            time.sleep(EDIT_LAYOUT["burst_gap"])
+        self.invalidate_shot()
+        return times
+
+    def tab_selected(self, et, tab_dx):
+        """The selected tab shows a bright underline below its label."""
+        self.invalidate_shot()
+        gray = self.shot()[1]
+        cx, cy = et.x + tab_dx, et.y + EDIT_LAYOUT["tab_underline_dy"]
+        x1, x2 = int((cx - EDIT_LAYOUT["tab_half_w"]) * self.sft), int((cx + EDIT_LAYOUT["tab_half_w"]) * self.sft)
+        y1, y2 = int((cy - 3) * self.sft), int((cy + 3) * self.sft)
+        band = gray[y1:y2, x1:x2]
+        return band.size > 0 and float(band.mean()) > 120
+
+    def select_edit_tab(self, et, name, tab_dx):
+        for attempt in range(EDIT_LAYOUT["tab_retries"]):
+            self.click(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_dy"], 1.2, f"tab {name}", force=True)
+            if self.tab_selected(et, tab_dx):
+                return True
+            log(f"  tab {name} not selected yet (attempt {attempt + 1})")
+        return False
 
     def unequip_cats(self, index):
         """The cat slot (left of the artifact) opens 编辑猫护法; the three equipped cats sit at
@@ -378,8 +408,7 @@ class FortressFight(ZoneExplore):
             return False
         ct = get_center("ZEditCatTitle", "Single")
         ix, iy = CAT_LAYOUT["item"]
-        for _ in range(CAT_LAYOUT["count"]):
-            self.click(ct.x + ix, ct.y + iy, 0.8, "cat (remove)", force=True)
+        self.burst(ct.x + ix, ct.y + iy, CAT_LAYOUT["count"] * 3)
         ok = self.confirm_edit("编辑猫护法")
         log("Cats removed" if ok else "编辑猫护法 could not be confirmed")
         return ok
@@ -398,9 +427,13 @@ class FortressFight(ZoneExplore):
             return False
         gt = get_center("ZEditGearTitle", "Single")
         for tab_dx in GEAR_LAYOUT["tab_dx"]:
-            self.click(gt.x + tab_dx, gt.y + GEAR_LAYOUT["tab_dy"], 1.5, "gear tab", force=True)
+            for attempt in range(EDIT_LAYOUT["tab_retries"]):
+                self.click(gt.x + tab_dx, gt.y + GEAR_LAYOUT["tab_dy"], 1.2, "gear tab", force=True)
+                if self.tab_selected(gt, tab_dx):
+                    break
+                log(f"  gear tab {tab_dx:+} not selected yet (attempt {attempt + 1})")
             px, py = GEAR_LAYOUT["preview"]
-            self.click(gt.x + px, gt.y + py, 1.0, "equipped artifact (remove)", force=True)
+            self.burst(gt.x + px, gt.y + py, 3)
         ok = self.confirm_edit("编辑装备")
         log("Bottom artifacts cleared" if ok else "编辑装备 could not be confirmed")
         return ok
