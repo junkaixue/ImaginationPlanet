@@ -150,6 +150,8 @@ DRAG_LAYOUT = {
     "plain_std": 22,
     "strip_inset": 10,      # logical px trimmed from the overlap strip used to measure movement
     "patch_min_std": 8,     # a strip flatter than this is empty space, only the static test is used
+    "area_min_std": 12,     # "did not move" is only believed when the map area has some structure
+    "max_unknown_edge": 3,  # consecutive unmeasurable drags towards a hidden edge count as the edge
     "patch_th": 0.6,        # min match of the overlap strip to trust the measured movement
     "edge_frac": 0.25,
     "static_diff": 4.0,     # mean abs pixel diff below this = nothing moved
@@ -319,6 +321,7 @@ class ZoneExplore:
         self.last_shift = (0.0, 0.0)  # how far the view moved during the last dispatch
         self.rescan_needed = False    # set when a memorized resource is gone (zone memory dropped)
         self._shot, self._shot_time = None, 0.0
+        self.last_drag_unknown = False
         self.zone = None           # current zone name ("central", "02", ...) or None when unknown
         self.zone_spots = {}       # zone -> {"time": t, "spots": [Spot]} memorized across rounds
         self.win_scale = 1.0       # current window size / reference window size
@@ -658,10 +661,11 @@ class ZoneExplore:
         strip = before[y1:y2, x1:x2]
         if float(strip.std()) < DRAG_LAYOUT["patch_min_std"]:
             # plain grid in the overlap strip: decide between "did not move" and "moved as
-            # asked" by comparing the whole area aligned both ways
+            # asked" by comparing the whole area aligned both ways. An area that is itself
+            # plain grid looks the same after any move, so "did not move" needs structure.
             diff0 = float(np.abs(before.astype(int) - after.astype(int)).mean())
             if diff0 < DRAG_LAYOUT["static_diff"]:
-                return 0.0, 0.0
+                return (0.0, 0.0) if float(before.std()) >= DRAG_LAYOUT["area_min_std"] else None
             moved = after[y1 + py:y2 + py, x1 + px:x2 + px] if 0 <= y1 + py and 0 <= x1 + px else None
             if moved is not None and moved.shape == strip.shape:
                 diff1 = float(np.abs(strip.astype(int) - moved.astype(int)).mean())
@@ -672,7 +676,9 @@ class ZoneExplore:
         _, peak, _, _ = cv2.minMaxLoc(res)
         if peak < DRAG_LAYOUT["patch_th"]:
             diff = float(np.abs(before.astype(int) - after.astype(int)).mean())
-            return (0.0, 0.0) if diff < DRAG_LAYOUT["static_diff"] else None
+            if diff < DRAG_LAYOUT["static_diff"] and float(before.std()) >= DRAG_LAYOUT["area_min_std"]:
+                return 0.0, 0.0
+            return None
         # expected top-left of the strip in `after`
         ex, ey = x1 + px, y1 + py
         ys, xs = np.where(res >= max(DRAG_LAYOUT["patch_th"], peak - 0.05))
@@ -788,12 +794,15 @@ class ZoneExplore:
                 time.sleep(1.0)          # maybe still animating (rubber band at the edge); look again
                 after = self.grab_region(region)
                 shift = self.measure_shift(before, after, dx, dy)
+            self.last_drag_unknown = shift is None
             if shift is None:
-                log(f"Drag ({dx:.0f},{dy:.0f}): movement unknown, assuming it worked")
+                log(f"Drag ({dx:.0f},{dy:.0f}): movement unknown (plain map), assuming it worked")
                 self.offset[0] += dx
                 self.offset[1] += dy
                 return "moved"
             got = (shift[0] ** 2 + shift[1] ** 2) ** 0.5
+            if got < DRAG_LAYOUT["edge_frac"] * asked:
+                self.debug_drag(before, after, dx, dy, shift)
             self.offset[0] += shift[0]
             self.offset[1] += shift[1]
             if got >= DRAG_LAYOUT["edge_frac"] * asked:
@@ -836,10 +845,15 @@ class ZoneExplore:
         return (x2 - x1 - DRAG_LAYOUT["overlap_x"], y2 - y1 - DRAG_LAYOUT["overlap_y"])
 
     def drag_to_edge(self, dx, dy):
+        unknown = 0
         for _ in range(DRAG_LAYOUT["max_drags"]):
             r = self.drag_map(dx, dy)
             if r != "moved":
                 return r == "edge"
+            unknown = unknown + 1 if self.last_drag_unknown else 0
+            if unknown >= DRAG_LAYOUT["max_unknown_edge"]:
+                log("Several drags in a row could not be measured on plain map -> treating as the edge")
+                return True
             if not self.on_map():
                 self.close_popup()
         return False
@@ -1665,6 +1679,19 @@ class ZoneExplore:
                 return 0, False
             return len(idle), True
         return len(idle), False
+
+    def debug_drag(self, before, after, dx, dy, shift):
+        """With --debug-shots: save the before/after map crops of a drag judged as 'no move'."""
+        if not DEBUG_SHOT_DIR:
+            return
+        os.makedirs(DEBUG_SHOT_DIR, exist_ok=True)
+        gap = np.full((before.shape[0], 20), 128, np.uint8)
+        img = np.hstack([before, gap, after])
+        cv2.putText(img, f"asked ({dx:.0f},{dy:.0f}) measured ({shift[0]:.0f},{shift[1]:.0f})", (10, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 1.2, 255, 2)
+        path = os.path.join(DEBUG_SHOT_DIR, f"{time.strftime('%H%M%S')}_drag_{self.zone}.png")
+        cv2.imwrite(path, img)
+        log(f"Debug drag shot saved: {path}")
 
     def debug_shot(self, cands):
         """With --debug-shots: save the frame the scanner used, detections boxed, so a "the log
