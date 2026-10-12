@@ -402,7 +402,9 @@ class FortressFight(ZoneExplore):
         icon = get_center("ZFortressMap", "Single")
         if icon is None:
             log("铸械要塞 icon not on screen")
+            self.save_debug("no_fortress_icon")
             return False
+        log(f"铸械要塞 icon at ({icon.x:.0f},{icon.y:.0f})")
         self.click(icon.x, icon.y, 2.5, "铸械要塞", force=True)
         if single_find("ZGo"):
             self.click_button("ZGo", 2.5, force=True)
@@ -493,7 +495,7 @@ class FortressFight(ZoneExplore):
         if title is None:
             return False
         self.click(title.x + DISPATCH_CARDS["dx"], title.y + DISPATCH_CARDS["dy0"] + (index - 1) * DISPATCH_CARDS["spacing"],
-                   2, f"fleet card {index}")
+                   2, f"fleet card {index}", force=True)
         return True
 
     def attack_with(self, index):
@@ -506,14 +508,20 @@ class FortressFight(ZoneExplore):
             return False
         name, x, y = target
         log(f"Attack {name} at ({x:.0f},{y:.0f}) with fleet {index}")
-        if self.dry_run:
-            return True
-        self.click(x, y, 1.5, name)
-        if not self.click_button("ZGuardAttack", 2):
+        # a dry run goes all the way to the battle estimate (selecting the guard, 袭击 and the
+        # fleet card are reversible) and cancels there instead of attacking
+        self.click(x, y, 1.5, name, force=True)
+        if not self.click_button("ZGuardAttack", 2, force=True):
             log("袭击 did not appear")
+            self.save_debug("no_guard_attack")
             return False
         for _ in range(12):
             if single_find("ZEstimateLabel"):
+                if self.dry_run:
+                    log("[DRY] estimate dialog reached -> would press 袭击; cancelling")
+                    self.click_button("ZCancel", 2, force=True)
+                    self.close_popup()
+                    return True
                 self.click_button("ZAttack", 2)         # estimates do not matter here
                 log("Attack launched")
                 self.close_popup()
