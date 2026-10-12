@@ -196,6 +196,7 @@ SURVEY_TTL = 10 * 60                  # seconds a zone's memorized spots stay va
 # the central zone is surveyed for everything.
 OUTER_KINDS = ("ZFactory1", "ZFactory2", "ZFactory3", "ZFactory4", "ZYellowBox", "ZYellowBoss", "ZBox")
 SHOT_TTL = 0.3                        # seconds a screenshot is reused by the detectors of one stop
+DEBUG_SHOT_DIR = None                 # set by --debug-shots: every survey stop saves what the scanner saw
 MIN_IDLE_FOR_OTHER_ZONES = 2          # outer zones are only surveyed with at least this many idle ships
 
 # Reference window: every layout and template was captured when the ZBase->ZTeam distance was
@@ -1656,6 +1657,26 @@ class ZoneExplore:
             return len(idle), True
         return len(idle), False
 
+    def debug_shot(self, cands):
+        """With --debug-shots: save the frame the scanner used, detections boxed, so a "the log
+        says 0 but I see a box" report can be checked against exactly what the program saw."""
+        if not DEBUG_SHOT_DIR:
+            return
+        color = self.shot()[0]
+        img = cv2.cvtColor(color, cv2.COLOR_RGB2BGR).copy()
+        region = self.map_region()
+        if region:
+            x1, y1, x2, y2 = (int(v * self.sft) for v in region)
+            cv2.rectangle(img, (x1, y1), (x2, y2), (0, 255, 255), 2)
+        for c in cands:
+            cx, cy = int(c.x * self.sft), int(c.y * self.sft)
+            cv2.rectangle(img, (cx - 40, cy - 40), (cx + 40, cy + 40), (0, 0, 255), 3)
+            cv2.putText(img, c.kind, (cx - 40, cy - 48), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        os.makedirs(DEBUG_SHOT_DIR, exist_ok=True)
+        path = os.path.join(DEBUG_SHOT_DIR, f"{time.strftime('%H%M%S')}_{self.zone}_{len(cands)}.png")
+        cv2.imwrite(path, img)
+        log(f"Debug shot saved: {path}")
+
     def survey_screen(self):
         """Memorize everything on this screen; dispatch IMMEDIATE_KINDS right away."""
         if not self.on_map() and not self.close_popup():
@@ -1663,7 +1684,9 @@ class ZoneExplore:
         for _ in range(4):                  # re-scan after each immediate dispatch (the view may
             dispatched = False              # have moved and the candidate list is stale)
             outer = self.zone is not None and self.zone != "central"
-            for c in self.scan_resources(kinds=OUTER_KINDS if outer else None, light=outer):
+            cands = self.scan_resources(kinds=OUTER_KINDS if outer else None, light=outer)
+            self.debug_shot(cands)
+            for c in cands:
                 mx, my = self.to_map(c.x, c.y)
                 if any(s.kind == c.kind and abs(s.mx - mx) < 35 and abs(s.my - my) < 35 for s in self.spots):
                     continue
@@ -1986,6 +2009,8 @@ if __name__ == "__main__":
     parser.add_argument("--click-test", action="store_true", help="Click 50% then 75% on the zoom bar")
     parser.add_argument("--boost-test", type=int, metavar="SHIP",
                         help="Open the boost dialog of ship 1-5 (with --dry: stop before 使用)")
+    parser.add_argument("--debug-shots", action="store_true",
+                        help="Save every survey stop's frame with detections to pics/<platform>/zone/debug/")
     parser.add_argument("--zone-test", metavar="ZONE",
                         help="Switch to a zone (central, 02..07) and report which zone the map shows")
     parser.add_argument("-m", "--monitor", action="store_true",
@@ -1993,6 +2018,8 @@ if __name__ == "__main__":
     parser.add_argument("--delay", type=int, default=3, help="Seconds to switch to the game window")
     args = parser.parse_args()
     time.sleep(args.delay)
+    if args.debug_shots:
+        DEBUG_SHOT_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "debug")
     z = ZoneExplore(dry_run=args.dry)
     if args.click_test:
         z.click_test()
