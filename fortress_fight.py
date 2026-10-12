@@ -144,11 +144,16 @@ class FortressFight(ZoneExplore):
     def has_boss_artifact(self):
         """True when the top-right slot of the open fleet tab shows 残骸本源."""
         title = self.fleet_title()
-        p = get_center("ZArtifactSlot", "Single")
-        if title is None or p is None:
+        if title is None:
             return False
+        self.invalidate_shot()
+        gray = self.shot()[1]
         dx, dy = EQUIP_LAYOUT["artifact_slot"]
-        return abs(p.x - (title.x + dx)) < 40 and abs(p.y - (title.y + dy)) < 40
+        # other gold artifacts (冰核本源, 蓝冰本源) match this icon at <= 0.79, 残骸本源 at >= 0.99
+        for cx, cy, conf in match_all(gray, self.full_template("ZArtifactSlot"), 0.9):
+            if abs(cx / self.sft - (title.x + dx)) < 40 and abs(cy / self.sft - (title.y + dy)) < 40:
+                return True
+        return False
 
     def find_gear_holder(self):
         """The fleet carrying the best equipment: its top-right slot shows 残骸本源 (deterministic);
