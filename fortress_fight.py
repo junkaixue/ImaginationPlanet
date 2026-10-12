@@ -44,6 +44,7 @@ EQUIP_LAYOUT = {
     "artifact_slot": (152.5, 132.5),                 # top right: the 神器 slot
     "shield_slot": (152.5, 475),                     # bottom right lv.6 shield: never touched
     "power_dx": 0, "power_dy": 618, "power_half_w": 95, "power_half_h": 15,   # "战力:835.26万"
+    "back_dx": -187,                                 # "<<" close arrow left of the title
 }
 # ---- 编辑舰队 page, relative to its title center. The equipped items sit in the bottom area;
 # clicking one removes it and the rest shift left, an empty place shows a "+" placeholder.
@@ -100,6 +101,19 @@ class FortressFight(ZoneExplore):
 
     def fleet_title(self):
         return self.anchor("ZMyFleet")
+
+    def close_fleet_page(self):
+        """Close 我的舰队 (and anything on top of it). The top bar is dimmed under the panel, so
+        ship status and hp can only be read once it is closed."""
+        for _ in range(4):
+            if single_find("ZEditFleetTitle") or single_find("ZEditGearTitle") or single_find("ZEditArtifactTitle"):
+                self.click_button("ZCancel", 1.5, force=True)
+                continue
+            title = self.fleet_title()
+            if title is None or not single_find("ZMyFleet"):
+                break
+            self.click(title.x + EQUIP_LAYOUT["back_dx"], title.y, 1.5, "close 我的舰队", force=True)
+        return self.close_popup()
 
     def select_tab(self, index):
         title = self.fleet_title()
@@ -296,7 +310,7 @@ class FortressFight(ZoneExplore):
         if not self.ensure_boss_artifact(target):
             return False
         self.repair_fleet(holder)
-        self.close_popup()
+        self.close_fleet_page()
         return True
 
     # ------------------------------------------------------------------ fortress page
@@ -442,6 +456,8 @@ class FortressFight(ZoneExplore):
 
     # ------------------------------------------------------------------ cycle
     def full_hp_idle(self, exclude):
+        if not self.on_map():
+            self.close_fleet_page()
         ships = self.scan_ships()
         return [i for i, s in ships.items() if s["idle"] and s["hp"] == FULL_HP and i != exclude]
 
@@ -463,7 +479,7 @@ class FortressFight(ZoneExplore):
                 self.close_popup()
             if self.holder is None:
                 self.holder = self.find_gear_holder()
-                self.close_popup()
+                self.close_fleet_page()
             if self.holder is None:
                 log("Could not tell which fleet has the best gear")
                 return
