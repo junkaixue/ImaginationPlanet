@@ -711,7 +711,15 @@ class FortressFight(ZoneExplore):
                 self.close_fleet_page()
             ships = self.scan_ships()
             h = ships.get(self.holder, {})
-            if h.get("idle") and h.get("hp") is not None and h["hp"] > HOLDER_OK_HP:
+            if not h.get("idle"):
+                # the gear is on a fleet that is still out (sailing / fighting / returning):
+                # nothing can be swapped until it is back
+                log(f"Fleet {self.holder} (best gear) is {h.get('status', 'unknown')}; waiting for it to return")
+                if self.dry_run:
+                    return
+                time.sleep(POLL)
+                continue
+            if h.get("hp") is not None and h["hp"] > HOLDER_OK_HP:
                 log(f"Fleet {self.holder} still has {h['hp']}% hp: attacking again without a gear swap")
                 target = self.holder
             else:
