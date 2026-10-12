@@ -407,8 +407,13 @@ class FortressFight(ZoneExplore):
         log(f"铸械要塞 icon at ({icon.x:.0f},{icon.y:.0f})")
         self.click(icon.x, icon.y, 2.5, "铸械要塞", force=True)
         if single_find("ZGo"):
+            log("Target popup -> 前往")
             self.click_button("ZGo", 2.5, force=True)
-        return self.wait_for("ZFortressTitle", 8)
+        if self.wait_for("ZFortressTitle", 8):
+            return True
+        log("Fortress page title not seen after clicking the icon")
+        self.save_debug("fortress_page_missing")
+        return False
 
     def guard_cells(self):
         """[(x, y, bright)] of every guard cell on the fortress page (logical px)."""
@@ -501,6 +506,7 @@ class FortressFight(ZoneExplore):
     def attack_with(self, index):
         """Select an attackable target on the fortress page and send fleet `index`."""
         if not self.open_fortress():
+            log("Could not open the fortress page")
             return False
         target = self.pick_target()
         if target is None:
