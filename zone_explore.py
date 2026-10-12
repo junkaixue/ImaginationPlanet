@@ -297,6 +297,17 @@ def _uninstall_screenshot_scaler():
         pyautogui.screenshot = _SCREENSHOT["orig"]
 
 
+def _code_version():
+    """Short git hash of the working copy, so a log can be matched to the code that produced it."""
+    try:
+        import subprocess
+        here = os.path.dirname(os.path.abspath(__file__))
+        return subprocess.check_output(["git", "-C", here, "rev-parse", "--short", "HEAD"],
+                                       stderr=subprocess.DEVNULL, timeout=3).decode().strip()
+    except Exception:
+        return "unknown"
+
+
 class ZoneExplore:
     def __init__(self, dry_run=False):
         self.dry_run = dry_run
@@ -329,7 +340,7 @@ class ZoneExplore:
         self.win_scale = 1.0       # current window size / reference window size
         _install_screenshot_scaler()
         self._orig_screenshot = _SCREENSHOT["orig"]
-        log(f"ZoneExplore init. platform={platform.system()} sft={self.sft} dry_run={dry_run}")
+        log(f"ZoneExplore init. platform={platform.system()} sft={self.sft} dry_run={dry_run} code={_code_version()}")
 
     # ------------------------------------------------------------------ screenshots
     def shot(self):
@@ -1030,6 +1041,8 @@ class ZoneExplore:
         found = []
         targeted = 0
         wrong_color = 0
+        skipped_visited = 0
+        skipped_ui = 0
         for kind, score in RESOURCE_SCORES.items():
             if kinds is not None and kind not in kinds:
                 continue
@@ -1050,11 +1063,13 @@ class ZoneExplore:
                     continue
                 if base is not None and any(base.x + ex0 < x < base.x + ex1 and base.y + ey0 < y < base.y + ey1
                                             for ex0, ex1, ey0, ey1 in MAP_EXCLUDE):
+                    skipped_ui += 1
                     continue
                 if not self.color_ok(kind, color, x, y):     # cheap, kept in light mode too
                     wrong_color += 1
                     continue
                 if self.spot_key(x, y) in self.visited:
+                    skipped_visited += 1
                     continue
                 if self.targeted_by_route(x, y, ends):
                     targeted += 1
@@ -1073,6 +1088,9 @@ class ZoneExplore:
         log(f"Resources: {len(found)}" + (f" (+{targeted} already targeted by our ships)" if targeted else "")
             + (f" (+{wrong_color} same shape, wrong colour)" if wrong_color else "")
             + (f" (+{contested} with a rival on the way)" if contested else "")
+            + (f" (+{skipped_visited} visited recently)" if skipped_visited else "")
+            + (f" (+{skipped_ui} under the UI column)" if skipped_ui else "")
+            + (f" [kinds={len(kinds)}]" if kinds is not None else "")
             + " -> " + ", ".join(f"{c.kind}@({c.x:.0f},{c.y:.0f})" for c in found[:8]))
         return found
 
