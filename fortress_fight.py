@@ -31,7 +31,7 @@ import cv2
 import numpy as np
 import pyautogui
 
-from common import single_find, get_center, single_find_map
+from common import single_find, get_center, get_all, single_find_map
 from log_helper import log
 from zone_explore import (ZoneExplore, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH,
                           _code_version)
@@ -44,13 +44,21 @@ EQUIP_LAYOUT = {
     "shield_slot": (152.5, 475),                     # bottom right lv.6 shield: never touched
     "power_dx": 0, "power_dy": 618, "power_half_w": 95, "power_half_h": 15,   # "战力:835.26万"
 }
-# ---- 编辑舰队 page, relative to its title center
+# ---- 编辑舰队 page, relative to its title center. The equipped items sit in the bottom area;
+# clicking one removes it and the rest shift left, an empty place shows a "+" placeholder.
 EDIT_LAYOUT = {
-    "tab_dx": (-76, -26, 24, 75),                    # 飞行器 / 主题皮肤 / 骰子皮肤 / 棋子
     "tab_dy": 65,
-    "item_dx": -40, "item_dy": 500,                  # first equipped item in the bottom area
-    "max_items": 12,
+    "tabs": [   # (tab dx, possible item positions)
+        (-76, [(-40, 500), (35, 500)]),                                  # 飞行器 (2)
+        (-26, [(0, 500), (-40, 500), (35, 500)]),                        # 主题皮肤
+        (24, [(0, 500), (-40, 500), (35, 500)]),                         # 骰子皮肤
+        (75, [(dx, dy) for dy in (465, 542.5) for dx in (-152.5, -76.5, 0, 76, 152.5)]),   # 棋子 (10)
+    ],
+    "plus_radius": 45,
 }
+# ---- 编辑装备 page (bottom-row artifacts 炬团令牌/烙印/战旗/密契), relative to its title center
+GEAR_LAYOUT = {"tab_dx": (-75, -25, 25, 75), "tab_dy": 62, "preview": (0, 470)}
+UNEQUIP_BOTTOM_ARTIFACTS = True     # the four bottom slots (not the lv.6 shield); flow unverified
 # ---- 派遣舰队 list, card centers relative to the "派遣舰队" title
 DISPATCH_CARDS = {"dx": -15, "dy0": 105, "spacing": 125}
 # ---- fortress page
@@ -148,16 +156,46 @@ class FortressFight(ZoneExplore):
             self.close_popup()
             return False
         et = get_center("ZEditFleetTitle", "Single")
-        for tab_dx in EDIT_LAYOUT["tab_dx"]:
+        for tab_dx, slots in EDIT_LAYOUT["tabs"]:
             self.click(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_dy"], 1.5, "edit tab")
-            for _ in range(EDIT_LAYOUT["max_items"]):
-                plus = get_center("ZPlusSlot", "Single")
-                first = Point(et.x + EDIT_LAYOUT["item_dx"], et.y + EDIT_LAYOUT["item_dy"])
-                if plus is not None and abs(plus.x - first.x) < 45 and abs(plus.y - first.y) < 45:
-                    break           # the first position is already the "+" placeholder: empty
-                self.click(first.x, first.y, 1.0, "equipped item (remove)")
+            removed = 0
+            for _ in range(len(slots) + 2):
+                pluses = get_all("ZPlusSlot", "Single")
+                occupied = [Point(et.x + dx, et.y + dy) for dx, dy in slots
+                            if not any(abs(p.x - et.x - dx) < EDIT_LAYOUT["plus_radius"]
+                                       and abs(p.y - et.y - dy) < EDIT_LAYOUT["plus_radius"] for p in pluses)]
+                if not occupied or (pluses and removed >= len(slots)):
+                    break
+                self.click(occupied[0].x, occupied[0].y, 1.0, "equipped item (remove)")
+                removed += 1
+                if not pluses and removed >= len(slots):
+                    break
+            log(f"  tab {tab_dx:+}: {removed} removal click(s)")
         ok = self.click_button("ZRepairOk", 2)      # the "确认" button shares the template
         log("Gear removed and confirmed" if ok else "确认 not found after removing gear")
+        if ok and UNEQUIP_BOTTOM_ARTIFACTS:
+            self.unequip_bottom_artifacts(index)
+        return ok
+
+    def unequip_bottom_artifacts(self, index):
+        """The four bottom-row artifact slots open 编辑装备 (tabs 炬团令牌/烙印/战旗/密契); the
+        equipped one is shown in the preview area. Clicking the preview is assumed to remove it."""
+        if not self.open_fleet_page():
+            return False
+        self.select_tab(index)
+        title = self.fleet_title()
+        self.click(title.x + EQUIP_LAYOUT["slot_dx"][0], title.y + EQUIP_LAYOUT["row_dy"][4], 2, "bottom artifact slot")
+        if not self.wait_for("ZEditGearTitle", 8):
+            log("编辑装备 did not open")
+            self.close_popup()
+            return False
+        gt = get_center("ZEditGearTitle", "Single")
+        for tab_dx in GEAR_LAYOUT["tab_dx"]:
+            self.click(gt.x + tab_dx, gt.y + GEAR_LAYOUT["tab_dy"], 1.5, "gear tab")
+            px, py = GEAR_LAYOUT["preview"]
+            self.click(gt.x + px, gt.y + py, 1.0, "equipped artifact (remove)")
+        ok = self.click_button("ZRepairOk", 2)
+        log("Bottom artifacts cleared" if ok else "确认 not found on 编辑装备")
         return ok
 
     def auto_equip(self, index):
