@@ -373,7 +373,13 @@ class FortressFight(ZoneExplore):
         if not self.on_map():
             self.close_popup()
         if self.read_zone() != "central":
-            self.switch_zone("central")
+            # the fortress only exists in the central zone: the base icon jumps there
+            base = self.anchor("ZBase")
+            if base is not None:
+                log("Not in the central zone -> base icon")
+                self.click(base.x, base.y, 3, "base icon -> central", force=True)
+                self.wait_for("ZExplore", 10)
+                self.zone = self.read_zone()
         icon = get_center("ZFortressMap", "Single")
         if icon is None:
             log("铸械要塞 icon not on screen")
