@@ -221,6 +221,28 @@ class FortressFight(ZoneExplore):
         self.save_debug("fleet_page_missing")
         return False
 
+    def press(self, but, what, gone=None, appears=None, tries=3, settle=0.8):
+        """Click a template button after the popup has settled (the popup slides in, so the
+        position found during the animation is stale) and verify the click took: `gone` must
+        disappear or `appears` must show up; otherwise re-locate and click again."""
+        for attempt in range(tries):
+            time.sleep(settle)
+            self.invalidate_shot()
+            c = get_center(but, "Single")
+            if c is None:
+                if (gone and not single_find(gone)) or (appears and single_find(appears)):
+                    return True
+                log(f"{what}: button not found (attempt {attempt + 1})")
+                continue
+            self.click(c.x, c.y, 1.5, what, force=True)
+            for _ in range(6):
+                if (gone and not single_find(gone)) or (appears and single_find(appears)):
+                    return True
+                time.sleep(0.5)
+            log(f"{what}: no effect yet (attempt {attempt + 1})")
+        self.save_debug(f"press_{but}")
+        return False
+
     def save_debug(self, name):
         if not DEBUG_DIR:
             return
@@ -584,7 +606,7 @@ class FortressFight(ZoneExplore):
         # the icon opens an info popup (位置/坐标/距离/守卫等级) with a 袭击 button -> fortress page
         if self.wait_for("ZGuardAttack", 5):
             log("Fortress popup -> 袭击")
-            self.click_button("ZGuardAttack", 2.5, force=True)
+            self.press("ZGuardAttack", "袭击 (fortress popup)", appears="ZFortressTitle")
         elif single_find("ZGo"):
             self.click_button("ZGo", 2.5, force=True)
         if self.wait_for("ZFortressTitle", 8):
@@ -695,9 +717,11 @@ class FortressFight(ZoneExplore):
         # a dry run goes all the way to the battle estimate (selecting the guard, 袭击 and the
         # fleet card are reversible) and cancels there instead of attacking
         self.click(x, y, 1.5, name, force=True)
-        if not self.click_button("ZGuardAttack", 2, force=True):
+        if not self.wait_for("ZGuardAttack", 5):
             log("袭击 did not appear")
             self.save_debug("no_guard_attack")
+            return False
+        if not self.press("ZGuardAttack", "袭击 (guard)", gone="ZGuardAttack"):
             return False
         for _ in range(12):
             if single_find("ZEstimateLabel"):
