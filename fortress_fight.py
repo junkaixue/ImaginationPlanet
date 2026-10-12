@@ -46,7 +46,8 @@ EQUIP_LAYOUT = {
     "power_dx": 0, "power_dy": 618, "power_half_w": 95, "power_half_h": 15,   # "战力:835.26万"
     "back_dx": -187,                                 # "<<" close arrow left of the title
     "loadout_dx": 3, "loadout_dy": 305,              # center of the loadout grid (ZLoadoutStandard)
-    "loadout_th": 0.85,                              # the holder's grid matches the standard >= this
+    "loadout_th": 0.9,                               # the holder's grid matches the standard >= this ...
+    "loadout_margin": 0.05,                          # ... and clearly better than every other tab
 }
 # ---- 编辑舰队 page, relative to its title center. The equipped items sit in the bottom area;
 # clicking one removes it and the rest shift left, an empty place shows a "+" placeholder.
@@ -202,9 +203,10 @@ class FortressFight(ZoneExplore):
             scores[i] = self.loadout_score()
         log("Fleet power: " + ", ".join(f"{i}:{p}" for i, p in powers.items())
             + " | loadout match: " + ", ".join(f"{i}:{s:.2f}" for i, s in scores.items()))
-        best = max(scores, key=scores.get)
-        if scores[best] >= EQUIP_LAYOUT["loadout_th"]:
-            return best
+        ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+        best, second = ranked[0], ranked[1] if len(ranked) > 1 else (None, 0.0)
+        if best[1] >= EQUIP_LAYOUT["loadout_th"] and best[1] - second[1] >= EQUIP_LAYOUT["loadout_margin"]:
+            return best[0]
         log("No fleet matches the standard loadout; falling back to the highest 战力")
         valid = {i: p for i, p in powers.items() if p is not None}
         return max(valid, key=valid.get) if valid else None
