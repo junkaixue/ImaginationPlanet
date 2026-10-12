@@ -534,7 +534,7 @@ class ZoneExplore:
         gs = self.shot()[1]
         f = lambda key: single_find_with_path(single_find_map[key], gs, MATCH_TH)
         return (f("ZExplore") and not f("ZCloseHint") and not f("ZContinueHint") and not f("ZBuyPrompt")
-                and not f("ZGo") and not f("ZFleetSpeed") and not f("ZDispatchTitle"))
+                and not f("ZGo") and not f("ZFleetSpeed") and not f("ZDispatchTitle") and not f("ZGuardAttack"))
 
     def plain_spot(self):
         """A calm point on the map area (no icon, no button) to tap for closing popups."""
@@ -572,7 +572,7 @@ class ZoneExplore:
                 self.click_button("ZBackArrow", force=True)
             elif single_find("ZFleetSpeed"):
                 self.close_fleet_panel(self.last_dispatched or 1)
-            elif single_find("ZGo") or single_find("ZDispatchTitle"):
+            elif single_find("ZGo") or single_find("ZDispatchTitle") or single_find("ZGuardAttack"):
                 p = self.plain_spot()
                 if p is not None:
                     self.click(p.x, p.y, 1.5, "map (close target popup)", force=True)

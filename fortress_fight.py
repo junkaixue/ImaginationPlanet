@@ -406,8 +406,11 @@ class FortressFight(ZoneExplore):
             return False
         log(f"铸械要塞 icon at ({icon.x:.0f},{icon.y:.0f})")
         self.click(icon.x, icon.y, 2.5, "铸械要塞", force=True)
-        if single_find("ZGo"):
-            log("Target popup -> 前往")
+        # the icon opens an info popup (位置/坐标/距离/守卫等级) with a 袭击 button -> fortress page
+        if self.wait_for("ZGuardAttack", 5):
+            log("Fortress popup -> 袭击")
+            self.click_button("ZGuardAttack", 2.5, force=True)
+        elif single_find("ZGo"):
             self.click_button("ZGo", 2.5, force=True)
         if self.wait_for("ZFortressTitle", 8):
             return True
