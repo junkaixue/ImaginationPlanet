@@ -340,6 +340,9 @@ class ZoneExplore:
         self._shot, self._shot_time = None, 0.0
         self.last_drag_unknown = False
         self._scan_frame = None
+        self.last_landmarks = []      # every template hit of the last scan (any colour): used as landmarks
+        self.prev_landmarks = None    # landmarks of the previous survey stop
+        self.prev_offset = None       # offset at the previous survey stop
         self.zone = None           # current zone name ("central", "02", ...) or None when unknown
         self.zone_spots = {}       # zone -> {"time": t, "spots": [Spot]} memorized across rounds
         self.win_scale = 1.0       # current window size / reference window size
@@ -1044,6 +1047,7 @@ class ZoneExplore:
         gx2, gy2 = int(min(gray.shape[1], (x_max + pad) * self.sft)), int(min(gray.shape[0], (y_max + pad) * self.sft))
         sub = gray[gy1:gy2, gx1:gx2]
         found = []
+        landmarks = []
         targeted = 0
         wrong_color = 0
         skipped_visited = 0
@@ -1066,6 +1070,7 @@ class ZoneExplore:
             for x, y, how in hits:
                 if not (y_min < y < y_max and x_min < x < x_max):
                     continue
+                landmarks.append((kind + ("" if how == "full" else f"[{how}]"), x, y))
                 if base is not None and any(base.x + ex0 < x < base.x + ex1 and base.y + ey0 < y < base.y + ey1
                                             for ex0, ex1, ey0, ey1 in MAP_EXCLUDE):
                     skipped_ui += 1
@@ -1094,6 +1099,7 @@ class ZoneExplore:
                     continue   # the same icon matched by two kinds (e.g. two factory templates)
                 found.append(Candidate(kind + ("" if how == "full" else f"[{how}]"), score, x, y))
         found.sort(key=lambda c: (-c.score, c.y, c.x))
+        self.last_landmarks = landmarks
         log(f"Resources: {len(found)}" + (f" (+{targeted} already targeted by our ships)" if targeted else "")
             + (f" (+{wrong_color} same shape, wrong colour)" if wrong_color else "")
             + (f" (+{contested} with a rival on the way)" if contested else "")
@@ -1781,7 +1787,7 @@ class ZoneExplore:
             outer = self.zone is not None and self.zone != "central"
             cands = self.scan_resources(kinds=OUTER_KINDS if outer else None, light=outer)
             self.debug_shot(cands)
-            corrected = False
+            corrected = self.correct_offset_from_landmarks()   # voting first; the per-spot fallback stays otherwise
             for c in cands:
                 mx, my = self.to_map(c.x, c.y)
                 same = [s for s in self.spots
@@ -1807,8 +1813,47 @@ class ZoneExplore:
                         break
                 self.spots.append(Spot(c.kind, c.score, mx, my, self.zone))
             if not dispatched:
+                self.prev_landmarks = list(self.last_landmarks)
+                self.prev_offset = list(self.offset)
                 return True
+        self.prev_landmarks = list(self.last_landmarks)
+        self.prev_offset = list(self.offset)
         return True
+
+    def correct_offset_from_landmarks(self):
+        """The icons seen at the previous stop that are still on screen tell exactly how far the
+        map moved: every same-kind pair votes for a displacement, the biggest cluster wins. If
+        it disagrees with what the drag measurement (or assumption) produced, the offsets are
+        corrected, so the same resource is never memorized twice."""
+        if not self.prev_landmarks or self.prev_offset is None or not self.last_landmarks:
+            return False
+        assumed = (self.offset[0] - self.prev_offset[0], self.offset[1] - self.prev_offset[1])
+        votes = []
+        for pk, px, py in self.prev_landmarks:
+            for ck, cx, cy in self.last_landmarks:
+                if pk == ck:
+                    votes.append((cx - px, cy - py, pk))
+        best, best_n = None, 0
+        for vx, vy, _ in votes:
+            n = sum(1 for ox, oy, _ in votes if abs(ox - vx) < 8 and abs(oy - vy) < 8)
+            if n > best_n:
+                best, best_n = (vx, vy), n
+        if best is None:
+            return False
+        rare = any(k != "ZBox" for ox, oy, k in votes if abs(ox - best[0]) < 8 and abs(oy - best[1]) < 8)
+        if best_n < 2 and not rare:
+            return False
+        step_x, step_y = self.drag_steps() or (400, 600)
+        if abs(best[0]) > 1.3 * step_x or abs(best[1]) > 1.3 * step_y:
+            return False
+        ddx, ddy = best[0] - assumed[0], best[1] - assumed[1]
+        if abs(ddx) > 4 or abs(ddy) > 4:
+            self.offset[0] += ddx
+            self.offset[1] += ddy
+            log(f"Landmarks ({best_n} votes) say the map moved ({best[0]:.0f},{best[1]:.0f}), "
+                f"not ({assumed[0]:.0f},{assumed[1]:.0f}) -> offset corrected by ({ddx:.0f},{ddy:.0f})")
+            return True
+        return False
 
     def navigate_to(self, spot):
         """Drag until the memorized spot is near the center of the map area, switching zone and
