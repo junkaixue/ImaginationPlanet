@@ -69,11 +69,13 @@ class FestivalSit(ZoneExplore):
     def seated(self):
         return single_find("ZFestMe")
 
-    def open_pavilion(self):
-        p = get_center("ZFestPav1", "Single")
-        if p is None:
-            return False
-        self.click(p.x, p.y - 60, 2.5, "巅峰I号赏月亭", force=True)
+    def pavilions(self):
+        """Pavilion labels on the festival page, in order I, II, III, ... (top to bottom)."""
+        labels = get_all("ZFestPavilion", "Single")
+        return sorted(labels, key=lambda p: (p.y, p.x))
+
+    def open_pavilion(self, label, name):
+        self.click(label.x - 60, label.y - 60, 2.5, name, force=True)
         return self.wait_for("ZFestRow", 8)
 
     def free_seats(self):
@@ -139,16 +141,25 @@ class FestivalSit(ZoneExplore):
                 log("Already seated (我 bubble) -> back to the activity page")
                 self.back()
                 return True
-            if not self.open_pavilion():
-                log("Could not open 巅峰I号赏月亭")
-                return False
-            pg = "pavilion"
+            pavs = self.pavilions()
+            log(f"{len(pavs)} pavilion(s) on screen")
+            for n, label in enumerate(pavs, 1):
+                if not self.open_pavilion(label, f"pavilion {n}"):
+                    log(f"Pavilion {n} did not open")
+                    continue
+                ok = self.sit()
+                self.back()
+                time.sleep(1.5)
+                if ok or self.seated():
+                    log(f"Seated in pavilion {n}")
+                    self.back()
+                    return True
+                log(f"Pavilion {n} is full, trying the next one")
+            log("No free seat in any pavilion on screen")
+            self.back()
+            return False
         if pg == "pavilion":
             ok = self.sit()
-            self.back()
-            time.sleep(1.5)
-            if self.seated():
-                log("Seated" if ok else "Seated already")
             self.back()
             return ok
         log("Not on a festival page: start on the 月满华诞 activity page")

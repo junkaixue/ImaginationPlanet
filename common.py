@@ -291,6 +291,7 @@ single_find_map = {
     "ZFestGo": get_image_path("zone/fest_go.png"),              # 前往>> buttons on the activity page
     "ZFestMe": get_image_path("zone/fest_me.png"),              # yellow "我" bubble = already seated
     "ZFestPav1": get_image_path("zone/fest_pav1.png"),          # 巅峰I号赏月亭 label
+    "ZFestPavilion": get_image_path("zone/fest_pavilion.png"),  # "赏月亭" suffix of every pavilion label
     "ZFestBack": get_image_path("zone/fest_back.png"),          # back arrow bottom-left
     "ZFestOccupy": get_image_path("zone/fest_occupy.png"),      # 占据 (free seat)
     "ZFestEmpty": get_image_path("zone/fest_empty.png"),        # 无人占领
@@ -331,7 +332,7 @@ no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "C
                  "ZZoneList", "ZSelectZone", "ZRivalPanel",
                  "ZFortressTitle", "ZGuardAttack", "ZAutoEquip", "ZEditFleetTitle", "ZEditArtifactTitle",
                  "ZArtifactTarget", "ZArtifactCheck", "ZArtifactSlot", "ZLoadoutStandard", "ZPlusSlot",
-                 "ZFestTitle", "ZFestGo", "ZFestMe", "ZFestPav1", "ZFestBack", "ZFestOccupy", "ZFestEmpty", "ZFestRow", "ZEditGearTitle", "ZEditCatTitle", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
+                 "ZFestTitle", "ZFestGo", "ZFestMe", "ZFestPav1", "ZFestPavilion", "ZFestBack", "ZFestOccupy", "ZFestEmpty", "ZFestRow", "ZEditGearTitle", "ZEditCatTitle", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
