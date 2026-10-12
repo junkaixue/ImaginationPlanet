@@ -223,6 +223,7 @@ ROUTE_LAYOUT = {
     "beyond_from": 35,       # logical px: a line that keeps going this far past the icon ...
     "beyond_to": 130,        # ... only passes through it; the icon is not the target
     "beyond_min_on": 0.08,
+    "blue_min_on": 0.35,     # rival dashes fill >= 35% of their line (icon-frame rows: <= 30%)
 }
 
 # Factory page: occupant slot centers relative to the "当前贡献最高领主" marker center.
@@ -614,8 +615,17 @@ class ZoneExplore:
             return None
         strip = before[y1:y2, x1:x2]
         if float(strip.std()) < DRAG_LAYOUT["patch_min_std"]:
-            diff = float(np.abs(before.astype(int) - after.astype(int)).mean())
-            return (0.0, 0.0) if diff < DRAG_LAYOUT["static_diff"] else None
+            # plain grid in the overlap strip: decide between "did not move" and "moved as
+            # asked" by comparing the whole area aligned both ways
+            diff0 = float(np.abs(before.astype(int) - after.astype(int)).mean())
+            if diff0 < DRAG_LAYOUT["static_diff"]:
+                return 0.0, 0.0
+            moved = after[y1 + py:y2 + py, x1 + px:x2 + px] if 0 <= y1 + py and 0 <= x1 + px else None
+            if moved is not None and moved.shape == strip.shape:
+                diff1 = float(np.abs(strip.astype(int) - moved.astype(int)).mean())
+                if diff1 < diff0 * 0.5:
+                    return float(dx), float(dy)
+            return None
         res = cv2.matchTemplate(after, strip, cv2.TM_CCOEFF_NORMED)
         _, peak, _, _ = cv2.minMaxLoc(res)
         if peak < DRAG_LAYOUT["patch_th"]:
@@ -790,8 +800,11 @@ class ZoneExplore:
         rgb = color[y1:y2, x1:x2].astype(int)
         mn, mx = rgb.min(axis=2), rgb.max(axis=2)
         if line == "blue":
+            # rival dashes are light blue (B > G > R); the teal box icons (G > B) must not count,
+            # rows of them would otherwise form fake lines
+            # (dash pixels ~R104 G187 B213; the purple-blue tile frames ~R110 G146 B195 are out)
             r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-            mask = ((b > r + 30) & (b > 140) & (g > 110) & (mx - mn > 30)).astype(np.uint8) * 255
+            mask = ((b > r + 50) & (b > g + 5) & (b > 185) & (g > 160) & (r < 135)).astype(np.uint8) * 255
         else:
             mask = ((mn > ROUTE_LAYOUT["white_min"]) & (mx - mn < ROUTE_LAYOUT["white_spread"])).astype(np.uint8) * 255
         lines = cv2.HoughLinesP(mask, 1, np.pi / 360, threshold=40,
@@ -832,6 +845,8 @@ class ZoneExplore:
                 prev = v
             if trans < ROUTE_LAYOUT["min_transitions"] or on / n > ROUTE_LAYOUT["max_on"]:
                 continue
+            if line == "blue" and on / n < ROUTE_LAYOUT["blue_min_on"]:
+                continue        # rows of icon frames leave sparse pixels along a Hough line
             # each end with the outward direction (from the other end towards it)
             for p, q in ((a, b), (b, a)):
                 L = math.hypot(p[0] - q[0], p[1] - q[1]) or 1
