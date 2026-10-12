@@ -30,6 +30,10 @@ FEST = {
     "row_gap_min": 60,        # logical px below the first row label where row 2 starts
     "scroll_dy": 300,         # pavilion list scroll per step (logical px)
     "card_dx": 155, "card_dy": 94,   # name card of the left seat, relative to the row label
+    "card2_dx": 318,          # name card of the right seat
+    "row_h": 135,             # a row's buttons and cards lie within this below its label
+    "row_drag": 290,          # horizontal drag per step inside a row (each row is a carousel)
+    "max_row_drags": 8,
     "max_scrolls": 4,
     "settle": 1.0,
 }
@@ -121,7 +125,65 @@ class FestivalSit(ZoneExplore):
         after = self.shot()[1]
         return float(np.abs(before.astype(int) - after.astype(int)).mean()) > 3.0
 
+    def row_free_seat(self, label):
+        """First 占据 inside this row's band (the row is a carousel: cards slide left)."""
+        for s in sorted(get_all("ZFestOccupy", "Single"), key=lambda s: s.x):
+            if label.y < s.y < label.y + FEST["row_h"]:
+                return s
+        return None
+
+    def drag_row(self, label):
+        """Slide the row's carousel left by dragging on its right name card."""
+        y = label.y + FEST["card_dy"]
+        x0, x1 = label.x + FEST["card2_dx"], label.x + FEST["card2_dx"] - FEST["row_drag"]
+        self.invalidate_shot()
+        gray = self.shot()[1]
+        by0, by1 = int(label.y * self.sft), int((label.y + FEST["row_h"]) * self.sft)
+        before = gray[by0:by1].copy()
+        rx0, ry0 = self.to_real(x0, y)
+        rx1, ry1 = self.to_real(x1, y)
+        drag(rx0, ry0, rx1, ry1)
+        self.invalidate_shot()
+        time.sleep(FEST["settle"])
+        self.wait_still()
+        after = self.shot()[1][by0:by1]
+        return float(np.abs(before.astype(int) - after.astype(int)).mean()) > 3.0
+
+    def take_seat(self, s):
+        if self.dry_run:
+            rx, ry = self.to_real(s.x, s.y)
+            move_to(rx, ry)
+            log(f"[DRY] 占据 at ({s.x:.0f},{s.y:.0f}): mouse moved there, not pressed")
+            time.sleep(3)
+            return True
+        self.click(s.x, s.y, 2.5, "占据")
+        if self.wait_for("ZRepairOk", 3):           # a confirmation, if any
+            self.click_button("ZRepairOk", 2, force=True)
+        time.sleep(2)
+        return True
+
     def sit(self):
+        """Rows from the second one down; inside a row slide the carousel until a 占据 shows;
+        then scroll the page for more rows."""
+        for i in range(FEST["max_scrolls"] + 1):
+            rows = sorted(get_all("ZFestRow", "Single"), key=lambda r: r.y)
+            usable = rows[FEST["row_skip"]:] if i == 0 else rows
+            log(f"Pavilion screen {i + 1}: {len(rows)} row label(s), {len(usable)} usable")
+            for n, label in enumerate(usable):
+                for k in range(FEST["max_row_drags"] + 1):
+                    s = self.row_free_seat(label)
+                    if s is not None:
+                        log(f"Row at y={label.y:.0f}: free seat after {k} slide(s)")
+                        return self.take_seat(s)
+                    if k == FEST["max_row_drags"] or not self.drag_row(label):
+                        break
+                log(f"Row at y={label.y:.0f}: full")
+            if i == FEST["max_scrolls"] or not self.scroll_pavilion():
+                break
+        log("No free seat in this pavilion")
+        return False
+
+    def sit_old(self):
         for i in range(FEST["max_scrolls"] + 1):
             seats = self.free_seats()
             log(f"Pavilion: {len(seats)} free seat(s) below row 1 on this screen")
