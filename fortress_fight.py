@@ -45,6 +45,8 @@ EQUIP_LAYOUT = {
     "shield_slot": (152.5, 475),                     # bottom right lv.6 shield: never touched
     "power_dx": 0, "power_dy": 618, "power_half_w": 95, "power_half_h": 15,   # "战力:835.26万"
     "back_dx": -187,                                 # "<<" close arrow left of the title
+    "loadout_dx": 3, "loadout_dy": 305,              # center of the loadout grid (ZLoadoutStandard)
+    "loadout_th": 0.85,                              # the holder's grid matches the standard >= this
 }
 # ---- 编辑舰队 page, relative to its title center. The equipped items sit in the bottom area;
 # clicking one removes it and the rest shift left, an empty place shows a "+" placeholder.
@@ -169,20 +171,41 @@ class FortressFight(ZoneExplore):
                 return True
         return False
 
+    def loadout_score(self):
+        """How well the open tab's equipment grid matches the standard best loadout (0..1)."""
+        title = self.fleet_title()
+        if title is None:
+            return 0.0
+        self.invalidate_shot()
+        gray = self.shot()[1]
+        t = self.full_template("ZLoadoutStandard")
+        if t is None:
+            return 0.0
+        cx, cy = title.x + EQUIP_LAYOUT["loadout_dx"], title.y + EQUIP_LAYOUT["loadout_dy"]
+        h, w = t.shape
+        x1, y1 = int(cx * self.sft - w / 2) - 30, int(cy * self.sft - h / 2) - 30
+        x2, y2 = x1 + w + 60, y1 + h + 60
+        sub = gray[max(0, y1):y2, max(0, x1):x2]
+        if sub.shape[0] < h or sub.shape[1] < w:
+            return 0.0
+        return float(cv2.minMaxLoc(cv2.matchTemplate(sub, t, cv2.TM_CCOEFF_NORMED))[1])
+
     def find_gear_holder(self):
-        """The fleet carrying the best equipment: its top-right slot shows 残骸本源 (deterministic);
-        the highest 战力 is only the fallback, OCR confuses 5 and 9 at times."""
+        """The fleet carrying the best equipment: the tab whose whole grid matches the standard
+        loadout screenshot. 战力 is logged for reference only (OCR confuses 5 and 9 at times)."""
         if not self.open_fleet_page():
             return None
-        powers, holders = {}, []
+        powers, scores = {}, {}
         for i in range(1, SHIP_LAYOUT["slots"] + 1):
             self.select_tab(i)
             powers[i] = self.read_power()
-            if self.has_boss_artifact():
-                holders.append(i)
-        log("Fleet power: " + ", ".join(f"{i}:{p}" for i, p in powers.items()) + f"; 残骸本源 on {holders}")
-        if len(holders) == 1:
-            return holders[0]
+            scores[i] = self.loadout_score()
+        log("Fleet power: " + ", ".join(f"{i}:{p}" for i, p in powers.items())
+            + " | loadout match: " + ", ".join(f"{i}:{s:.2f}" for i, s in scores.items()))
+        best = max(scores, key=scores.get)
+        if scores[best] >= EQUIP_LAYOUT["loadout_th"]:
+            return best
+        log("No fleet matches the standard loadout; falling back to the highest 战力")
         valid = {i: p for i, p in powers.items() if p is not None}
         return max(valid, key=valid.get) if valid else None
 
@@ -309,6 +332,13 @@ class FortressFight(ZoneExplore):
             return False
         if not self.ensure_boss_artifact(target):
             return False
+        if not self.dry_run:
+            self.open_fleet_page()
+            self.select_tab(target)
+            score = self.loadout_score()
+            log(f"Fleet {target} loadout vs standard: {score:.2f}")
+            if score < EQUIP_LAYOUT["loadout_th"]:
+                log("Loadout differs from the standard screenshot; check the equipment by hand")
         self.repair_fleet(holder)
         self.close_fleet_page()
         return True
