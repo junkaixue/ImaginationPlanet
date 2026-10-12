@@ -95,12 +95,31 @@ class FortressFight(ZoneExplore):
         if single_find("ZMyFleet"):
             return True
         if not self.on_map():
+            log("Not on the map page, closing what is open")
             self.close_popup()
         team = self.ui("team")
         if team is None:
+            team = get_center("ZTeam", "Single")        # fallback: the button's own template
+        if team is None:
+            log("队伍 button not found (base icon and button template both missing): is the map page open?")
+            self.save_debug("no_team_button")
             return False
+        log(f"Opening 队伍 at ({team.x:.0f},{team.y:.0f})")
         self.click(team.x, team.y, 2, "队伍", force=True)
-        return self.wait_for("ZMyFleet", 8)
+        if self.wait_for("ZMyFleet", 8):
+            return True
+        log("我的舰队 did not appear after clicking 队伍")
+        self.save_debug("fleet_page_missing")
+        return False
+
+    def save_debug(self, name):
+        if not DEBUG_DIR:
+            return
+        self.invalidate_shot()
+        color = self.shot()[0]
+        path = os.path.join(DEBUG_DIR, f"{time.strftime('%H%M%S')}_{name}.png")
+        cv2.imwrite(path, cv2.cvtColor(color, cv2.COLOR_RGB2BGR))
+        log(f"Debug shot saved: {path}")
 
     def fleet_title(self):
         return self.anchor("ZMyFleet")
