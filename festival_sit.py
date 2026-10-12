@@ -34,7 +34,7 @@ FEST = {
     "row_h": 135,             # a row's buttons and cards lie within this below its label
     "row_drag": 290,          # horizontal drag per step inside a row (each row is a carousel)
     "max_row_drags": 8,
-    "max_scrolls": 4,
+    "max_scrolls": 0,         # pavilions have 3 or 4 rows, all on one screen: no vertical scrolling
     "settle": 1.0,
 }
 
@@ -181,29 +181,6 @@ class FestivalSit(ZoneExplore):
             if i == FEST["max_scrolls"] or not self.scroll_pavilion():
                 break
         log("No free seat in this pavilion")
-        return False
-
-    def sit_old(self):
-        for i in range(FEST["max_scrolls"] + 1):
-            seats = self.free_seats()
-            log(f"Pavilion: {len(seats)} free seat(s) below row 1 on this screen")
-            if seats:
-                s = seats[0]
-                if self.dry_run:
-                    rx, ry = self.to_real(s.x, s.y)
-                    move_to(rx, ry)
-                    log(f"[DRY] 占据 at ({s.x:.0f},{s.y:.0f}): mouse moved there, not pressed")
-                    time.sleep(3)
-                    return True
-                self.click(s.x, s.y, 2.5, "占据")
-                # a confirmation may follow; 确认 shares the repair-ok template
-                if self.wait_for("ZRepairOk", 3):
-                    self.click_button("ZRepairOk", 2, force=True)
-                time.sleep(2)
-                return True
-            if i == FEST["max_scrolls"] or not self.scroll_pavilion():
-                break
-        log("No free seat found below row 1")
         return False
 
     # ------------------------------------------------------------------ one pass
