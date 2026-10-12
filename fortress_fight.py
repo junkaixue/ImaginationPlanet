@@ -20,7 +20,7 @@ Cycle (user rules):
 Only one fleet fights at a time (there is one set of best gear). No zoom or map dragging.
 
 Usage:
-    python fortress_fight.py --dry      # detect and log, no clicks except closing popups
+    python fortress_fight.py --dry      # does the gear swap and repair for real, cancels at the attack
     python fortress_fight.py            # full loop
 """
 
@@ -79,6 +79,7 @@ FORTRESS = {
     "max_scrolls": 6,
 }
 FULL_HP = 100
+HOLDER_OK_HP = 90            # the gear holder attacks again by itself above this hp (no swap)
 DEBUG_DIR = None             # --debug-shots: save the OCR crops here
 STATE_FILE = os.path.join(os.path.dirname(single_find_map["ZBase"]), "fortress_state.json")   # {"holder": N}
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
@@ -265,17 +266,14 @@ class FortressFight(ZoneExplore):
             return False
         self.select_tab(index)
         title = self.fleet_title()
-        self.click(title.x + EQUIP_LAYOUT["slot_dx"][0], title.y + EQUIP_LAYOUT["row_dy"][0], 2, "gear slot")
-        if self.dry_run:
-            log("[DRY] would clear 飞行器/主题皮肤/骰子皮肤/棋子 and confirm")
-            return True
+        self.click(title.x + EQUIP_LAYOUT["slot_dx"][0], title.y + EQUIP_LAYOUT["row_dy"][0], 2, "gear slot", force=True)
         if not self.wait_for("ZEditFleetTitle", 8):
             log("编辑舰队 did not open")
             self.close_popup()
             return False
         et = get_center("ZEditFleetTitle", "Single")
         for tab_dx, slots in EDIT_LAYOUT["tabs"]:
-            self.click(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_dy"], 1.5, "edit tab")
+            self.click(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_dy"], 1.5, "edit tab", force=True)
             removed = 0
             for _ in range(len(slots) + 2):
                 pluses = get_all("ZPlusSlot", "Single")
@@ -284,12 +282,12 @@ class FortressFight(ZoneExplore):
                                        and abs(p.y - et.y - dy) < EDIT_LAYOUT["plus_radius"] for p in pluses)]
                 if not occupied or (pluses and removed >= len(slots)):
                     break
-                self.click(occupied[0].x, occupied[0].y, 1.0, "equipped item (remove)")
+                self.click(occupied[0].x, occupied[0].y, 1.0, "equipped item (remove)", force=True)
                 removed += 1
                 if not pluses and removed >= len(slots):
                     break
             log(f"  tab {tab_dx:+}: {removed} removal click(s)")
-        ok = self.click_button("ZRepairOk", 2)      # the "确认" button shares the template
+        ok = self.click_button("ZRepairOk", 2, force=True)      # the "确认" button shares the template
         log("Gear removed and confirmed" if ok else "确认 not found after removing gear")
         if ok and UNEQUIP_BOTTOM_ARTIFACTS:
             self.unequip_bottom_artifacts(index)
@@ -302,17 +300,17 @@ class FortressFight(ZoneExplore):
             return False
         self.select_tab(index)
         title = self.fleet_title()
-        self.click(title.x + EQUIP_LAYOUT["slot_dx"][0], title.y + EQUIP_LAYOUT["row_dy"][4], 2, "bottom artifact slot")
+        self.click(title.x + EQUIP_LAYOUT["slot_dx"][0], title.y + EQUIP_LAYOUT["row_dy"][4], 2, "bottom artifact slot", force=True)
         if not self.wait_for("ZEditGearTitle", 8):
             log("编辑装备 did not open")
             self.close_popup()
             return False
         gt = get_center("ZEditGearTitle", "Single")
         for tab_dx in GEAR_LAYOUT["tab_dx"]:
-            self.click(gt.x + tab_dx, gt.y + GEAR_LAYOUT["tab_dy"], 1.5, "gear tab")
+            self.click(gt.x + tab_dx, gt.y + GEAR_LAYOUT["tab_dy"], 1.5, "gear tab", force=True)
             px, py = GEAR_LAYOUT["preview"]
-            self.click(gt.x + px, gt.y + py, 1.0, "equipped artifact (remove)")
-        ok = self.click_button("ZRepairOk", 2)
+            self.click(gt.x + px, gt.y + py, 1.0, "equipped artifact (remove)", force=True)
+        ok = self.click_button("ZRepairOk", 2, force=True)
         log("Bottom artifacts cleared" if ok else "确认 not found on 编辑装备")
         return ok
 
@@ -320,14 +318,11 @@ class FortressFight(ZoneExplore):
         if not self.open_fleet_page():
             return False
         self.select_tab(index)
-        if self.dry_run:
-            log(f"[DRY] would press 一键配队 on fleet {index}")
-            return True
-        if not self.click_button("ZAutoEquip", 2):
+        if not self.click_button("ZAutoEquip", 2, force=True):
             log("一键配队 not found")
             return False
         if self.wait_for("ZRepairOk", 3):           # a confirmation dialog, if any
-            self.click_button("ZRepairOk", 2)
+            self.click_button("ZRepairOk", 2, force=True)
         return True
 
     def ensure_boss_artifact(self, index):
@@ -337,10 +332,7 @@ class FortressFight(ZoneExplore):
         self.select_tab(index)
         title = self.fleet_title()
         dx, dy = EQUIP_LAYOUT["artifact_slot"]
-        self.click(title.x + dx, title.y + dy, 2, "artifact slot")
-        if self.dry_run:
-            log("[DRY] would select 残骸本源 and confirm")
-            return True
+        self.click(title.x + dx, title.y + dy, 2, "artifact slot", force=True)
         if not self.wait_for("ZEditArtifactTitle", 8):
             log("编辑低级神器 did not open")
             self.close_popup()
@@ -349,14 +341,14 @@ class FortressFight(ZoneExplore):
         check = get_center("ZArtifactCheck", "Single")
         if target is None:
             log("残骸本源 not found in the artifact grid")
-            self.click_button("ZCancel", 2)
+            self.click_button("ZCancel", 2, force=True)
             return False
         if check is not None and abs(check.x - target.x) < 60 and abs(check.y - target.y) < 80:
             log("残骸本源 already equipped")
-            self.click_button("ZCancel", 2)
+            self.click_button("ZCancel", 2, force=True)
             return True
-        self.click(target.x, target.y, 1.5, "残骸本源")
-        ok = self.click_button("ZRepairOk", 2)
+        self.click(target.x, target.y, 1.5, "残骸本源", force=True)
+        ok = self.click_button("ZRepairOk", 2, force=True)
         log("Artifact set to 残骸本源" if ok else "确认 not found on the artifact page")
         return ok
 
@@ -364,12 +356,9 @@ class FortressFight(ZoneExplore):
         """一键配队 first (a fleet without a loadout cannot be repaired), then 修理舰队."""
         if not self.auto_equip(index):
             return False
-        if self.dry_run:
-            log(f"[DRY] would repair fleet {index}")
-            return True
-        ok = self.click_button("ZRepair", 2)
+        ok = self.click_button("ZRepair", 2, force=True)
         if ok and self.wait_for("ZRepairPrompt", 6):
-            ok = self.click_button("ZRepairOk", 2)
+            ok = self.click_button("ZRepairOk", 2, force=True)
         log(f"Fleet {index} repair {'confirmed' if ok else 'failed'}")
         return ok
 
@@ -394,13 +383,12 @@ class FortressFight(ZoneExplore):
             return False
         if not self.ensure_boss_artifact(target):
             return False
-        if not self.dry_run:
-            self.open_fleet_page()
-            self.select_tab(target)
-            score = self.loadout_score()
-            log(f"Fleet {target} loadout vs standard: {score:.2f}")
-            if score < EQUIP_LAYOUT["loadout_th"]:
-                log("Loadout differs from the standard screenshot; check the equipment by hand")
+        self.open_fleet_page()
+        self.select_tab(target)
+        score = self.loadout_score()
+        log(f"Fleet {target} loadout vs standard: {score:.2f}")
+        if score < EQUIP_LAYOUT["loadout_th"]:
+            log("Loadout differs from the standard screenshot; check the equipment by hand")
         self.repair_fleet(holder)
         self.close_fleet_page()
         return True
@@ -598,22 +586,30 @@ class FortressFight(ZoneExplore):
             if self.holder is None:
                 log("Could not tell which fleet has the best gear")
                 return
-            fresh = self.full_hp_idle(exclude=self.holder)
-            if not fresh:
-                log("No idle fleet at 100% hp; waiting")
-                if self.dry_run:
-                    return
-                time.sleep(POLL)
-                continue
-            target = fresh[0]
-            if not self.swap_gear(self.holder, target):
-                log("Gear swap failed")
-                if self.dry_run:
-                    return
-                time.sleep(POLL)
-                continue
-            self.holder = target
-            if not self.dry_run:
+            if not self.on_map():
+                self.close_fleet_page()
+            ships = self.scan_ships()
+            h = ships.get(self.holder, {})
+            if h.get("idle") and h.get("hp") is not None and h["hp"] > HOLDER_OK_HP:
+                log(f"Fleet {self.holder} still has {h['hp']}% hp: attacking again without a gear swap")
+                target = self.holder
+            else:
+                fresh = [i for i, s in ships.items()
+                         if s["idle"] and s["hp"] == FULL_HP and i != self.holder]
+                if not fresh:
+                    log("No idle fleet at 100% hp; waiting")
+                    if self.dry_run:
+                        return
+                    time.sleep(POLL)
+                    continue
+                target = fresh[0]
+                if not self.swap_gear(self.holder, target):
+                    log("Gear swap failed")
+                    if self.dry_run:
+                        return
+                    time.sleep(POLL)
+                    continue
+                self.holder = target
                 self.save_state(holder=target)
             if not self.attack_with(target):
                 if self.dry_run:
