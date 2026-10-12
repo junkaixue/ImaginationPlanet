@@ -16,8 +16,10 @@ Usage:
 """
 
 import argparse
+import os
 import time
 
+import cv2
 import numpy as np
 
 from click import move_to
@@ -39,10 +41,26 @@ FEST = {
 }
 
 
+DEBUG_DIR = None
+
+
 class FestivalSit(ZoneExplore):
     def __init__(self, dry_run=False):
         super().__init__(dry_run=dry_run)
         log(f"FestivalSit ready (code={_code_version()})")
+
+    def save_debug(self, name, boxes=()):
+        if not DEBUG_DIR:
+            return
+        self.invalidate_shot()
+        img = cv2.cvtColor(self.shot()[0], cv2.COLOR_RGB2BGR).copy()
+        for x, y, lab in boxes:
+            px, py = int(x * self.sft), int(y * self.sft)
+            cv2.rectangle(img, (px - 40, py - 30), (px + 40, py + 30), (0, 0, 255), 3)
+            cv2.putText(img, lab, (px - 40, py - 36), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        path = os.path.join(DEBUG_DIR, f"{time.strftime('%H%M%S')}_{name}.png")
+        cv2.imwrite(path, img)
+        log(f"Debug shot saved: {path}")
 
     # ------------------------------------------------------------------ pages
     def page(self):
@@ -127,9 +145,17 @@ class FestivalSit(ZoneExplore):
 
     def row_free_seat(self, label):
         """First 占据 inside this row's band (the row is a carousel: cards slide left)."""
-        for s in sorted(get_all("ZFestOccupy", "Single"), key=lambda s: s.x):
+        self.invalidate_shot()
+        seats = sorted(get_all("ZFestOccupy", "Single"), key=lambda s: s.x)
+        empties = get_all("ZFestEmpty", "Single")
+        log(f"  占据 on screen: {[(round(s.x), round(s.y)) for s in seats]}  无人占领: {[(round(e.x), round(e.y)) for e in empties]}")
+        for s in seats:
             if label.y < s.y < label.y + FEST["row_h"]:
                 return s
+        for e in empties:               # an empty seat whose 占据 button was not matched
+            if label.y < e.y < label.y + FEST["row_h"]:
+                log("  无人占领 seen without a 占据 match; using the button above it")
+                return type(e)(e.x, e.y - 60)
         return None
 
     def drag_row(self, label):
@@ -175,7 +201,12 @@ class FestivalSit(ZoneExplore):
                     if s is not None:
                         log(f"Row at y={label.y:.0f}: free seat after {k} slide(s)")
                         return self.take_seat(s)
-                    if k == FEST["max_row_drags"] or not self.drag_row(label):
+                    if k == FEST["max_row_drags"]:
+                        break
+                    moved = self.drag_row(label)
+                    self.save_debug(f"row{n + 1}_slide{k + 1}", [(label.x, label.y, "row")])
+                    if not moved:
+                        log(f"  row did not slide (attempt {k + 1})")
                         break
                 log(f"Row at y={label.y:.0f}: full")
             if i == FEST["max_scrolls"] or not self.scroll_pavilion():
@@ -251,6 +282,11 @@ if __name__ == "__main__":
     parser.add_argument("--dry", action="store_true")
     parser.add_argument("--loop", type=int, default=0, help="Repeat every N minutes")
     parser.add_argument("--delay", type=int, default=3)
+    parser.add_argument("--debug-shots", action="store_true")
     args = parser.parse_args()
+    if args.debug_shots:
+        from common import single_find_map
+        DEBUG_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "debug")
+        os.makedirs(DEBUG_DIR, exist_ok=True)
     time.sleep(args.delay)
     FestivalSit(dry_run=args.dry).run(args.loop)
