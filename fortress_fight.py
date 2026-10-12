@@ -285,14 +285,6 @@ class FortressFight(ZoneExplore):
         screenshot only when that check fails. 战力 is logged for reference only."""
         if not self.open_fleet_page():
             return None
-        known = self.load_state().get("holder")
-        if known:
-            self.select_tab(known)
-            score = self.loadout_score()
-            if score >= EQUIP_LAYOUT["loadout_th"]:
-                log(f"Best gear is still on fleet {known} (loadout match {score:.2f})")
-                return known
-            log(f"Fleet {known} no longer matches the standard loadout ({score:.2f}); checking all tabs")
         powers, scores = {}, {}
         for i in range(1, SHIP_LAYOUT["slots"] + 1):
             self.select_tab(i)
@@ -381,9 +373,12 @@ class FortressFight(ZoneExplore):
         gray = self.shot()[1]
         cx, cy = et.x + tab_dx, et.y + EDIT_LAYOUT["tab_underline_dy"]
         x1, x2 = int((cx - EDIT_LAYOUT["tab_half_w"]) * self.sft), int((cx + EDIT_LAYOUT["tab_half_w"]) * self.sft)
-        y1, y2 = int((cy - 3) * self.sft), int((cy + 3) * self.sft)
+        y1, y2 = int((cy - 5) * self.sft), int((cy + 5) * self.sft)
         band = gray[y1:y2, x1:x2]
-        return band.size > 0 and float(band.mean()) > 120
+        if band.size == 0:
+            return False
+        rows = band.mean(axis=1)
+        return float(rows.max()) > 110          # unselected tabs stay below ~45 here
 
     def select_edit_tab(self, et, name, tab_dx):
         for attempt in range(EDIT_LAYOUT["tab_retries"]):
@@ -704,12 +699,8 @@ class FortressFight(ZoneExplore):
             if not self.on_map():
                 self.close_popup()
             if self.holder is None:
-                # remembered from the last run: no need to open the fleet page before the top bar
-                # says a fresh fleet is available; the loadout is verified when swapping
-                self.holder = self.load_state().get("holder")
-                if self.holder:
-                    log(f"Gear holder remembered from the last run: fleet {self.holder}")
-            if self.holder is None:
+                # every start looks for the gear afresh (it may have been moved by hand); inside
+                # the loop the holder is remembered and only verified when swapping
                 self.holder = self.find_gear_holder()
                 self.close_fleet_page()
                 log(f"Gear holder: fleet {self.holder}; map page back: {self.on_map()}")
