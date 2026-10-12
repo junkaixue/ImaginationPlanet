@@ -153,7 +153,7 @@ DRAG_LAYOUT = {
     "patch_th": 0.6,        # min match of the overlap strip to trust the measured movement
     "edge_frac": 0.25,
     "static_diff": 4.0,     # mean abs pixel diff below this = nothing moved
-    "settle": 1.2,          # seconds to wait after a drag before measuring
+    "settle": 0.7,          # seconds to wait after a drag before measuring
     "max_drags": 40,        # per direction, safety cap
 }
 SWEEP_ENABLED = True
@@ -192,6 +192,10 @@ RIVAL_LAYOUT = {"etas_dx0": -80, "etas_dy0": 8, "etas_dx1": 360, "etas_dy1": 58,
 # only a fallback because it misreads some numbers ("04" -> "0").
 ZONE_TITLE_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "zone_titles")
 SURVEY_TTL = 10 * 60                  # seconds a zone's memorized spots stay valid before re-surveying
+# Outer zones are surveyed for these kinds only, without colour / route checks (fast scan);
+# the central zone is surveyed for everything.
+OUTER_KINDS = ("ZFactory1", "ZFactory2", "ZFactory3", "ZFactory4", "ZYellowBox", "ZYellowBoss")
+SHOT_TTL = 0.3                        # seconds a screenshot is reused by the detectors of one stop
 MIN_IDLE_FOR_OTHER_ZONES = 2          # outer zones are only surveyed with at least this many idle ships
 
 # Reference window: every layout and template was captured when the ZBase->ZTeam distance was
@@ -313,12 +317,27 @@ class ZoneExplore:
         self.last_dispatched = None   # ship index that left in the last successful dispatch
         self.last_shift = (0.0, 0.0)  # how far the view moved during the last dispatch
         self.rescan_needed = False    # set when a memorized resource is gone (zone memory dropped)
+        self._shot, self._shot_time = None, 0.0
         self.zone = None           # current zone name ("central", "02", ...) or None when unknown
         self.zone_spots = {}       # zone -> {"time": t, "spots": [Spot]} memorized across rounds
         self.win_scale = 1.0       # current window size / reference window size
         _install_screenshot_scaler()
         self._orig_screenshot = _SCREENSHOT["orig"]
         log(f"ZoneExplore init. platform={platform.system()} sft={self.sft} dry_run={dry_run}")
+
+    # ------------------------------------------------------------------ screenshots
+    def shot(self):
+        """(color RGB, gray) of the screen, reused for SHOT_TTL seconds so that the detectors of
+        one stop (page check, frame lines, resources, gesture) share one capture."""
+        now = time.time()
+        if self._shot is None or now - self._shot_time > SHOT_TTL:
+            color = np.array(pyautogui.screenshot())
+            self._shot = (color, cv2.cvtColor(color, cv2.COLOR_RGB2GRAY))
+            self._shot_time = now
+        return self._shot
+
+    def invalidate_shot(self):
+        self._shot_time = 0.0
 
     # ------------------------------------------------------------------ window scale
     def close(self):
@@ -332,6 +351,7 @@ class ZoneExplore:
     def raw_click(self, x, y):
         rx, ry = self.to_real(x, y)
         click_at(rx, ry)
+        self.invalidate_shot()
 
     def calibrate_scale(self):
         """Measure the ZBase->ZTeam distance on an unscaled screenshot and set win_scale."""
@@ -371,7 +391,7 @@ class ZoneExplore:
         if t is None:
             return None
         if gray is None:
-            gray = screen_shot()
+            gray = self.shot()[1]
         th, tw = t.shape
         cached = self.anchors.get(key)
         if cached is not None:
@@ -469,7 +489,7 @@ class ZoneExplore:
 
     # ------------------------------------------------------------------ page state
     def on_map(self):
-        gs = screen_shot()
+        gs = self.shot()[1]
         f = lambda key: single_find_with_path(single_find_map[key], gs, MATCH_TH)
         return f("ZExplore") and not f("ZCloseHint") and not f("ZContinueHint") and not f("ZBuyPrompt")
 
@@ -596,7 +616,7 @@ class ZoneExplore:
 
     def grab_region(self, region):
         """Grayscale physical-pixel crop of the map area."""
-        gray = screen_shot()
+        gray = self.shot()[1]
         x1, y1, x2, y2 = (int(v * self.sft) for v in region)
         return gray[y1:y2, x1:x2]
 
@@ -643,7 +663,7 @@ class ZoneExplore:
         region = region or self.map_region()
         if region is None:
             return {}
-        color = np.array(pyautogui.screenshot())
+        color = self.shot()[0]
         x1, y1, x2, y2 = (int(v * self.sft) for v in region)
         rgb = color[y1:y2, x1:x2].astype(int)
         r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
@@ -686,7 +706,7 @@ class ZoneExplore:
         else:
             cands.append((clamp(cx - dx / 2, x1 + m, x2 - m), clamp(cy - dy / 2, y1 + m, y2 - m),
                           clamp(cx + dx / 2, x1 + m, x2 - m), clamp(cy + dy / 2, y1 + m, y2 - m)))
-        gray = screen_shot()
+        gray = self.shot()[1]
         h = int(DRAG_LAYOUT["finger_half"] * self.sft)
 
         def busy(x, y):
@@ -729,6 +749,7 @@ class ZoneExplore:
             rsx, rsy = self.to_real(sx, sy)
             rex, rey = self.to_real(ex, ey)
             drag(rsx, rsy, rex, rey)
+            self.invalidate_shot()
             time.sleep(DRAG_LAYOUT["settle"])
             after = self.grab_region(region)
             shift = self.measure_shift(before, after, dx, dy)
@@ -911,17 +932,17 @@ class ZoneExplore:
                                        ("left", t[:, :w // 2]), ("right", t[:, w // 2:])]
         return self.partials[kind]
 
-    def scan_resources(self):
-        """Find every scoreable resource visible on the map, best first."""
-        color = np.array(pyautogui.screenshot())
-        gray = cv2.cvtColor(color, cv2.COLOR_RGB2GRAY)
+    def scan_resources(self, kinds=None, light=False):
+        """Find every scoreable resource visible on the map, best first. `kinds` restricts the
+        templates; `light` skips the colour and route-line checks (outer-zone survey)."""
+        color, gray = self.shot()
         region = self.map_region()
         x_min, y_min, x_max, y_max = region if region else (0, 0, 10 ** 6, 10 ** 6)
         base = self.anchor("ZBase", gray)
-        ends = self.route_endpoints(color, region) if region else []
+        ends = self.route_endpoints(color, region) if region and not light else []
         if ends:
             log("Route line ends: " + ", ".join(f"({e.x:.0f},{e.y:.0f})" for e, _ in ends))
-        blue_ends = self.route_endpoints(color, region, "blue") if region else []
+        blue_ends = self.route_endpoints(color, region, "blue") if region and not light else []
         if blue_ends:
             log("Rival line ends: " + ", ".join(f"({e.x:.0f},{e.y:.0f})" for e, _ in blue_ends))
         contested = 0
@@ -935,6 +956,8 @@ class ZoneExplore:
         targeted = 0
         wrong_color = 0
         for kind, score in RESOURCE_SCORES.items():
+            if kinds is not None and kind not in kinds:
+                continue
             path = single_find_map.get(kind)
             if path is None or not os.path.exists(path):
                 continue
@@ -953,7 +976,7 @@ class ZoneExplore:
                 if base is not None and any(base.x + ex0 < x < base.x + ex1 and base.y + ey0 < y < base.y + ey1
                                             for ex0, ex1, ey0, ey1 in MAP_EXCLUDE):
                     continue
-                if not self.color_ok(kind, color, x, y):
+                if not light and not self.color_ok(kind, color, x, y):
                     wrong_color += 1
                     continue
                 if self.spot_key(x, y) in self.visited:
@@ -1615,7 +1638,8 @@ class ZoneExplore:
             return False
         for _ in range(4):                  # re-scan after each immediate dispatch (the view may
             dispatched = False              # have moved and the candidate list is stale)
-            for c in self.scan_resources():
+            outer = self.zone is not None and self.zone != "central"
+            for c in self.scan_resources(kinds=OUTER_KINDS if outer else None, light=outer):
                 mx, my = self.to_map(c.x, c.y)
                 if any(s.kind == c.kind and abs(s.mx - mx) < 35 and abs(s.my - my) < 35 for s in self.spots):
                     continue
