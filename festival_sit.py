@@ -29,6 +29,7 @@ FEST = {
     "row_skip": 1,            # rows to skip from the top (row 1 is never used)
     "row_gap_min": 60,        # logical px below the first row label where row 2 starts
     "scroll_dy": 300,         # pavilion list scroll per step (logical px)
+    "card_dx": 155, "card_dy": 94,   # name card of the left seat, relative to the row label
     "max_scrolls": 4,
     "settle": 1.0,
 }
@@ -104,8 +105,10 @@ class FestivalSit(ZoneExplore):
         rows = get_all("ZFestRow", "Single")
         if not rows:
             return False
-        x = max(r.x for r in rows) + 200
-        y0 = max(r.y for r in rows)
+        # the list scrolls when dragged on a name card (the card sits ~94 px below the row
+        # label, left column ~155 px right of it); buttons and empty space do not drag
+        x = rows[0].x + FEST["card_dx"]
+        y0 = max(r.y for r in rows) + FEST["card_dy"]
         y1 = y0 - FEST["scroll_dy"]
         self.invalidate_shot()
         before = self.shot()[1]
