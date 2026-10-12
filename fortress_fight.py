@@ -98,6 +98,62 @@ RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come ba
 POLL = 60
 
 
+DIGIT_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "digits")
+DIGIT_H = 40
+_DIGITS = None
+
+
+def _digit_templates():
+    """Glyph templates of the yellow 战力 font, cut from screenshots with known values
+    (pics/<platform>/zone/digits/<d>.png, '.' is dot.png). Tesseract read 5 as 9 on this font."""
+    global _DIGITS
+    if _DIGITS is None:
+        _DIGITS = {}
+        for fn in os.listdir(DIGIT_DIR) if os.path.isdir(DIGIT_DIR) else []:
+            if fn.endswith(".png"):
+                lab = "." if fn[:-4] == "dot" else fn[:-4]
+                _DIGITS[lab] = cv2.imread(os.path.join(DIGIT_DIR, fn), 0)
+    return _DIGITS
+
+
+def read_yellow_number(rgb):
+    """'513.10' from a crop of the yellow number ('万' and anything unknown are dropped)."""
+    a = rgb.astype(int)
+    r, g, b = a[..., 0], a[..., 1], a[..., 2]
+    m = ((r > 170) & (g > 140) & (b < 130)).astype(np.uint8)
+    if m.sum() == 0:
+        return ""
+    runs, start = [], None
+    for x in range(m.shape[1]):
+        on = m[:, x].sum() > 0
+        if on and start is None:
+            start = x
+        if not on and start is not None:
+            runs.append((start, x))
+            start = None
+    if start is not None:
+        runs.append((start, m.shape[1]))
+    ys = np.where(m.sum(axis=1) > 0)[0]
+    y0, y1 = ys.min(), ys.max() + 1
+    out = ""
+    for x0, x1 in runs:
+        gl = (m[y0:y1, x0:x1] * 255).astype(np.uint8)
+        gl = cv2.resize(gl, (max(1, int(gl.shape[1] * DIGIT_H / gl.shape[0])), DIGIT_H), interpolation=cv2.INTER_AREA)
+        best, lab = -1.0, "?"
+        for cand, t in _digit_templates().items():
+            w = max(t.shape[1], gl.shape[1])
+            if abs(t.shape[1] - gl.shape[1]) > 6:
+                continue
+            p = cv2.copyMakeBorder(gl, 0, 0, 0, w - gl.shape[1], cv2.BORDER_CONSTANT, value=0)
+            q = cv2.copyMakeBorder(t, 0, 0, 0, w - t.shape[1], cv2.BORDER_CONSTANT, value=0)
+            s = 1 - float(np.abs(p.astype(int) - q.astype(int)).mean()) / 255
+            if s > best:
+                best, lab = s, cand
+        if best >= 0.75 and lab != "?":
+            out += lab
+    return out
+
+
 class FortressFight(ZoneExplore):
     def __init__(self, dry_run=False):
         super().__init__(dry_run=dry_run)
@@ -208,27 +264,16 @@ class FortressFight(ZoneExplore):
         cx, cy = title.x + EQUIP_LAYOUT["power_dx"], title.y + EQUIP_LAYOUT["power_dy"]
         x1, x2 = int((cx - EQUIP_LAYOUT["power_half_w"]) * self.sft), int((cx + EQUIP_LAYOUT["power_half_w"]) * self.sft)
         y1, y2 = int((cy - EQUIP_LAYOUT["power_half_h"]) * self.sft), int((cy + EQUIP_LAYOUT["power_half_h"]) * self.sft)
+        crop = color[y1:y2, x1:x2]
+        if DEBUG_DIR:
+            cv2.imwrite(os.path.join(DEBUG_DIR, f"power_{time.strftime('%H%M%S')}.png"), cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))
+        txt = read_yellow_number(crop)
+        if not txt:
+            return None
+        whole, _, frac = txt.partition(".")
         try:
-            import pytesseract
-            import re
-            patch = color[y1:y2, x1:x2].astype(int)
-            # the number is yellow; "战力:" is white and would be read as digits
-            r, g, b = patch[..., 0], patch[..., 1], patch[..., 2]
-            yellow = (r > 170) & (g > 140) & (b < 130)
-            mask = np.where(yellow, 0, 255).astype(np.uint8)
-            mask = cv2.resize(mask, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-            mask = cv2.copyMakeBorder(mask, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=255)
-            txt = pytesseract.image_to_string(mask, config="--psm 7 -c tessedit_char_whitelist=0123456789.")
-            if DEBUG_DIR:
-                cv2.imwrite(os.path.join(DEBUG_DIR, f"power_{time.strftime('%H%M%S')}.png"),
-                            cv2.cvtColor(color[y1:y2, x1:x2], cv2.COLOR_RGB2BGR))
-            nums = re.findall(r"\d+\.\d+|\d+", txt)
-            if not nums:
-                return None
-            whole, _, frac = nums[0].partition(".")
-            return float(f"{whole}.{frac[:2]}") if frac else float(whole)   # "万" is read as a trailing digit
-        except Exception as e:
-            log(f"战力 OCR failed: {e}")
+            return float(f"{whole}.{frac[:2]}") if frac else float(whole)
+        except ValueError:
             return None
 
     def has_boss_artifact(self):
@@ -292,15 +337,19 @@ class FortressFight(ZoneExplore):
             scores[i] = self.loadout_score()
         log("Fleet power: " + ", ".join(f"{i}:{p}" for i, p in powers.items())
             + " | loadout match: " + ", ".join(f"{i}:{s:.2f}" for i, s in scores.items()))
-        ranked = sorted(scores.items(), key=lambda kv: -kv[1])
-        best, second = ranked[0], ranked[1] if len(ranked) > 1 else (None, 0.0)
-        if best[1] >= EQUIP_LAYOUT["loadout_th"] and best[1] - second[1] >= EQUIP_LAYOUT["loadout_margin"]:
-            log(f"Best gear is on fleet {best[0]} (loadout match {best[1]:.2f}, next best {second[1]:.2f})")
-            self.save_state(holder=best[0])
-            return best[0]
-        log("No fleet matches the standard loadout; falling back to the highest 战力")
-        valid = {i: p for i, p in powers.items() if p is not None}
-        return max(valid, key=valid.get) if valid else None
+        matching = [i for i, s in scores.items() if s >= EQUIP_LAYOUT["loadout_th"]]
+        if len(matching) == 1:
+            log(f"Best gear is on fleet {matching[0]} (loadout match {scores[matching[0]]:.2f})")
+            return matching[0]
+        if len(matching) > 1:
+            # several tabs look like the standard loadout: the one with the highest 战力 has the
+            # real gear (the others carry weaker copies of the same items)
+            best = max(matching, key=lambda i: powers.get(i) or 0.0)
+            log(f"Fleets {matching} all match the standard loadout; fleet {best} has the highest 战力")
+            return best
+        log("No fleet matches the standard loadout (threshold "
+            f"{EQUIP_LAYOUT['loadout_th']}); best match is fleet {max(scores, key=scores.get)} at {max(scores.values()):.2f}")
+        return None
 
     # ------------------------------------------------------------------ equipment moves
     def unequip_all(self, index):
