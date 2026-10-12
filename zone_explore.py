@@ -1067,6 +1067,10 @@ class ZoneExplore:
                     continue
                 if not self.color_ok(kind, color, x, y):     # cheap, kept in light mode too
                     wrong_color += 1
+                    if DEBUG_SHOT_DIR and kind == "ZBox":
+                        rgb = self.icon_rgb(color, x, y)
+                        if rgb[2] > rgb[1]:                  # bluish: a purple box the rule rejected?
+                            log(f"  colour reject {kind} at ({x:.0f},{y:.0f}) RGB={tuple(round(v) for v in rgb)} shape={color.shape} dtype={color.dtype}")
                     continue
                 if self.spot_key(x, y) in self.visited:
                     skipped_visited += 1
@@ -1748,6 +1752,7 @@ class ZoneExplore:
         if not DEBUG_SHOT_DIR:
             return
         color = self._scan_frame if self._scan_frame is not None else self.shot()[0]
+        np.save(os.path.join(DEBUG_SHOT_DIR, "last_scan_frame.npy"), color) if os.path.isdir(DEBUG_SHOT_DIR) else None
         img = cv2.cvtColor(color, cv2.COLOR_RGB2BGR).copy()
         region = self.map_region()
         if region:
