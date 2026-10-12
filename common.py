@@ -268,6 +268,20 @@ single_find_map = {
     "ZSuperBoost": get_image_path("zone/super_boost.png"),          # "超级型舰队加速器" row label
     "ZLargeBoost": get_image_path("zone/large_boost.png"),          # "大型舰队加速器" row label
     "ZUseButton": get_image_path("zone/use_button.png"),            # "使用"
+    # Fortress (铸械要塞) boss fight and the equipment pages
+    "ZFortressMap": get_image_path("zone/fortress_map.png"),          # 铸械要塞 icon on the map
+    "ZFortressTitle": get_image_path("zone/fortress_title.png"),      # "深寒铸械要塞" page title
+    "ZGuardBright": get_image_path("zone/guard_bright.png"),          # guard rocket cell
+    "ZGuardAttack": get_image_path("zone/guard_attack.png"),          # "袭击" under a selected guard
+    "ZShopLabel": get_image_path("zone/shop_label.png"),              # 商店
+    "ZDepotLabel": get_image_path("zone/depot_label.png"),            # 委托站
+    "ZCommandLabel": get_image_path("zone/command_label.png"),        # 指挥所
+    "ZAutoEquip": get_image_path("zone/auto_equip.png"),              # "一键配队"
+    "ZEditFleetTitle": get_image_path("zone/edit_fleet_title.png"),   # "编辑舰队"
+    "ZEditArtifactTitle": get_image_path("zone/edit_artifact_title.png"),  # "编辑低级神器"
+    "ZArtifactTarget": get_image_path("zone/artifact_target.png"),    # 残骸本源 (boss artifact)
+    "ZArtifactCheck": get_image_path("zone/artifact_check.png"),      # check mark on the equipped artifact
+    "ZPlusSlot": get_image_path("zone/plus_slot.png"),                # "+" empty slot in 编辑舰队
     # Run (dice) mode, used by the monitor to switch into zone explore when the dice run out
     "ZStarExplore": get_image_path("zone/star_explore.png"),        # "星际探险" button, main page bottom right
     "ZAutoThrowing": get_image_path("zone/auto_throwing.png"),      # "自动投掷中..." overlay
@@ -300,7 +314,9 @@ no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "C
                  "ZBuyOk", "ZBuyCancel", "ZContinueHint", "ZAttackPage", "ZRepairOk", "ZSlotFree", "ZOurGoing",
                  "ZStarExplore", "ZAutoThrowing", "ZMoreDice", "ZLongPressAuto",
                  "ZFleetSpeed", "ZAccelerate", "ZReturnHome", "ZBoostPage", "ZQuantumBoost", "ZSuperBoost", "ZLargeBoost", "ZUseButton",
-                 "ZZoneList", "ZSelectZone", "ZRivalPanel"]
+                 "ZZoneList", "ZSelectZone", "ZRivalPanel",
+                 "ZFortressTitle", "ZGuardAttack", "ZAutoEquip", "ZEditFleetTitle", "ZEditArtifactTitle",
+                 "ZArtifactTarget", "ZArtifactCheck", "ZPlusSlot", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function

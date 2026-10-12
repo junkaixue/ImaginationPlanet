@@ -79,6 +79,15 @@
 - 截图缩放的包装只装一次、可还原（`close()`），多个实例不会套娃。
 - 去掉了没有模板的 `ZCentralZone`；`ZFactory2`（绿色工厂）保留登记，模板缺失时自动跳过。
 
+## 要塞 boss 战（fortress_fight.py，开发中）
+
+`./myenv/bin/python fortress_fight.py --dry`。复用 zone_explore 的锚点、截图、弹窗处理，不缩放不拖动。
+- 规则：只有最好的一套装备能打；每次换一条满血空闲船，把装备从上一条船卸下（编辑舰队四个标签逐个点掉下方已配置项，右下角 lv.6 盾牌不动），新船“一键配队”，右上角神器必须是“残骸本源”（一键配队会换成别的，要改回），旧船先“一键配队”再“修理舰队”（没装备的船不能修）。
+- 要塞页：守卫格子用模板找，亮度均值 ≥ 75 的才能打（暗的 46 到 65）；没有亮守卫时看商店/委托站/指挥所是否变亮。点守卫 → 袭击 → 派遣列表按序号点第 N 张卡（也是战力最大的那张）→ 预估一律袭击。
+- 哪条船带着装备：我的舰队各标签 OCR 战力，最大的那条。
+- 页面截图在 `pages/boss/`，模板：fortress_map / fortress_title / guard_bright / guard_attack / shop_label / depot_label / command_label / auto_equip / edit_fleet_title / edit_artifact_title / artifact_target / artifact_check / plus_slot。“确认”按钮复用 repair_ok 模板。
+- 还没验证：棋子标签下方的布局、底排 4 个神器怎么卸、一键配队之后的页面、建筑可打时的样子、点地图要塞图标是否直接进要塞页。
+
 ## 模板采集
 
 模板必须在运行机器上、游戏固定缩放 **75%** 下截取。采集工具：
