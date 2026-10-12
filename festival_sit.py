@@ -20,6 +20,7 @@ import time
 
 import numpy as np
 
+from click import move_to
 from common import single_find, get_center, get_all
 from log_helper import log
 from zone_explore import ZoneExplore, drag, _code_version
@@ -124,7 +125,10 @@ class FestivalSit(ZoneExplore):
             if seats:
                 s = seats[0]
                 if self.dry_run:
-                    log(f"[DRY] would press 占据 at ({s.x:.0f},{s.y:.0f})")
+                    rx, ry = self.to_real(s.x, s.y)
+                    move_to(rx, ry)
+                    log(f"[DRY] 占据 at ({s.x:.0f},{s.y:.0f}): mouse moved there, not pressed")
+                    time.sleep(3)
                     return True
                 self.click(s.x, s.y, 2.5, "占据")
                 # a confirmation may follow; 确认 shares the repair-ok template
@@ -153,10 +157,12 @@ class FestivalSit(ZoneExplore):
                 return False
             pg = "festival"
         if pg == "festival":
-            if self.seated():
+            if self.seated() and not self.dry_run:
                 log("Already seated (我 bubble) -> back to the activity page")
                 self.back()
                 return True
+            if self.seated():
+                log("[DRY] already seated (我 bubble); continuing anyway to test the seat search")
             pavs = self.pavilions()
             log(f"{len(pavs)} pavilion(s) on screen")
             for n, label in enumerate(pavs, 1):
