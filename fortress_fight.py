@@ -25,6 +25,7 @@ Usage:
 """
 
 import argparse
+import os
 import time
 
 import cv2
@@ -74,6 +75,7 @@ FORTRESS = {
     "max_scrolls": 6,
 }
 FULL_HP = 100
+DEBUG_DIR = None             # --debug-shots: save the OCR crops here
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
 POLL = 60
 
@@ -127,21 +129,41 @@ class FortressFight(ZoneExplore):
             mask = cv2.resize(mask, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
             mask = cv2.copyMakeBorder(mask, 10, 10, 10, 10, cv2.BORDER_CONSTANT, value=255)
             txt = pytesseract.image_to_string(mask, config="--psm 7 -c tessedit_char_whitelist=0123456789.")
+            if DEBUG_DIR:
+                cv2.imwrite(os.path.join(DEBUG_DIR, f"power_{time.strftime('%H%M%S')}.png"),
+                            cv2.cvtColor(color[y1:y2, x1:x2], cv2.COLOR_RGB2BGR))
             nums = re.findall(r"\d+\.\d+|\d+", txt)
-            return float(nums[0]) if nums else None
+            if not nums:
+                return None
+            whole, _, frac = nums[0].partition(".")
+            return float(f"{whole}.{frac[:2]}") if frac else float(whole)   # "万" is read as a trailing digit
         except Exception as e:
             log(f"战力 OCR failed: {e}")
             return None
 
+    def has_boss_artifact(self):
+        """True when the top-right slot of the open fleet tab shows 残骸本源."""
+        title = self.fleet_title()
+        p = get_center("ZArtifactSlot", "Single")
+        if title is None or p is None:
+            return False
+        dx, dy = EQUIP_LAYOUT["artifact_slot"]
+        return abs(p.x - (title.x + dx)) < 40 and abs(p.y - (title.y + dy)) < 40
+
     def find_gear_holder(self):
-        """Tab with the highest 战力 = the fleet carrying the best equipment."""
+        """The fleet carrying the best equipment: its top-right slot shows 残骸本源 (deterministic);
+        the highest 战力 is only the fallback, OCR confuses 5 and 9 at times."""
         if not self.open_fleet_page():
             return None
-        powers = {}
+        powers, holders = {}, []
         for i in range(1, SHIP_LAYOUT["slots"] + 1):
             self.select_tab(i)
             powers[i] = self.read_power()
-        log("Fleet power: " + ", ".join(f"{i}:{p}" for i, p in powers.items()))
+            if self.has_boss_artifact():
+                holders.append(i)
+        log("Fleet power: " + ", ".join(f"{i}:{p}" for i, p in powers.items()) + f"; 残骸本源 on {holders}")
+        if len(holders) == 1:
+            return holders[0]
         valid = {i: p for i, p in powers.items() if p is not None}
         return max(valid, key=valid.get) if valid else None
 
@@ -470,6 +492,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry", action="store_true", help="Detect and log only")
     parser.add_argument("--delay", type=int, default=3)
+    parser.add_argument("--debug-shots", action="store_true", help="Save OCR crops to pics/<platform>/zone/debug/")
     args = parser.parse_args()
+    if args.debug_shots:
+        DEBUG_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "debug")
+        os.makedirs(DEBUG_DIR, exist_ok=True)
     time.sleep(args.delay)
     FortressFight(dry_run=args.dry).run()

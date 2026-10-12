@@ -281,6 +281,7 @@ single_find_map = {
     "ZEditArtifactTitle": get_image_path("zone/edit_artifact_title.png"),  # "编辑低级神器"
     "ZArtifactTarget": get_image_path("zone/artifact_target.png"),    # 残骸本源 (boss artifact)
     "ZArtifactCheck": get_image_path("zone/artifact_check.png"),      # check mark on the equipped artifact
+    "ZArtifactSlot": get_image_path("zone/artifact_slot.png"),        # 残骸本源 as shown in the fleet page slot
     "ZPlusSlot": get_image_path("zone/plus_slot.png"),                # "+" empty slot in 编辑舰队
     "ZEditGearTitle": get_image_path("zone/edit_gear_title.png"),     # "编辑装备" (bottom-row artifacts)
     # Run (dice) mode, used by the monitor to switch into zone explore when the dice run out
@@ -317,7 +318,7 @@ no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "C
                  "ZFleetSpeed", "ZAccelerate", "ZReturnHome", "ZBoostPage", "ZQuantumBoost", "ZSuperBoost", "ZLargeBoost", "ZUseButton",
                  "ZZoneList", "ZSelectZone", "ZRivalPanel",
                  "ZFortressTitle", "ZGuardAttack", "ZAutoEquip", "ZEditFleetTitle", "ZEditArtifactTitle",
-                 "ZArtifactTarget", "ZArtifactCheck", "ZPlusSlot", "ZEditGearTitle", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
+                 "ZArtifactTarget", "ZArtifactCheck", "ZArtifactSlot", "ZPlusSlot", "ZEditGearTitle", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
