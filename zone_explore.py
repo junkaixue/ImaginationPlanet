@@ -323,6 +323,7 @@ class ZoneExplore:
         self.rescan_needed = False    # set when a memorized resource is gone (zone memory dropped)
         self._shot, self._shot_time = None, 0.0
         self.last_drag_unknown = False
+        self._scan_frame = None
         self.zone = None           # current zone name ("central", "02", ...) or None when unknown
         self.zone_spots = {}       # zone -> {"time": t, "spots": [Spot]} memorized across rounds
         self.win_scale = 1.0       # current window size / reference window size
@@ -343,6 +344,21 @@ class ZoneExplore:
 
     def invalidate_shot(self):
         self._shot_time = 0.0
+
+    def wait_still(self, timeout=2.5):
+        """Block until two captures 0.25 s apart look the same: the map keeps gliding for a
+        moment after a drag, and a frame taken mid-glide shows icons at the wrong place."""
+        self.invalidate_shot()
+        prev = self.shot()[1]
+        start = time.time()
+        while time.time() - start < timeout:
+            time.sleep(0.25)
+            self.invalidate_shot()
+            cur = self.shot()[1]
+            if float(np.abs(prev.astype(int) - cur.astype(int)).mean()) < 1.5:
+                return True
+            prev = cur
+        return False
 
     # ------------------------------------------------------------------ window scale
     def close(self):
@@ -799,6 +815,7 @@ class ZoneExplore:
             drag(rsx, rsy, rex, rey)
             self.invalidate_shot()
             time.sleep(DRAG_LAYOUT["settle"])
+            self.wait_still()
             after = self.grab_region(mregion)
             shift = self.measure_shift(before, after, dx, dy)
             if shift is None:
@@ -991,8 +1008,9 @@ class ZoneExplore:
 
     def scan_resources(self, kinds=None, light=False):
         """Find every scoreable resource visible on the map, best first. `kinds` restricts the
-        templates; `light` skips the colour and route-line checks (outer-zone survey)."""
+        templates; `light` skips the route-line checks (outer-zone survey)."""
         color, gray = self.shot()
+        self._scan_frame = color
         region = self.map_region()
         x_min, y_min, x_max, y_max = region if region else (0, 0, 10 ** 6, 10 ** 6)
         base = self.anchor("ZBase", gray)
@@ -1711,7 +1729,7 @@ class ZoneExplore:
         says 0 but I see a box" report can be checked against exactly what the program saw."""
         if not DEBUG_SHOT_DIR:
             return
-        color = self.shot()[0]
+        color = self._scan_frame if self._scan_frame is not None else self.shot()[0]
         img = cv2.cvtColor(color, cv2.COLOR_RGB2BGR).copy()
         region = self.map_region()
         if region:
