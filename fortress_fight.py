@@ -375,6 +375,19 @@ class FortressFight(ZoneExplore):
 
     def swap_gear(self, holder, target):
         log(f"Move the best gear from fleet {holder} to fleet {target}")
+        # the fleet page is open now anyway: make sure the remembered holder really has the gear
+        if not self.open_fleet_page():
+            return False
+        self.select_tab(holder)
+        score = self.loadout_score()
+        if score < EQUIP_LAYOUT["loadout_th"]:
+            log(f"Fleet {holder} does not match the standard loadout ({score:.2f}); re-checking all tabs")
+            self.save_state(holder=None)
+            found = self.find_gear_holder()
+            if found is None or found == target:
+                self.close_fleet_page()
+                return False
+            holder = self.holder = found
         if not self.unequip_all(holder):
             return False
         if not self.auto_equip(target):
@@ -572,6 +585,12 @@ class FortressFight(ZoneExplore):
         while True:
             if not self.on_map():
                 self.close_popup()
+            if self.holder is None:
+                # remembered from the last run: no need to open the fleet page before the top bar
+                # says a fresh fleet is available; the loadout is verified when swapping
+                self.holder = self.load_state().get("holder")
+                if self.holder:
+                    log(f"Gear holder remembered from the last run: fleet {self.holder}")
             if self.holder is None:
                 self.holder = self.find_gear_holder()
                 self.close_fleet_page()
