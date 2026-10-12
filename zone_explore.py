@@ -142,9 +142,12 @@ DRAG_LAYOUT = {
     "overlap_y": 80,        # and for the measurement strip (overlap - 2 * strip_inset >= 60)
     "edge_retries": 2,      # a zero move without the frame line in view is retried this often
     "hidden_sides": ("top",),   # the top frame line sits under the title bar and is never visible
-    "band_x_min_dx": 10,    # horizontal gesture may use the full window width: x relative to ZBase
-    "band_x_max_dx": 425,
-    "band_y_dy": 300,       # ... at this y (relative to ZBase) the right column has no buttons
+    "band_x_min_dx": 20,    # horizontal gesture band: x relative to ZBase, left of the right column
+    "band_x_max_dx": 365,
+    "band_y_dys": (340, 400, 460, 520),   # candidate rows (relative to ZBase) between 任务榜 and 我的基地
+    "vert_x_dxs": (0, -60, 60, -120),     # candidate columns for vertical drags, relative to the area centre
+    "finger_half": 18,      # the finger must land on plain map: std of this window must be low
+    "plain_std": 22,
     "strip_inset": 10,      # logical px trimmed from the overlap strip used to measure movement
     "patch_min_std": 8,     # a strip flatter than this is empty space, only the static test is used
     "patch_th": 0.6,        # min match of the overlap strip to trust the measured movement
@@ -647,6 +650,44 @@ class ZoneExplore:
             sides.setdefault(side, (y1 + y) / self.sft)
         return sides
 
+    def pick_gesture(self, region, dx, dy):
+        """Start/end of the drag gesture. Several candidate lines are tried and the first whose
+        start and end land on plain map (no icon, no button) is used: a finger on an icon or on
+        a UI button (通缉榜/任务榜 on the right) opens something instead of dragging."""
+        x1, y1, x2, y2 = region
+        m = DRAG_LAYOUT["margin"]
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        clamp = lambda v, lo, hi: max(lo, min(hi, v))
+        base = self.anchor("ZBase")
+        cands = []
+        if dy == 0 and base is not None:
+            bx1, bx2 = base.x + DRAG_LAYOUT["band_x_min_dx"], base.x + DRAG_LAYOUT["band_x_max_dx"]
+            bcx = (bx1 + bx2) / 2
+            for ddy in DRAG_LAYOUT["band_y_dys"]:
+                by = base.y + ddy
+                if y1 + m <= by <= y2 - m:
+                    cands.append((clamp(bcx - dx / 2, bx1, bx2), by, clamp(bcx + dx / 2, bx1, bx2), by))
+        elif dx == 0:
+            for ddx in DRAG_LAYOUT["vert_x_dxs"]:
+                vx = clamp(cx + ddx, x1 + m, x2 - m)
+                cands.append((vx, clamp(cy - dy / 2, y1 + m, y2 - m), vx, clamp(cy + dy / 2, y1 + m, y2 - m)))
+        else:
+            cands.append((clamp(cx - dx / 2, x1 + m, x2 - m), clamp(cy - dy / 2, y1 + m, y2 - m),
+                          clamp(cx + dx / 2, x1 + m, x2 - m), clamp(cy + dy / 2, y1 + m, y2 - m)))
+        gray = screen_shot()
+        h = int(DRAG_LAYOUT["finger_half"] * self.sft)
+
+        def busy(x, y):
+            px, py = int(x * self.sft), int(y * self.sft)
+            win = gray[max(0, py - h):py + h, max(0, px - h):px + h]
+            return float(win.std()) if win.size else 999.0
+
+        scored = sorted(cands, key=lambda c: max(busy(c[0], c[1]), busy(c[2], c[3])))
+        best = scored[0]
+        if max(busy(best[0], best[1]), busy(best[2], best[3])) > DRAG_LAYOUT["plain_std"]:
+            log("No plain spot for the drag gesture, using the calmest candidate")
+        return best
+
     def drag_map(self, dx, dy):
         """Move the map content by (dx, dy) logical px. Returns 'moved', 'edge' or 'fail'."""
         region = self.map_region()
@@ -659,21 +700,7 @@ class ZoneExplore:
             if cond and side in sides:
                 log(f"Drag ({dx:.0f},{dy:.0f}): {side} frame line visible at {sides[side]:.0f} -> edge")
                 return "edge"
-        m = DRAG_LAYOUT["margin"]
-        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-        clamp = lambda v, lo, hi: max(lo, min(hi, v))
-        base = self.anchor("ZBase")
-        if dy == 0 and base is not None:
-            # pure horizontal drag: use the wide band (the scan area is narrower than the map)
-            bx1, bx2 = base.x + DRAG_LAYOUT["band_x_min_dx"], base.x + DRAG_LAYOUT["band_x_max_dx"]
-            by = base.y + DRAG_LAYOUT["band_y_dy"]
-            sx, ex = clamp(cx - dx / 2, bx1, bx2), clamp(cx + dx / 2, bx1, bx2)
-            sy = ey = by
-        else:
-            sx, sy = cx - dx / 2, cy - dy / 2
-            ex, ey = cx + dx / 2, cy + dy / 2
-            sx, ex = clamp(sx, x1 + m, x2 - m), clamp(ex, x1 + m, x2 - m)
-            sy, ey = clamp(sy, y1 + m, y2 - m), clamp(ey, y1 + m, y2 - m)
+        sx, sy, ex, ey = self.pick_gesture(region, dx, dy)
         dx, dy = ex - sx, ey - sy
 
         asked = (dx ** 2 + dy ** 2) ** 0.5
@@ -681,12 +708,10 @@ class ZoneExplore:
         for attempt in range(DRAG_LAYOUT["edge_retries"] + 1):
             if attempt:
                 # a drag that did not move the map without the frame line in view: a popup may
-                # have opened, or the finger landed on something. Close popups, shift the gesture.
+                # have opened, or the finger landed on something. Close popups, pick again.
                 self.close_popup()
-                if dy == 0:
-                    sy = ey = sy + 40
-                else:
-                    sx = ex = sx + 40
+                sx, sy, ex, ey = self.pick_gesture(region, dx, dy)
+                dx, dy = ex - sx, ey - sy
             before = self.grab_region(region)
             rsx, rsy = self.to_real(sx, sy)
             rex, rey = self.to_real(ex, ey)
