@@ -13,13 +13,22 @@ if platform.system() == "Darwin":  # macOS
         :param x: Horizontal coordinate (int)
         :param y: Vertical coordinate (int)
         """
-        # Create mouse event for click down
+        import time
+
+        # Move the pointer there first and hold the button briefly: the Android emulator
+        # ignores a down/up pair posted at the same instant without a preceding move.
+        event_move = Quartz.CGEventCreateMouseEvent(
+            None, Quartz.kCGEventMouseMoved, (x, y), Quartz.kCGMouseButtonLeft
+        )
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_move)
+        time.sleep(0.05)
+
         event_down = Quartz.CGEventCreateMouseEvent(
             None, Quartz.kCGEventLeftMouseDown, (x, y), Quartz.kCGMouseButtonLeft
         )
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_down)
+        time.sleep(0.08)
 
-        # Create mouse event for click up
         event_up = Quartz.CGEventCreateMouseEvent(
             None, Quartz.kCGEventLeftMouseUp, (x, y), Quartz.kCGMouseButtonLeft
         )
@@ -35,7 +44,29 @@ if platform.system() == "Darwin":  # macOS
             None, Quartz.kCGEventMouseMoved, (x, y), Quartz.kCGMouseButtonLeft
         )
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_move)
-        
+
+    def drag(x1, y1, x2, y2, duration=0.7, steps=14, hold=0.3):
+        """
+        Press at (x1, y1), move to (x2, y2) in small steps and release (macOS).
+        The pause before release avoids the emulator's fling/inertia scrolling.
+        """
+        import time
+
+        def post(kind, x, y):
+            ev = Quartz.CGEventCreateMouseEvent(None, kind, (x, y), Quartz.kCGMouseButtonLeft)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, ev)
+
+        post(Quartz.kCGEventMouseMoved, x1, y1)
+        time.sleep(0.05)
+        post(Quartz.kCGEventLeftMouseDown, x1, y1)
+        time.sleep(0.1)
+        for i in range(1, steps + 1):
+            t = i / steps
+            post(Quartz.kCGEventLeftMouseDragged, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
+            time.sleep(duration / steps)
+        time.sleep(hold)
+        post(Quartz.kCGEventLeftMouseUp, x2, y2)
+
 else:  # Windows and other platforms
     def click_at(x, y):
         """
@@ -52,3 +83,14 @@ else:  # Windows and other platforms
         :param y: Vertical coordinate (int)
         """
         pyautogui.moveTo(x, y)
+
+    def drag(x1, y1, x2, y2, duration=0.7, steps=14, hold=0.3):
+        """
+        Press at (x1, y1), move to (x2, y2) and release (PyAutoGUI).
+        """
+        import time
+        pyautogui.moveTo(x1, y1)
+        pyautogui.mouseDown()
+        pyautogui.moveTo(x2, y2, duration=duration)
+        time.sleep(hold)
+        pyautogui.mouseUp()

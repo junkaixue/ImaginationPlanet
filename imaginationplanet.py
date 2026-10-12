@@ -9,6 +9,7 @@ from red_pack import RedPack
 from running import MainRun
 from star_pick_up import StarPick
 from black_market_finder import BlackMarketFinder
+from zone_explore import ZoneExplore
 
 
 def combo(skipcat, gohome, switch):
@@ -39,6 +40,10 @@ if __name__ == "__main__":
     parser.add_argument("-sp", "--starpick", action='store_true', help="Star picking")
     parser.add_argument("-bm", "--blackmarket", action='store_true', help="Find black market")
     parser.add_argument("-ri", "--runindex", type=int, default=0, help="Run index")
+    parser.add_argument("-ze", "--zoneexplore", action='store_true', help="Zone explore: auto dispatch fleets")
+    parser.add_argument("--dry", action='store_true', help="Dry run (detect only, no clicks) for zone explore")
+    parser.add_argument("-m", "--monitor", action='store_true',
+                        help="Watch the dice run; enter 星际探险 when the dice run out, then zone explore")
 
     args = parser.parse_args()
 
@@ -91,5 +96,11 @@ if __name__ == "__main__":
     if args.blackmarket:
         bm = BlackMarketFinder()
         bm.find_black_market()
+
+    if args.zoneexplore:
+        ZoneExplore(dry_run=args.dry).run()
+
+    if args.monitor:
+        ZoneExplore(dry_run=args.dry).monitor()
     
     send_email(content)

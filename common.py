@@ -194,6 +194,86 @@ single_find_map = {
     # Black Market (part of star feature)
     "BlackMarket": get_image_path("star/black_market.png"),
 
+    # Zone Explore (zone_explore.py) - page screenshots in pics/mac/zone/pages, crops in pics/mac/zone
+    # map page
+    "ZBase": get_image_path("zone/base.png"),
+    "ZIdle": get_image_path("zone/idle.png"),
+    "ZBuilding": get_image_path("zone/building.png"),
+    "ZReturning": get_image_path("zone/returning.png"),
+    "ZSailing": get_image_path("zone/sailing.png"),
+    "ZRepairing": get_image_path("zone/repairing.png"),
+    "ZCrossSailing": get_image_path("zone/cross_sailing.png"),
+    "ZExplore": get_image_path("zone/explore.png"),
+    "ZTeam": get_image_path("zone/team.png"),
+    "ZZoom50": get_image_path("zone/zoom50.png"),
+    "ZZoom75": get_image_path("zone/zoom75.png"),
+    "ZMyBase": get_image_path("zone/my_base.png"),
+    "ZSelectZone": get_image_path("zone/select_zone.png"),
+    # map resources
+    "ZFactory1": get_image_path("zone/factory1.png"),
+    "ZFactory2": get_image_path("zone/factory2.png"),   # green factory: template not captured yet (optional)
+    "ZFactory3": get_image_path("zone/factory3.png"),   # pink/orange factory
+    "ZFactory4": get_image_path("zone/factory4.png"),   # blue factory with an ore symbol (04区)
+    "ZBigBattle": get_image_path("zone/big_battle.png"),
+    "ZYellowBoss": get_image_path("zone/yellow_boss.png"),
+    "ZBox": get_image_path("zone/box.png"),
+    "ZSmallBattle": get_image_path("zone/small_battle.png"),
+    "ZGreenShip": get_image_path("zone/green_ship.png"),
+    "ZRedVehicle": get_image_path("zone/red_vehicle.png"),
+    "ZYellowBox": get_image_path("zone/yellow_box.png"),          # golden treasure chest, 4 score (capture at 75%)
+    "ZRedBigBattle": get_image_path("zone/red_big_battle.png"),   # red big battle ship with star badge (capture at 75%)
+    # dialogs
+    "ZGo": get_image_path("zone/go.png"),
+    "ZShareCoord": get_image_path("zone/share_coord.png"),
+    "ZBuyPrompt": get_image_path("zone/buy_prompt.png"),
+    "ZBuyOk": get_image_path("zone/buy_ok.png"),
+    "ZBuyCancel": get_image_path("zone/buy_cancel.png"),
+    "ZContinueHint": get_image_path("zone/continue_hint.png"),
+    "ZTargetPage": get_image_path("zone/target_page.png"),
+    "ZAttackPage": get_image_path("zone/attack_page.png"),
+    "ZAllyExchange": get_image_path("zone/ally_exchange.png"),
+    "ZDispatchTitle": get_image_path("zone/dispatch_title.png"),
+    "ZFleetDetail": get_image_path("zone/fleet_detail.png"),
+    "ZEnergy": get_image_path("zone/energy.png"),
+    "ZEstimateLabel": get_image_path("zone/estimate_label.png"),
+    "ZBigWin": get_image_path("zone/big_win.png"),
+    "ZSmallWin": get_image_path("zone/small_win.png"),
+    "ZDraw": get_image_path("zone/draw.png"),
+    "ZBigLoss": get_image_path("zone/big_loss.png"),
+    "ZSmallLoss": get_image_path("zone/small_loss.png"),
+    "ZAttack": get_image_path("zone/attack.png"),
+    "ZCancel": get_image_path("zone/cancel.png"),
+    "ZCloseHint": get_image_path("zone/close_hint.png"),
+    "ZBackArrow": get_image_path("zone/back_arrow.png"),
+    # factory page
+    "ZFactoryPage": get_image_path("zone/factory_page.png"),
+    "ZOccupied": get_image_path("zone/occupied.png"),
+    "ZSlotPower": get_image_path("zone/slot_power.png"),
+    "ZSlotFree": get_image_path("zone/slot_free.png"),      # "可派舰队" under the + of a free factory slot
+    "ZOurGoing": get_image_path("zone/our_going.png"),      # "你的舰队正在前往中" in a factory slot
+    # fleet page
+    "ZMyFleet": get_image_path("zone/my_fleet.png"),
+    "ZRepair": get_image_path("zone/repair.png"),
+    "ZRepairPrompt": get_image_path("zone/repair_prompt.png"),
+    "ZRepairOk": get_image_path("zone/repair_ok.png"),
+    # zone map
+    "ZZoneList": get_image_path("zone/zone_list_title.png"),       # "远古深寒区" title of the zone chooser
+    # Fleet panel (click a sailing ship in the top bar) and the boost dialog
+    "ZRivalPanel": get_image_path("zone/rival_panel.png"),          # "同目标点舰队" panel on a target popup
+    "ZFleetSpeed": get_image_path("zone/fleet_speed.png"),          # "当前速度:" = fleet panel open
+    "ZAccelerate": get_image_path("zone/accelerate.png"),           # "加速" button on the fleet panel
+    "ZReturnHome": get_image_path("zone/return_home.png"),          # "返航" button on the fleet panel
+    "ZBoostPage": get_image_path("zone/boost_page.png"),            # "当前航行速度:" = boost dialog open
+    "ZQuantumBoost": get_image_path("zone/quantum_boost.png"),      # "量子型舰队加速器" row label
+    "ZSuperBoost": get_image_path("zone/super_boost.png"),          # "超级型舰队加速器" row label
+    "ZLargeBoost": get_image_path("zone/large_boost.png"),          # "大型舰队加速器" row label
+    "ZUseButton": get_image_path("zone/use_button.png"),            # "使用"
+    # Run (dice) mode, used by the monitor to switch into zone explore when the dice run out
+    "ZStarExplore": get_image_path("zone/star_explore.png"),        # "星际探险" button, main page bottom right
+    "ZAutoThrowing": get_image_path("zone/auto_throwing.png"),      # "自动投掷中..." overlay
+    "ZMoreDice": get_image_path("zone/more_dice.png"),              # "更多骰子" popup title = dice ran out
+    "ZLongPressAuto": get_image_path("zone/long_press_auto.png"),   # "长按自动" on the dice button = not running
+
     # Restart Game
     "DingHao": get_image_path("dinghao.png"),
     "ClickGame": get_image_path("click_game.png"),
@@ -214,7 +294,13 @@ resource_map = {
 but_list = {}
 
 no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm", "Challenge", "StarPick",
-                 "ShipFree", "Star", "BlackMarket", "CloseTab"]
+                 "ShipFree", "Star", "BlackMarket", "CloseTab",
+                 "ZBase", "ZGo", "ZEnergy", "ZAttack", "ZCancel", "ZCloseHint", "ZBackArrow", "ZSlotPower",
+                 "ZFactoryPage", "ZZoom50", "ZTeam", "ZMyFleet", "ZRepair", "ZDispatchTitle", "ZEstimateLabel",
+                 "ZBuyOk", "ZBuyCancel", "ZContinueHint", "ZAttackPage", "ZRepairOk", "ZSlotFree", "ZOurGoing",
+                 "ZStarExplore", "ZAutoThrowing", "ZMoreDice", "ZLongPressAuto",
+                 "ZFleetSpeed", "ZAccelerate", "ZReturnHome", "ZBoostPage", "ZQuantumBoost", "ZSuperBoost", "ZLargeBoost", "ZUseButton",
+                 "ZZoneList", "ZSelectZone", "ZRivalPanel"]
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
