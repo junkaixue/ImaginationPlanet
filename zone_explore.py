@@ -171,6 +171,7 @@ BOUNDARY_LAYOUT = {"min_r": 110, "min_b": 150, "max_g": 130, "min_bg_diff": 60, 
 DISPATCH_MODE = "survey"
 IMMEDIATE_KINDS = FACTORY_KINDS       # dispatched as soon as seen during the survey
 NAV_TOLERANCE = 80                    # logical px: re-detected icon must be this close to the memorized spot
+RESEEN_TOLERANCE = 120                # logical px: a same-kind spot this close in map coords is the same one
 
 # Zones. The chooser (bottom-right thumbnail button) shows "远古深寒区" with the zones laid out
 # around the centre. The layout is fixed, so the cards are clicked at offsets (logical px) from
@@ -1780,9 +1781,22 @@ class ZoneExplore:
             outer = self.zone is not None and self.zone != "central"
             cands = self.scan_resources(kinds=OUTER_KINDS if outer else None, light=outer)
             self.debug_shot(cands)
+            corrected = False
             for c in cands:
                 mx, my = self.to_map(c.x, c.y)
-                if any(s.kind == c.kind and abs(s.mx - mx) < 35 and abs(s.my - my) < 35 for s in self.spots):
+                same = [s for s in self.spots
+                        if s.kind == c.kind and abs(s.mx - mx) < RESEEN_TOLERANCE and abs(s.my - my) < RESEEN_TOLERANCE]
+                if same:
+                    # the same resource seen again in the overlap: its memorized position is the
+                    # truth, so a drift of the drag offsets (e.g. an unmeasurable drag) is
+                    # corrected here instead of accumulating
+                    s = same[0]
+                    ddx, ddy = mx - s.mx, my - s.my
+                    if not corrected and (abs(ddx) > 4 or abs(ddy) > 4):
+                        self.offset[0] += ddx
+                        self.offset[1] += ddy
+                        corrected = True
+                        log(f"Offset corrected by ({ddx:.0f},{ddy:.0f}) from a re-seen {c.kind}")
                     continue
                 base_kind = c.kind.split("[")[0]
                 if base_kind in IMMEDIATE_KINDS and not self.dry_run:
