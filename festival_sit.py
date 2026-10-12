@@ -46,7 +46,17 @@ class FestivalSit(ZoneExplore):
             return "festival"
         if single_find("ZFestTitle"):
             return "activity"
+        if single_find("ZFestMainBtn"):
+            return "main"
         return None
+
+    def open_activity(self):
+        """Game main screen -> the 金秋赏月 button on the right side -> activity page."""
+        b = get_center("ZFestMainBtn", "Single")
+        if b is None:
+            return False
+        self.click(b.x, b.y - 40, 2.5, "金秋赏月 (main screen)", force=True)
+        return self.wait_for("ZFestTitle", 8) or self.wait_for("ZFestPav1", 3)
 
     def back(self):
         c = get_center("ZFestBack", "Single")
@@ -131,6 +141,12 @@ class FestivalSit(ZoneExplore):
     def run_once(self):
         pg = self.page()
         log(f"Page: {pg}")
+        if pg == "main":
+            if not self.open_activity():
+                log("Could not open 金秋赏月 from the main screen")
+                return False
+            pg = self.page()
+            log(f"Page: {pg}")
         if pg == "activity":
             if not self.open_festival():
                 log("Could not open 金秋赏月")
@@ -162,7 +178,7 @@ class FestivalSit(ZoneExplore):
             ok = self.sit()
             self.back()
             return ok
-        log("Not on a festival page: start on the 月满华诞 activity page")
+        log("Not on a festival page: start on the game main screen or the 月满华诞 activity page")
         return False
 
     def run(self, loop_minutes=0):
@@ -173,6 +189,12 @@ class FestivalSit(ZoneExplore):
                 log(f"Festival error: {e}")
             if not loop_minutes:
                 return
+            # return to the main screen so the next pass (and other scripts) start from there
+            for _ in range(3):
+                if self.page() in (None, "main"):
+                    break
+                self.back()
+                time.sleep(1.5)
             time.sleep(loop_minutes * 60)
 
 
