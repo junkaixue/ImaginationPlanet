@@ -16,3 +16,4 @@ yolo/runs
 yolo/datasets
 pics/mac/zone/_full_*.png
 pics/mac/zone/debug/
+pics/mac/zone/fortress_state.json

@@ -80,6 +80,7 @@ FORTRESS = {
 }
 FULL_HP = 100
 DEBUG_DIR = None             # --debug-shots: save the OCR crops here
+STATE_FILE = os.path.join(os.path.dirname(single_find_map["ZBase"]), "fortress_state.json")   # {"holder": N}
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
 POLL = 60
 
@@ -211,11 +212,35 @@ class FortressFight(ZoneExplore):
             return 0.0
         return float(cv2.minMaxLoc(cv2.matchTemplate(sub, t, cv2.TM_CCOEFF_NORMED))[1])
 
+    def load_state(self):
+        try:
+            import json
+            with open(STATE_FILE) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def save_state(self, **kw):
+        import json
+        state = self.load_state()
+        state.update(kw)
+        with open(STATE_FILE, "w") as f:
+            json.dump(state, f)
+
     def find_gear_holder(self):
-        """The fleet carrying the best equipment: the tab whose whole grid matches the standard
-        loadout screenshot. 战力 is logged for reference only (OCR confuses 5 and 9 at times)."""
+        """The fleet carrying the best equipment. The last known holder is kept in STATE_FILE and
+        only re-checked on its own tab; all five tabs are compared against the standard loadout
+        screenshot only when that check fails. 战力 is logged for reference only."""
         if not self.open_fleet_page():
             return None
+        known = self.load_state().get("holder")
+        if known:
+            self.select_tab(known)
+            score = self.loadout_score()
+            if score >= EQUIP_LAYOUT["loadout_th"]:
+                log(f"Best gear is still on fleet {known} (loadout match {score:.2f})")
+                return known
+            log(f"Fleet {known} no longer matches the standard loadout ({score:.2f}); checking all tabs")
         powers, scores = {}, {}
         for i in range(1, SHIP_LAYOUT["slots"] + 1):
             self.select_tab(i)
@@ -227,6 +252,7 @@ class FortressFight(ZoneExplore):
         best, second = ranked[0], ranked[1] if len(ranked) > 1 else (None, 0.0)
         if best[1] >= EQUIP_LAYOUT["loadout_th"] and best[1] - second[1] >= EQUIP_LAYOUT["loadout_margin"]:
             log(f"Best gear is on fleet {best[0]} (loadout match {best[1]:.2f}, next best {second[1]:.2f})")
+            self.save_state(holder=best[0])
             return best[0]
         log("No fleet matches the standard loadout; falling back to the highest 战力")
         valid = {i: p for i, p in powers.items() if p is not None}
@@ -372,14 +398,7 @@ class FortressFight(ZoneExplore):
             return True
         if not self.on_map():
             self.close_popup()
-        if self.read_zone() != "central":
-            # the fortress only exists in the central zone: the base icon jumps there
-            base = self.anchor("ZBase")
-            if base is not None:
-                log("Not in the central zone -> base icon")
-                self.click(base.x, base.y, 3, "base icon -> central", force=True)
-                self.wait_for("ZExplore", 10)
-                self.zone = self.read_zone()
+        # the program is started in the central zone with the fortress on screen; no zone logic
         icon = get_center("ZFortressMap", "Single")
         if icon is None:
             log("铸械要塞 icon not on screen")
@@ -558,6 +577,8 @@ class FortressFight(ZoneExplore):
                 time.sleep(POLL)
                 continue
             self.holder = target
+            if not self.dry_run:
+                self.save_state(holder=target)
             if not self.attack_with(target):
                 if self.dry_run:
                     return
