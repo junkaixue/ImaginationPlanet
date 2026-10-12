@@ -238,18 +238,25 @@ class FestivalSit(ZoneExplore):
                 log("[DRY] already seated (我 bubble); continuing anyway to test the seat search")
             pavs = self.pavilions()
             log(f"{len(pavs)} pavilion(s) on screen")
-            for n, label in enumerate(pavs, 1):
+            n = 0
+            while n < len(pavs):
+                n += 1
+                label = pavs[n - 1]
                 if not self.open_pavilion(label, f"pavilion {n}"):
                     log(f"Pavilion {n} did not open")
                     continue
                 ok = self.sit()
                 self.back()
                 time.sleep(1.5)
-                if ok or self.seated():
+                if ok or (not self.dry_run and self.seated()):
                     log(f"Seated in pavilion {n}")
                     self.back()
                     return True
                 log(f"Pavilion {n} is full, trying the next one")
+                if not self.wait_for("ZFestPavilion", 5):
+                    log("Festival page did not come back")
+                    return False
+                pavs = self.pavilions() or pavs   # re-locate: the page may have moved
             log("No free seat in any pavilion on screen")
             self.back()
             return False
