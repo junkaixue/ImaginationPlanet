@@ -491,12 +491,18 @@ class ZoneExplore:
         """Click a template button after the popup has settled (the popup slides in, so the
         position found during the animation is stale) and verify the click took: `gone` must
         disappear or `appears` must show up; otherwise re-locate and click again."""
+        done = lambda: (gone and not single_find(gone)) or (appears and single_find(appears))
         for attempt in range(tries):
+            if done():
+                return True                     # already satisfied: nothing to click
             time.sleep(settle)
             self.invalidate_shot()
+            if but != "ZBuyOk" and but != "ZBuyCancel" and single_find("ZBuyPrompt"):
+                log(f"{what}: the action purchase prompt is on top, not clicking")
+                return False
             c = get_center(but, "Single")
             if c is None:
-                if (gone and not single_find(gone)) or (appears and single_find(appears)):
+                if done():
                     return True
                 log(f"{what}: button not found (attempt {attempt + 1})")
                 continue
@@ -1213,12 +1219,12 @@ class ZoneExplore:
             log("The purchase prompt did not close")
             self.close_popup()
             return False
-        self.packs_bought += 1          # 确定 went through: count it against the cap whatever follows
         if not self.wait_for("ZContinueHint", 10):
-            # the prompt closed without the receipt (e.g. not enough coins): nothing usable bought
+            # the prompt closed without the receipt (e.g. not enough coins): nothing was bought
             log("No purchase receipt after 确定; treating the purchase as failed")
             self.close_popup()
             return False
+        self.packs_bought += 1          # the receipt is the proof of a purchase
         # tapping the hint text itself does nothing; tap the empty area below it
         self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY)
         return True
@@ -1554,16 +1560,23 @@ class ZoneExplore:
         self.close_popup()
         return ok
 
+    def burst(self, x, y, times=3, gap=0.1):
+        """Tap the same spot several times quickly. For idempotent targets (tabs, removal slots,
+        a button that opens a page) a dropped tap is then harmless."""
+        rx, ry = self.to_real(x, y)
+        for _ in range(times):
+            click_at(rx, ry)
+            time.sleep(gap)
+        self.invalidate_shot()
+        return times
+
     def select_tab(self, index):
         """Fleet tab on 我的舰队; idempotent, so a short burst covers a dropped tap."""
         title = self.anchor("ZMyFleet")
         if title is None:
             return False
-        x = title.x + FLEET_PAGE_LAYOUT["tab_dx0"] + (index - 1) * FLEET_PAGE_LAYOUT["tab_spacing"]
-        y = title.y + FLEET_PAGE_LAYOUT["tab_dy"]
-        for _ in range(3):
-            self.raw_click(x, y)
-            time.sleep(0.1)
+        self.burst(title.x + FLEET_PAGE_LAYOUT["tab_dx0"] + (index - 1) * FLEET_PAGE_LAYOUT["tab_spacing"],
+                   title.y + FLEET_PAGE_LAYOUT["tab_dy"])
         time.sleep(1.0)
         return True
 

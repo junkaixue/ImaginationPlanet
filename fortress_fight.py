@@ -36,7 +36,6 @@ import pyautogui
 
 from common import single_find, get_center, get_all, single_find_map
 from log_helper import log
-from click import click_at
 from zone_explore import (ZoneExplore, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH,
                           MONITOR_POLL, RUN_IDLE_SECONDS, CONTINUE_TAP_DY, _code_version)
 
@@ -94,6 +93,7 @@ FORTRESS = {
 }
 FULL_HP = 100
 TAP_BURST = 3                # taps per burst on idempotent buttons (tabs, 一键配队): a dropped tap is harmless
+PENDING_REPAIR_TRIES = 3     # passes a failed repair is retried from pending_repair before giving up
 HOLDER_OK_HP = 90            # the gear holder attacks again by itself above this hp (no swap)
 DEBUG_DIR = None             # --debug-shots: save the OCR crops here
 STATE_FILE = os.path.join(os.path.dirname(single_find_map["ZBase"]), "fortress_state.json")   # {"holder": N}
@@ -162,6 +162,7 @@ class FortressFight(ZoneExplore):
         super().__init__(dry_run=dry_run)
         self.holder = None        # fleet index currently carrying the best gear
         self.pending_repair = set()   # fleets whose repair could not be started yet
+        self.repair_tries = {}        # fleet -> attempts made from pending_repair
         log(f"FortressFight ready (code={_code_version()})")
 
     # ------------------------------------------------------------------ fleet page
@@ -391,8 +392,9 @@ class FortressFight(ZoneExplore):
                 self.unequip_bottom_artifacts(index)
             # the one thing the next fleet cannot do without: 残骸本源 must be off this fleet
             for _ in range(2):
-                self.open_fleet_page()
-                self.select_tab(index)
+                if not self.open_fleet_page() or not self.select_tab(index):
+                    log(f"Fleet {index}: cannot verify the artifact slot, fleet page not open")
+                    return False
                 if not self.has_boss_artifact():
                     break
                 log(f"残骸本源 is still on fleet {index}; stripping its artifacts again")
@@ -422,16 +424,6 @@ class FortressFight(ZoneExplore):
             if not self.confirm_edit(f"artifact row {row + 1}"):
                 all_ok = False
         return all_ok
-
-    def burst(self, x, y, times):
-        """Tap the same spot many times quickly: removal taps on an already empty position do
-        nothing, so over-tapping is harmless and far more reliable than counting."""
-        rx, ry = self.to_real(x, y)
-        for _ in range(times):
-            click_at(rx, ry)
-            time.sleep(EDIT_LAYOUT["burst_gap"])
-        self.invalidate_shot()
-        return times
 
     def tab_selected(self, et, tab_dx):
         """The selected tab shows a bright underline below its label."""
@@ -624,10 +616,12 @@ class FortressFight(ZoneExplore):
                 self.save_debug("no_fortress_icon")
                 continue
             log(f"铸械要塞 icon at ({icon.x:.0f},{icon.y:.0f})")
-            # the icon opens an info popup (位置/坐标/距离/守卫等级) with a 袭击 button; tapping the
-            # icon is idempotent while the popup is up, so a short burst covers a dropped tap
-            self.burst(icon.x, icon.y, TAP_BURST)
-            time.sleep(2)
+            # the icon opens an info popup (位置/坐标/距离/守卫等级) with a 袭击 button; a second
+            # tap is only sent when nothing opened (the popup covers the icon with 前往 etc.)
+            for _ in range(TAP_BURST):
+                self.click(icon.x, icon.y, 2, "铸械要塞", force=True)
+                if single_find("ZGuardAttack") or single_find("ZGo") or single_find("ZFortressTitle"):
+                    break
             if self.wait_for("ZGuardAttack", 5):
                 log("Fortress popup -> 袭击")
                 self.press("ZGuardAttack", "袭击 (fortress popup)", appears="ZFortressTitle")
@@ -762,8 +756,10 @@ class FortressFight(ZoneExplore):
                 log("Could not buy actions" if not self.dry_run else "[DRY] stopped at the purchase prompt")
                 break
             time.sleep(1.5)
-            # the receipt may have closed more than the prompt: get back onto the fortress
-            # page and pick the target afresh (the page can have scrolled or re-rendered)
+            # the estimate dialog or the guard popup may still be up under the dimmed title:
+            # clear them, then make sure the fortress page is really in front
+            if single_find("ZEstimateLabel") or single_find("ZGuardAttack") or single_find("ZDispatchTitle"):
+                super().close_popup(3)
             if not single_find("ZFortressTitle") and not self.open_fortress():
                 break
             target = self.pick_target()
@@ -895,7 +891,10 @@ class FortressFight(ZoneExplore):
                         self.pending_repair.discard(i)      # nothing left to repair
                     elif s.get("idle"):
                         opened = True
-                        if self.repair_fleet(i):
+                        self.repair_tries[i] = self.repair_tries.get(i, 0) + 1
+                        if self.repair_fleet(i) or self.repair_tries[i] >= PENDING_REPAIR_TRIES:
+                            if self.repair_tries[i] >= PENDING_REPAIR_TRIES:
+                                log(f"Fleet {i}: giving up on the repair after {PENDING_REPAIR_TRIES} tries")
                             self.pending_repair.discard(i)
                 if opened:
                     self.close_fleet_page()
@@ -906,6 +905,7 @@ class FortressFight(ZoneExplore):
                 self.holder = self.find_gear_holder()
                 self.close_fleet_page()
                 log(f"Gear holder: fleet {self.holder}; map page back: {self.on_map()}")
+                ships = self.scan_ships()           # the earlier scan may have seen the dimmed bar
             if self.holder is None:
                 log("Could not tell which fleet has the best gear")
                 return

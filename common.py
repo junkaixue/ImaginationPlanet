@@ -327,16 +327,8 @@ resource_map = {
 but_list = {}
 
 no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "Confirm", "Challenge", "StarPick",
-                 "ShipFree", "Star", "BlackMarket", "CloseTab",
-                 "ZBase", "ZGo", "ZEnergy", "ZAttack", "ZCancel", "ZCloseHint", "ZBackArrow", "ZSlotPower",
-                 "ZFactoryPage", "ZZoom50", "ZTeam", "ZMyFleet", "ZRepair", "ZDispatchTitle", "ZEstimateLabel",
-                 "ZBuyOk", "ZBuyCancel", "ZContinueHint", "ZAttackPage", "ZRepairOk", "ZFleetRepairing", "ZSlotFree", "ZOurGoing",
-                 "ZStarExplore", "ZAutoThrowing", "ZMoreDice", "ZLongPressAuto",
-                 "ZFleetSpeed", "ZAccelerate", "ZReturnHome", "ZBoostPage", "ZQuantumBoost", "ZSuperBoost", "ZLargeBoost", "ZUseButton",
-                 "ZZoneList", "ZSelectZone", "ZRivalPanel",
-                 "ZFortressTitle", "ZFortressBack", "ZGuardAttack", "ZAutoEquip", "ZEditFleetTitle", "ZEditArtifactTitle",
-                 "ZArtifactTarget", "ZArtifactCheck", "ZArtifactSlot", "ZLoadoutStandard", "ZPlusSlot",
-                 "ZFestMainBtn", "ZFestTitle", "ZFestGo", "ZFestMe", "ZFestPav1", "ZFestPavilion", "ZFestBack", "ZFestOccupy", "ZFestEmpty", "ZFestRow", "ZEditGearTitle", "ZEditCatTitle", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
+                 "ShipFree", "Star", "BlackMarket", "CloseTab"]
+# Zone templates ("Z...") are never cached (see get_center_h); they need no entry here.
 
 # Define a new print function with a timestamp
 # Save the original built-in print function
@@ -414,12 +406,17 @@ def get_center_h(but, map_scope, th):
     Get the center coordinates of a button on the screen.
     Mac-compatible - uses cv2.matchTemplate instead of pyautogui.locateOnScreen.
     """
-    if but in no_cache_list or but not in coor_dict:  # Sometimes scroll can change the position
+    # Zone templates ("Z...") are never cached: the map scrolls and its icons move, and a stale
+    # cached position silently clicks the wrong spot (the fortress icon was clicked at its old
+    # place three times in a row). Everything else keeps the original cache behaviour.
+    if but in no_cache_list or but.startswith("Z") or but not in coor_dict:  # Sometimes scroll can change the position
         try:
             template_path = resource_map[map_scope][but]
             center = get_center_with_path(template_path, None, th)
             if center is not None:
-                coor_dict[but] = center
+                if not but.startswith("Z"):
+                    coor_dict[but] = center
+                return center
             else:
                 print(f"Warning: Button '{but}' not found on screen.")
                 return None
