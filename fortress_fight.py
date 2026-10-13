@@ -718,15 +718,35 @@ class FortressFight(ZoneExplore):
     BUILDING_LABELS = (("ZShopLabel", "商店"), ("ZDepotLabel", "委托站"), ("ZCommandLabel", "指挥所"),
                        ("ZResourceLabel", "资源库"), ("ZMilitaryLabel", "军事基地"))
     BUILDING_LABEL_TH = 0.8     # real labels match >= 0.97 on every page screenshot, other labels <= 0.68
-    BADGE_TH = 0.8
-    BADGE_DX, BADGE_DY = 45, (5, 70)    # 已损坏 badge centre relative to the label: |dx| and dy above
+    # the 已损坏 badge is a yellow-framed box over the building (building_broken.png): its frame is
+    # the largest yellow blob above the label, ~40x15 logical px with a low fill ratio. A selected
+    # building's yellow-green corner brackets (building_clicked.png) are ~10x15 and the ready
+    # 商店's yellow detail is a few px: both fall outside the size window.
+    BADGE_BOX = (45, 70, 5)     # search area above the label: +-dx, from dy_top to dy_bottom above
+    BADGE_W, BADGE_H = (30, 55), (11, 22)
+    BADGE_RGB = (150, 110, 110, 80)     # r >, g >, b <, r - b >
 
-    def buildings(self, gray, title):
+    def badge_above(self, color, cx, cy):
+        """Whether a 已损坏 badge frame sits above the label at physical (cx, cy)."""
+        dx, top, bottom = (int(v * self.sft) for v in self.BADGE_BOX)
+        p = color[max(0, cy - top):cy - bottom, max(0, cx - dx):cx + dx].astype(int)
+        if p.size == 0:
+            return False
+        r, g, b = p[..., 0], p[..., 1], p[..., 2]
+        rmin, gmin, bmax, rb = self.BADGE_RGB
+        mask = ((r > rmin) & (g > gmin) & (b < bmax) & (r - b > rb)).astype(np.uint8)
+        n, _, stats, _ = cv2.connectedComponentsWithStats(mask)
+        for x, y, w, h, area in stats[1:]:
+            if (self.BADGE_W[0] * self.sft <= w <= self.BADGE_W[1] * self.sft
+                    and self.BADGE_H[0] * self.sft <= h <= self.BADGE_H[1] * self.sft):
+                return True
+        return False
+
+    def buildings(self, color, gray, title):
         """[(name, x, y, state)] for every building label on screen, top to bottom; state is
-        "ready", "dim" (guarded) or "broken" (已损坏 badge). Labels are matched below the
-        header only (on the unscrolled page 商店's label sits ~324 px below the title, a label
-        nearer than grid_top_dy has its building hidden under the header); the badge is looked
-        for only when some building is bright."""
+        "ready", "dim" (guarded) or "broken" (已损坏 badge, see badge_above). Labels are matched
+        below the header only (on the unscrolled page 商店's label sits ~324 px below the
+        title, a label nearer than grid_top_dy has its building hidden under the header)."""
         top, bottom, half = (int(v * self.sft) for v in FORTRESS["building_patch"])
         # the patch above the label must lie below the header too
         y0 = int((title.y + FORTRESS["grid_top_dy"]) * self.sft) + top if title is not None else 0
@@ -742,27 +762,21 @@ class FortressFight(ZoneExplore):
             if cy - top < 0:
                 continue
             patch = gray[cy - top:cy - bottom, max(0, cx - half):cx + half]      # the building above its label
-            found.append((name, cx / self.sft, cy / self.sft, float(patch.mean()) >= FORTRESS["building_bright_min"]))
-        badges = []
-        if any(b[3] for b in found):            # the badge may reach above the label band
-            badges = [(cx / self.sft, cy / self.sft)
-                      for cx, cy, _ in match_all(gray, self.full_template("ZBrokenBadge"), self.BADGE_TH)]
-        out = []
-        for name, x, y, bright in found:
-            broken = any(abs(bx - x) < self.BADGE_DX and self.BADGE_DY[0] < y - by < self.BADGE_DY[1] for bx, by in badges)
-            out.append((name, x, y - FORTRESS["building_tap_dy"], "broken" if broken else "ready" if bright else "dim"))
-        return sorted(out, key=lambda b: (b[2], b[1]))
+            bright = float(patch.mean()) >= FORTRESS["building_bright_min"]
+            state = "broken" if self.badge_above(color, cx, cy) else "ready" if bright else "dim"
+            found.append((name, cx / self.sft, cy / self.sft - FORTRESS["building_tap_dy"], state))
+        return sorted(found, key=lambda b: (b[2], b[1]))
 
     def visible_targets(self):
         """(ready building or None, bright guards top to bottom, names of the building labels
         on screen); one capture for all. Buildings whose taps showed no 袭击 recently and guard
         spots that opened nothing (page coordinates, FAILED_TARGET_TTL) are skipped."""
         self.invalidate_shot()
-        gray = self.shot()[1]
+        color, gray = self.shot()
         title = self.anchor("ZFortressTitle", gray) or self.fortress_title   # the header does not scroll
         if title is not None:
             self.fortress_title = title
-        blds = self.buildings(gray, title)
+        blds = self.buildings(color, gray, title)
         now = time.time()
         for name, t in list(self.failed_targets.items()):
             if now - t > FAILED_TARGET_TTL:
