@@ -37,7 +37,7 @@
 - 防重复派遣：自己的船在路上时地图上有一条白色虚线连到目标，扫描时用 Hough 找虚线（白色、断续、够长），虚线端点 45 像素内的资源视为已有船前往，跳过。手动派的船也一样生效。参数在 `ROUTE_LAYOUT`。
 - 派船是状态机：看到前往就点前往，看到袭击就点袭击，看到派遣舰队列表就点第一个空闲舰队，看到战斗预估就按大胜/小胜/不分伯仲打、大败/小败取消。
 - 工厂页：已占据或“你的舰队正在前往中”则跳过；空位是“+ 可派舰队”，用模板直接找到后点“+”；没有空位再逐个点占位者看预估。
-- 工厂有五种图标：黄色 factory1、绿色 factory2、粉橙色 factory3、蓝色矿石 factory4、第五种待截图 factory5。外框一样，互相都能匹配到 0.85 左右，同一个图标只算一次。
+- 工厂有五种图标：黄色 factory1、绿色 factory2、粉橙色 factory3、蓝色矿石 factory4、橙色闪电 factory5。外框一样，互相都能匹配到 0.85 左右，同一个图标只算一次。
 - 修理：空闲且血量低于 50% 时，队伍 → 我的舰队 → 对应标签 → 修理舰队 → 确认。
 - 行动次数用完：弹出 150 币买 5 次的提示时，目标是工厂/大型战斗才买（确定 → 点击任意处继续 → 再点前往），否则取消。
 
@@ -56,7 +56,7 @@
 - `./myenv/bin/python zone_explore.py --drag-test`：左右上下各拖一次，打印量到的位移，验证拖拽。
 - `./myenv/bin/python zone_explore.py --dry`：会切 75%、会拖拽扫整张图，但不派船。
 
-工厂一共 5 种，已有 4 种模板（黄 factory1、绿 factory2、粉橙 factory3、蓝矿石 factory4）；第 5 种出现时在 75% 下截一张，裁成 `factory5.png` 即可生效（登记已就位，缺文件时自动跳过）。`red_big_battle.png` 已从 75% 截图裁出（pages/big_and_small_red_ship.png）。
+工厂一共 5 种，模板齐了：黄 factory1、绿 factory2、粉橙 factory3、蓝矿石 factory4、橙色闪电 factory5。`red_big_battle.png` 已从 75% 截图裁出（pages/big_and_small_red_ship.png）。
 红色战车（red_vehicle）按用户要求不打，已从目标表去掉。
 
 ## 抢工厂：蓝线、对方到达时间、量子加速（已实现，`FACTORY_BOOST = "contested"`）

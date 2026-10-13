@@ -57,7 +57,7 @@ RESOURCE_SCORES = {
     "ZFactory2": 100,
     "ZFactory3": 100,
     "ZFactory4": 100,       # blue factory with an ore symbol
-    "ZFactory5": 100,       # fifth kind, template still to be captured (skipped while missing)
+    "ZFactory5": 100,       # orange factory with a lightning symbol
     "ZYellowBox": 4,        # golden chest, 4 points
     "ZBigBattle": 3,        # blue big battle, 3 points
     "ZRedBigBattle": 3,     # red big battle with star badge, 3 points
@@ -1213,12 +1213,12 @@ class ZoneExplore:
             log("The purchase prompt did not close")
             self.close_popup()
             return False
+        self.packs_bought += 1          # 确定 went through: count it against the cap whatever follows
         if not self.wait_for("ZContinueHint", 10):
-            # the prompt closed without the receipt (e.g. not enough coins): nothing was bought
+            # the prompt closed without the receipt (e.g. not enough coins): nothing usable bought
             log("No purchase receipt after 确定; treating the purchase as failed")
             self.close_popup()
             return False
-        self.packs_bought += 1
         # tapping the hint text itself does nothing; tap the empty area below it
         self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY)
         return True
@@ -1588,7 +1588,8 @@ class ZoneExplore:
                 return True
             log(f"Fleet {index}: repair not running after confirming (attempt {attempt + 1})")
             if single_find("ZRepairPrompt"):
-                self.close_popup()          # dismiss the stuck prompt (its 取消 matches the generic template)
+                # dismiss the stuck prompt only (close_popup would close the fleet page as well)
+                self.press("ZCancel", "取消 (stuck repair prompt)", gone="ZRepairPrompt", tries=2)
         log(f"Fleet {index} repair failed")
         return False
 

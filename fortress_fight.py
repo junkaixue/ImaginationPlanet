@@ -265,16 +265,6 @@ class FortressFight(ZoneExplore):
                        "dimmed top bar (close 我的舰队)", force=True)
         return self.close_popup()
 
-    def select_tab(self, index):
-        title = self.fleet_title()
-        if title is None:
-            return False
-        # tabs are idempotent: a short burst makes a dropped tap harmless
-        self.burst(title.x + FLEET_PAGE_LAYOUT["tab_dx0"] + (index - 1) * FLEET_PAGE_LAYOUT["tab_spacing"],
-                   title.y + FLEET_PAGE_LAYOUT["tab_dy"], TAP_BURST)
-        time.sleep(1.0)
-        return True
-
     def read_power(self):
         """战力 of the fleet whose tab is open, as a float in 万, or None."""
         title = self.fleet_title()
@@ -399,6 +389,17 @@ class FortressFight(ZoneExplore):
             self.unequip_right_artifacts(index)
             if UNEQUIP_BOTTOM_ARTIFACTS:
                 self.unequip_bottom_artifacts(index)
+            # the one thing the next fleet cannot do without: 残骸本源 must be off this fleet
+            for _ in range(2):
+                self.open_fleet_page()
+                self.select_tab(index)
+                if not self.has_boss_artifact():
+                    break
+                log(f"残骸本源 is still on fleet {index}; stripping its artifacts again")
+                self.unequip_right_artifacts(index)
+            else:
+                log(f"Could not strip 残骸本源 from fleet {index}")
+                return False
         return ok
 
     def unequip_right_artifacts(self, index):
@@ -590,18 +591,7 @@ class FortressFight(ZoneExplore):
         if not self.auto_equip(target):
             return False
         if not self.ensure_boss_artifact(target):
-            # 残骸本源 may still sit on the old holder (a dropped tap on its artifact page):
-            # check its slot, strip again and retry once
-            self.open_fleet_page()
-            self.select_tab(holder)
-            if not self.has_boss_artifact():
-                return False
-            log(f"残骸本源 is still on fleet {holder}; stripping its artifacts again")
-            if not self.unequip_right_artifacts(holder):
-                log(f"Could not strip the artifacts of fleet {holder}")
-                return False
-            if not self.ensure_boss_artifact(target):
-                return False
+            return False
         self.open_fleet_page()
         self.select_tab(target)
         score = self.loadout_score()
@@ -640,12 +630,11 @@ class FortressFight(ZoneExplore):
             time.sleep(2)
             if self.wait_for("ZGuardAttack", 5):
                 log("Fortress popup -> 袭击")
-                if self.press("ZGuardAttack", "袭击 (fortress popup)", appears="ZFortressTitle"):
-                    return True
+                self.press("ZGuardAttack", "袭击 (fortress popup)", appears="ZFortressTitle")
             elif single_find("ZGo"):
                 self.click_button("ZGo", 2.5, force=True)
-                if self.wait_for("ZFortressTitle", 8):
-                    return True
+            if self.wait_for("ZFortressTitle", 8):      # whichever way it opened (a burst tap may
+                return True                             # have hit the popup's 袭击 already)
             log(f"Fortress page not seen after clicking the icon (attempt {attempt + 1})")
             self.close_popup()
         self.save_debug("fortress_page_missing")
@@ -897,15 +886,20 @@ class FortressFight(ZoneExplore):
                     continue
             if not calibrated and self.on_map():
                 calibrated = self.calibrate_scale()   # needs the map anchors; once per run
+            ships = self.scan_ships()
             if self.pending_repair:
-                ships = self.scan_ships()
+                opened = False
                 for i in sorted(self.pending_repair):
                     s = ships.get(i, {})
                     if s.get("status") == "repairing" or s.get("hp") == FULL_HP:
                         self.pending_repair.discard(i)      # nothing left to repair
-                    elif s.get("idle") and self.repair_fleet(i):
-                        self.pending_repair.discard(i)
-                self.close_fleet_page()
+                    elif s.get("idle"):
+                        opened = True
+                        if self.repair_fleet(i):
+                            self.pending_repair.discard(i)
+                if opened:
+                    self.close_fleet_page()
+                    ships = self.scan_ships()
             if self.holder is None:
                 # every start looks for the gear afresh (it may have been moved by hand); inside
                 # the loop the holder is remembered and only verified when swapping
@@ -917,7 +911,7 @@ class FortressFight(ZoneExplore):
                 return
             if not self.on_map():
                 self.close_fleet_page()
-            ships = self.scan_ships()
+                ships = self.scan_ships()
             h = ships.get(self.holder, {})
             if not h.get("idle"):
                 # the gear is on a fleet that is still out (sailing / fighting / returning):
