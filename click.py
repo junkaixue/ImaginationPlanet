@@ -45,10 +45,11 @@ if platform.system() == "Darwin":  # macOS
         )
         Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_move)
 
-    def drag(x1, y1, x2, y2, duration=0.7, steps=14, hold=0.3):
+    def drag(x1, y1, x2, y2, duration=0.7, steps=14, hold=0.3, press=0.1):
         """
         Press at (x1, y1), move to (x2, y2) in small steps and release (macOS).
-        The pause before release avoids the emulator's fling/inertia scrolling.
+        `press` is the pause between pressing and moving (longer on pages whose cells react
+        to taps); the pause before release avoids the emulator's fling/inertia scrolling.
         """
         import time
 
@@ -59,7 +60,7 @@ if platform.system() == "Darwin":  # macOS
         post(Quartz.kCGEventMouseMoved, x1, y1)
         time.sleep(0.05)
         post(Quartz.kCGEventLeftMouseDown, x1, y1)
-        time.sleep(0.1)
+        time.sleep(press)
         for i in range(1, steps + 1):
             t = i / steps
             post(Quartz.kCGEventLeftMouseDragged, x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)
@@ -84,13 +85,14 @@ else:  # Windows and other platforms
         """
         pyautogui.moveTo(x, y)
 
-    def drag(x1, y1, x2, y2, duration=0.7, steps=14, hold=0.3):
+    def drag(x1, y1, x2, y2, duration=0.7, steps=14, hold=0.3, press=0.1):
         """
         Press at (x1, y1), move to (x2, y2) and release (PyAutoGUI).
         """
         import time
         pyautogui.moveTo(x1, y1)
         pyautogui.mouseDown()
+        time.sleep(press)
         pyautogui.moveTo(x2, y2, duration=duration)
         time.sleep(hold)
         pyautogui.mouseUp()

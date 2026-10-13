@@ -11,12 +11,13 @@ Cycle (user rules):
        残骸本源 (一键配队 may pick another one): open it, select 残骸本源, confirm.
     5. Back on the old holder's tab: 一键配队 (a fleet without a loadout cannot be repaired),
        then 修理舰队, confirm.
-    6. Map -> 铸械要塞 -> scroll through the whole page for a ready building (bright: the
-       guards around it are cleared and it has recovered; a broken one, just raided, or one
-       still guarded is dim) -> otherwise the first bright guard (dim ones are not attackable
-       yet) -> 袭击 -> 派遣舰队 list: pick the fresh fleet's card (it also has the highest
-       战力) -> battle estimate: always attack. A building that shows no 袭击 when tapped is
-       left alone for FAILED_TARGET_TTL.
+    6. Map -> 铸械要塞 -> on the screen in front: a ready building first (bright: the guards
+       around it are cleared and it has recovered; a broken one wears a 已损坏 badge, a guarded
+       one is dim), otherwise the first bright guard (dim ones are not attackable yet); the
+       page is only scrolled when the screen offers nothing (the scroll gesture must stay
+       above 指挥所, the area below does not drag) -> 袭击 -> 派遣舰队 list: pick the fresh
+       fleet's card (it also has the highest 战力) -> battle estimate: always attack. A target
+       that shows no 袭击 when tapped is left alone for FAILED_TARGET_TTL.
     7. Wait for the fleet to come back, then repeat with the next full-hp fleet.
 
 Only one fleet fights at a time (there is one set of best gear). No zoom or map dragging.
@@ -88,19 +89,24 @@ FORTRESS = {
     "bright_min": 75,         # mean grey of the cell: attackable guards ~86-104, dim ones ~46-65
     "building_bright_min": 75,
     "grid_top_dy": 200,       # guard grid lies below the title by at least this (logical px)
-    "scroll_x_dx": 0,         # scroll gesture column, relative to the title
-    "scroll_y0_dy": 650,      # gesture from title+y0 up to title+y1 (content moves up by y0-y1 = 220,
-    "scroll_y1_dy": 430,      # less than the measured content area so that the move can be matched)
+    "scroll_x_dxs": (-150, -100),   # scroll gesture columns relative to the title (guard columns, not 指挥所);
+                              # the second is tried when a gesture in the first opened a dialog
+    "scroll_y0_dy": 450,      # gesture from title+y0 up to title+y1 (content moves up by y0-y1 = 220, less
+    "scroll_y1_dy": 230,      # than the measured content area so that the move can be matched). Both ends
+                              # stay above 指挥所's lower edge (~title+500): the page does not drag below it
     "max_scrolls": 10,
     "blank_dy": 45,           # the description line under the title: tapping it closes popups
     "cell_half": 10,          # guard brightness: half size of the sampled square (logical px)
     "building_patch": (45, 5, 20),   # building brightness: from 45 to 5 px above the label, +-20 wide
-    "spot_radius": 20,        # a guard this close to a tried spot (page coordinates) is the same guard; cells are ~33 apart
+    "dim_ratio": 0.7,         # the content area this much darker after a drag: a dialog may be on top
+    "move_diff": 12,          # mean frame change above this without a strip match is a real move; a glow is ~5
+    "shop_label_dy": (324, 15),     # 商店's label sits this far below the title on the unscrolled page (+- tolerance,
+                                    # tighter than spot_radius so that remembered guard spots still line up)
+    "spot_radius": 20,        # a guard this close to a tried spot (screen position) is the same guard; cells are ~33 apart
+    "press": 0.2,             # press-before-move of the scroll gesture: the guard cells react to taps
+    "min_step": 100,          # a measured move shorter than this (of the 220 px gesture) is not a screen step
     "grid_half_w": 230,       # the page content spans this far left/right of the title (shift measurement)
-    "bottom_labels": ("资源库", "军事基地"),   # once these are seen the scan has reached the last buildings
     "content_bottom_dy": 530, # the page content measured for scrolling ends this far below the title (above 停机坪)
-    "scan_valid": 60,         # seconds a full page scan stays trusted for the "no ready building" shortcut
-    "relocate_slack": 60,     # page_y may differ this much from where the guard was seen before scrolling again
     "tap_timeout": 5.0,       # seconds a tap on a target gets to open something
     "icon_timeout": 2.0,      # the map icon's popup shows within a second
     "want_grace": 2.0,        # seconds 袭击 still gets after another part of its popup showed
@@ -110,9 +116,11 @@ FORTRESS = {
 FULL_HP = 100
 TAP_BURST = 3                # taps per burst on idempotent buttons (tabs, 一键配队): a dropped tap is harmless
 PENDING_REPAIR_TRIES = 3     # passes a failed repair is retried from pending_repair before giving up
+SWAP_FINISH_TRIES = 3        # passes an unfinished gear swap is resumed before it is abandoned
+HOLDER_LOOKUP_TRIES = 3      # consecutive failures to find the gear holder before the run stops
+ARTIFACT_FLEETS_MAX = 2      # fleets on which 残骸本源 could not be set before the run stops
 HOLDER_OK_HP = 90            # the gear holder attacks again by itself above this hp (no swap)
 DEBUG_DIR = None             # --debug-shots: save the OCR crops here
-STATE_FILE = os.path.join(os.path.dirname(single_find_map["ZBase"]), "fortress_state.json")   # {"holder": N}
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
 POLL = 30
 FAILED_TARGET_TTL = 15 * 60  # seconds a building is skipped after FAILED_TARGET_MISSES taps showed no 袭击
@@ -178,7 +186,7 @@ def read_yellow_number(rgb):
                 continue
             p = cv2.copyMakeBorder(gl, 0, 0, 0, w - gl.shape[1], cv2.BORDER_CONSTANT, value=0)
             q = cv2.copyMakeBorder(t, 0, 0, 0, w - t.shape[1], cv2.BORDER_CONSTANT, value=0)
-            s = 1 - float(np.abs(p.astype(int) - q.astype(int)).mean()) / 255
+            s = 1 - ZoneExplore.frame_diff(p, q) / 255
             if s > best:
                 best, lab = s, cand
         if best >= 0.75 and lab != "?":
@@ -192,10 +200,15 @@ class FortressFight(ZoneExplore):
         self.holder = None        # fleet index currently carrying the best gear
         self.pending_repair = set()   # fleets whose repair could not be started yet
         self.repair_tries = {}        # fleet -> attempts made from pending_repair
+        self.holder_misses = 0        # consecutive starts that could not find the gear holder
+        self.artifact_bad = set()     # fleets on which 残骸本源 could not be set repeatedly: never attack with them
+        self.lookup_unreadable = False  # the last find_gear_holder failed to read the fleet page (not: no match)
+        self.swap_fails = 0           # consecutive swap_gear failures before the holder is looked for again
+        self.swap = None              # an unfinished gear swap (see finish_swap)
+        self.deferred_repair = set()  # fleets to repair once the gear has a known owner again
         self.failed_targets = {}      # building name -> time its tap showed no 袭击
-        self.page_y = 0.0             # how far down the fortress page is scrolled (logical px, measured)
-        self.tried_spots = []         # (x, page y, time) of guards that opened no 袭击
-        self.page_scanned = 0.0       # when the whole fortress page was last scanned (0: not since opened)
+        self.tried_spots = []         # (page step, x, y, time) of guards that opened no 袭击
+        self.page_step = 0            # up-scrolls from the top of the fortress page (screens are 220 px apart)
         self.fortress_title = None    # title position on the open fortress page (the header does not scroll)
         log(f"FortressFight ready (code={_code_version()})")
 
@@ -373,30 +386,22 @@ class FortressFight(ZoneExplore):
             return 0.0
         return float(cv2.minMaxLoc(cv2.matchTemplate(sub, t, cv2.TM_CCOEFF_NORMED))[1])
 
-    def load_state(self):
-        try:
-            import json
-            with open(STATE_FILE) as f:
-                return json.load(f)
-        except Exception:
-            return {}
-
-    def save_state(self, **kw):
-        import json
-        state = self.load_state()
-        state.update(kw)
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f)
-
     def find_gear_holder(self):
-        """The fleet carrying the best equipment. The last known holder is kept in STATE_FILE and
-        only re-checked on its own tab; all five tabs are compared against the standard loadout
-        screenshot only when that check fails. 战力 is logged for reference only."""
+        """The fleet carrying the best equipment: all five tabs are compared against the
+        standard loadout screenshot. 战力 is logged for reference only. lookup_unreadable tells
+        a None from an unreadable page apart from one with no matching fleet."""
+        self.lookup_unreadable = True
         if not self.open_fleet_page():
             return None
+        self.lookup_unreadable = False
         powers, scores = {}, {}
         for i in range(1, SHIP_LAYOUT["slots"] + 1):
-            self.select_tab(i)
+            if not self.select_tab(i):
+                # a weaker copy of the same items also matches the screenshot: with the real
+                # holder's tab possibly among the unseen ones no election is safe
+                log(f"Fleet {i}: tab could not be shown; gear holder unknown")
+                self.lookup_unreadable = True
+                return None
             powers[i] = self.read_power()
             scores[i] = self.loadout_score()
         log("Fleet power: " + ", ".join(f"{i}:{p}" for i, p in powers.items())
@@ -576,9 +581,8 @@ class FortressFight(ZoneExplore):
         return ok
 
     def auto_equip(self, index):
-        if not self.open_fleet_page():
+        if not self.open_fleet_page() or not self.select_tab(index):
             return False
-        self.select_tab(index)
         b = get_center("ZAutoEquip", "Single")
         if b is None:
             log("一键配队 not found")
@@ -620,45 +624,77 @@ class FortressFight(ZoneExplore):
             self.save_debug(f"repair_failed_{index}")
         return ok
 
-    def swap_gear(self, holder, target):
+    def swap_gear(self, holder, target, ships):
+        """Strip the gear holder and give the gear to `target` (finish_swap does the equipping
+        part; when it fails the swap is remembered and resumed on the next pass). Stripped and
+        damaged fleets are repaired afterwards unless `ships` shows them at full hp."""
         log(f"Move the best gear from fleet {holder} to fleet {target}")
+        not_full = lambda i: ships.get(i, {}).get("hp") != FULL_HP     # hp unknown counts as damaged
+        damaged = {holder} if not_full(holder) else set()
         # the fleet page is open now anyway: make sure the remembered holder really has the gear
-        if not self.open_fleet_page():
+        if not self.open_fleet_page() or not self.select_tab(holder):
+            self.close_fleet_page()
             return False
-        self.select_tab(holder)
         score = self.loadout_score()
         if score < EQUIP_LAYOUT["loadout_th"]:
             log(f"Fleet {holder} does not match the standard loadout ({score:.2f}); re-checking all tabs")
-            self.save_state(holder=None)
             found = self.find_gear_holder()
-            if found is None or found == target:
+            if found is None:
+                self.holder = None              # next pass looks for the gear afresh
                 self.close_fleet_page()
                 return False
             holder = self.holder = found
-        if not self.unequip_all(holder):
-            return False
-        if not self.auto_equip(target):
-            return False
-        if not self.ensure_boss_artifact(target):
-            return False
-        self.open_fleet_page()
-        self.select_tab(target)
-        score = self.loadout_score()
-        log(f"Fleet {target} loadout vs standard: {score:.2f}")
-        if score < EQUIP_LAYOUT["loadout_th"]:
-            log("Loadout differs from the standard screenshot; check the equipment by hand")
-        if not self.repair_fleet(holder):
-            self.pending_repair.add(holder)     # retried at the start of every later pass
-        self.close_fleet_page()
-        return True
+            if not_full(found):
+                damaged.add(found)              # stripped below: repaired too
+        # from here on the gear may be loose: the swap is remembered and resumed until it is done
+        self.swap = {"holder": holder, "target": target, "to_repair": damaged - {target},
+                     "unequipped": holder == target, "tries": 1}
+        if holder == target:                    # the gear is already on the fleet about to attack
+            log(f"Fleet {target} already carries the best gear; nothing to move")
+        return self.finish_swap()
+
+    def finish_swap(self):
+        """A gear swap from the stripping on, in a fixed order: unequip the holder (unless done),
+        一键配队 on the target, loadout check, 残骸本源, then the holder is recorded and the
+        fleets in to_repair (the stripped holder when damaged, the damaged fleet the swap was
+        made for) are repaired. With holder == target it is a check of the holder itself. Returns
+        False (keeping self.swap for the next pass) as soon as a step fails."""
+        sw = self.swap
+        target = sw["target"]
+        sw["artifact_failed"] = False       # only the step reached on this attempt counts
+        try:
+            if not sw["unequipped"]:            # (again) strip the holder; a partial strip is completed
+                if not self.unequip_all(sw["holder"]):
+                    return False
+                sw["unequipped"] = True
+            if not self.auto_equip(target):     # opens the page and selects the target's tab
+                return False
+            score = self.loadout_score()
+            log(f"Fleet {target} loadout vs standard: {score:.2f}")
+            if score < EQUIP_LAYOUT["loadout_th"]:
+                if sw["holder"] == target:      # a check of the holder: it must really carry the gear
+                    log("Loadout differs from the standard screenshot; this fleet does not hold the gear")
+                    return False
+                log("Loadout differs from the standard screenshot; check the equipment by hand")
+            if not self.ensure_boss_artifact(target):
+                sw["artifact_failed"] = True
+                return False
+            self.holder = target
+            for fleet in sorted(sw["to_repair"]):
+                if not self.repair_fleet(fleet):
+                    self.pending_repair.add(fleet)  # retried at the start of every later pass
+            self.swap = None
+            return True
+        finally:
+            self.close_fleet_page()
 
     # ------------------------------------------------------------------ fortress page
     def open_fortress(self):
         """Zone map -> fortress icon -> info popup -> 袭击 -> fortress page. Each step is
         retried: taps on the map are sometimes dropped by the emulator."""
         if single_find("ZFortressTitle"):
-            if self.fortress_title is None:     # first sight of the page this run: it may be scrolled
-                self.scroll_to_top()
+            if self.fortress_title is None:     # first sight of the page this run
+                self.settle_fresh_page()
             return True
         if not self.on_map():
             self.close_popup()
@@ -689,7 +725,8 @@ class FortressFight(ZoneExplore):
                     log("No 袭击 on the popup, using 前往")
                     self.click_button("ZGo", 2.5, force=True)
             if self.wait_for("ZFortressTitle", 8):      # the page may take a few seconds to load
-                self.page_y, self.fortress_title, self.page_scanned = 0.0, None, 0.0   # fresh page, at the top
+                self.fortress_title = None
+                self.settle_fresh_page()
                 return True
             log(f"Fortress page not seen after the popup (attempt {attempt + 1})")
             self.close_popup()
@@ -742,7 +779,7 @@ class FortressFight(ZoneExplore):
                 return True
         return False
 
-    def buildings(self, color, gray, title):
+    def buildings(self, color, gray, title, names=None):
         """[(name, x, y, state)] for every building label on screen, top to bottom; state is
         "ready", "dim" (guarded) or "broken" (已损坏 badge, see badge_above). Labels are matched
         below the header only (on the unscrolled page 商店's label sits ~324 px below the
@@ -754,6 +791,8 @@ class FortressFight(ZoneExplore):
         below = gray[y0:]
         found = []
         for key, name in self.BUILDING_LABELS:
+            if names is not None and name not in names:
+                continue
             hits = match_all(below, self.full_template(key), self.BUILDING_LABEL_TH)
             if not hits:
                 continue
@@ -770,7 +809,7 @@ class FortressFight(ZoneExplore):
     def visible_targets(self):
         """(ready building or None, bright guards top to bottom, names of the building labels
         on screen); one capture for all. Buildings whose taps showed no 袭击 recently and guard
-        spots that opened nothing (page coordinates, FAILED_TARGET_TTL) are skipped."""
+        spots (screen position at this scroll step) that opened nothing are skipped."""
         self.invalidate_shot()
         color, gray = self.shot()
         title = self.anchor("ZFortressTitle", gray) or self.fortress_title   # the header does not scroll
@@ -787,132 +826,175 @@ class FortressFight(ZoneExplore):
                          if st == "ready" and n not in self.failed_targets), None)
         cells = self.guard_cells(gray, title)
         r = FORTRESS["spot_radius"]
-        self.tried_spots = [t for t in self.tried_spots if now - t[2] <= FAILED_TARGET_TTL]
-        bright = sorted((c for c in cells if c[2] and not any(abs(c[0] - sx) < r and abs(c[1] + self.page_y - sy) < r
-                                                              for sx, sy, _ in self.tried_spots)),
+        self.tried_spots = [t for t in self.tried_spots if now - t[3] <= FAILED_TARGET_TTL]
+        bright = sorted((c for c in cells if c[2] and not any(st == self.page_step and abs(c[0] - sx) < r and abs(c[1] - sy) < r
+                                                              for st, sx, sy, _ in self.tried_spots)),
                         key=lambda c: (c[1], c[0]))
         log(f"Guards: {len(cells)} cells, {len(bright)} attackable")
         guards = [Target("guard", None, x, y) for x, y, _ in bright]
         return building, guards, {n for n, _, _, _ in blds}
 
     def scroll_fortress(self, up=True):
-        """Scroll the fortress page (it is taller than the screen). Returns False when the page
-        did not move, i.e. the end was reached."""
+        """Scroll the fortress page (it is taller than the screen). True: moved; False: did not
+        move, the end was reached; None: could not scroll (page not there, a dialog that did not
+        close, or the gesture opening a dialog in both columns). The content area is compared
+        before and after the gesture: a measured move is a real scroll; a small change (a glow)
+        or none is the end; a large unmatched change or a darker page gets the one costly
+        template check for a dialog the gesture may have opened (closed, then one more gesture
+        in another column); without a dialog a darker page counts as covered and any other
+        change as the end."""
         from zone_explore import drag as _drag
         title = self.fortress_title or get_center("ZFortressTitle", "Single")
         if title is None:
             return None                         # not on the fortress page (None, not "end")
-        x = title.x + FORTRESS["scroll_x_dx"]
+        self.fortress_title = title             # the header does not scroll
         y0, y1 = title.y + FORTRESS["scroll_y0_dy"], title.y + FORTRESS["scroll_y1_dy"]
         if not up:
             y0, y1 = y1, y0
-        # the page content between the header and the window bottom, for measuring the move
-        self.invalidate_shot()
-        h, w = self.shot()[1].shape
-        region = (max(0, title.x - FORTRESS["grid_half_w"]), title.y + FORTRESS["grid_top_dy"],
-                  min(w / self.sft, title.x + FORTRESS["grid_half_w"]), min(h / self.sft, title.y + FORTRESS["content_bottom_dy"]))
-        before = self.grab_region(region)
-        if before.size == 0:
-            log("Fortress page content area is off screen")
-            return None
-        rx0, ry0 = self.to_real(x, y0)
-        rx1, ry1 = self.to_real(x, y1)
-        if self.dry_run:
-            log(f"[DRY] would scroll the fortress page {'up' if up else 'down'}")
-        _drag(rx0, ry0, rx1, ry1)
-        self.invalidate_shot()
-        time.sleep(0.6)
-        self.wait_still()
-        after = self.grab_region(region)
-        # "did not move" as measure_shift sees it (static_diff), so that the page end is reported
-        # even when a glowing cell changes a few pixels
-        moved = float(np.abs(before.astype(int) - after.astype(int)).mean()) > DRAG_LAYOUT["static_diff"]
-        if moved:
-            shift = self.measure_shift(before, after, 0, y1 - y0)
-            if shift is not None and abs(shift[1]) < 2:
-                moved = False                   # matched at zero: only the lighting changed
-            else:
-                dy = -shift[1] if shift is not None else (y0 - y1)     # content up = page scrolled down
-                if shift is None:
-                    log("  scroll move not measurable, nominal distance assumed")
-                self.page_y = max(0.0, self.page_y + dy)
-        log(f"Fortress page scroll {'up' if up else 'down'}: {'moved' if moved else 'end'} (page at {self.page_y:.0f})")
-        return moved
-
-    def scroll_to_top(self):
-        """Scroll down to the page end; page_y is only reset when the top was really reached."""
-        for _ in range(FORTRESS["max_scrolls"] + 1):
-            moved = self.scroll_fortress(up=False)
-            if moved is None:
-                return False                    # page not there: page_y stays as it was
-            if not moved:
-                self.page_y = 0.0
-                self.page_scanned = 0.0         # the page moved: what was scanned may have changed
+        region = None
+        for attempt, x_dx in enumerate(FORTRESS["scroll_x_dxs"]):
+            if attempt:
+                self.wait_still()               # after a closed dialog: let the page settle
+            self.invalidate_shot()              # a frame of a fade still running must not be `before`
+            gray = self.shot()[1]
+            if region is None:                  # the content between the header and 停机坪
+                h, w = gray.shape
+                region = (max(0, title.x - FORTRESS["grid_half_w"]), title.y + FORTRESS["grid_top_dy"],
+                          min(w / self.sft, title.x + FORTRESS["grid_half_w"]),
+                          min(h / self.sft, title.y + FORTRESS["content_bottom_dy"]))
+            before = self.grab_region(region)
+            if before.size == 0:
+                log("Fortress page content area is off screen")
+                return None
+            if self.dry_run:
+                log(f"[DRY] scrolling the fortress page {'up' if up else 'down'} (navigation)")
+            rx0, ry0 = self.to_real(title.x + x_dx, y0)
+            rx1, ry1 = self.to_real(title.x + x_dx, y1)
+            _drag(rx0, ry0, rx1, ry1, press=FORTRESS["press"])
+            self.invalidate_shot()
+            time.sleep(0.6)
+            self.wait_still()
+            after = self.grab_region(region)
+            diff = self.frame_diff(before, after)
+            shift = self.measure_shift(before, after, 0, y1 - y0) if diff > DRAG_LAYOUT["static_diff"] else None
+            # content moves up (dy < 0) for an up-scroll, down for a down-scroll; a move the other
+            # way is the spring-back of an overscroll
+            measured = shift is not None and abs(shift[1]) >= 2 and (shift[1] < 0) == up
+            moved = measured and abs(shift[1]) >= FORTRESS["min_step"]
+            if measured and not moved:          # a short move (the last bit before the end): look, no step
+                log(f"Fortress page scroll {'up' if up else 'down'}: moved {abs(shift[1]):.0f} px only (step kept)")
                 return True
+            if not moved:
+                # no measured scroll. A small change (a glow) is the end; a big one or a darker
+                # page (a dialog dims the page evenly, which the strip match does not see, and
+                # a popup may cover only a corner) gets the one costly template check
+                dimmed = float(after.mean()) < float(before.mean()) * FORTRESS["dim_ratio"]
+                if not dimmed and diff <= FORTRESS["move_diff"]:
+                    break
+                k = self.seen(*self.FORTRESS_DIALOGS)
+                if k is not None:
+                    log(f"Fortress scroll gesture opened a dialog ({k}); closing it (column {attempt + 1})")
+                    if not self.clear_fortress_dialogs(k):
+                        log("The dialog did not close")
+                        return None
+                    continue
+                if dimmed:                      # darker and no known dialog: something unknown on top?
+                    log("Fortress page got dark after the scroll gesture; closing what can be closed")
+                    self.save_debug("scroll_dark")
+                    self.clear_fortress_dialogs()
+                    break                       # treated as the end; the next look decides
+                # matched in place / spring-back, or a change the strip match could not place: no
+                # evidence of a scroll (an animation, a cell cleared)
+                log("Fortress page changed without a measurable scroll; treated as the end")
+                break
+            self.page_step = max(0, self.page_step + (1 if up else -1))
+            log(f"Fortress page scroll {'up' if up else 'down'}: moved (step {self.page_step})")
+            return True
+        else:
+            log("Fortress scroll gesture opened a dialog in both columns; the page did not move")
+            return None
+        log(f"Fortress page scroll {'up' if up else 'down'}: end")
         return False
 
-    def pick_target(self, current_first=False):
-        """A ready building anywhere on the page (scanned top to bottom), otherwise the first
-        bright guard seen on the way, after scrolling back to its screen and locating it again
-        (the scroll is not exact). The scan stops early once the bottom buildings have been
-        seen and a guard is in hand. `current_first` takes what the current screen offers
-        before scanning: a ready building, or a guard when the page was already scanned since
-        it was opened. Leaves the page at the top when nothing is attackable."""
-        first = None
-        if current_first:
-            first = self.visible_targets()
-            if first[0] is not None:
-                return first[0]
-            if first[1] and time.time() - self.page_scanned < FORTRESS["scan_valid"]:
-                return first[1][0]
-        if self.page_y > 0:                     # left mid-way by an earlier pick
-            self.scroll_to_top()
-            first = None
-        guard, steps, seen_labels = None, 0, set()
-        for i in range(FORTRESS["max_scrolls"] + 1):
-            building, guards, names = first if (i == 0 and first is not None) else self.visible_targets()
-            seen_labels |= names
-            if building is not None:
-                return building
-            if guards and guard is None:
-                guard = (i, guards[0], self.page_y)
-            if guard is not None and seen_labels >= set(FORTRESS["bottom_labels"]):
-                steps = i                       # the last buildings seen, none ready, a guard in hand
-                self.page_scanned = time.time()
-                break
-            if i == FORTRESS["max_scrolls"] or not self.scroll_fortress(up=True):
-                steps = i
-                self.page_scanned = time.time()
-                break
-        if guard is None:
-            if steps:
-                self.scroll_to_top()
-            return None
-        step, g, guard_page_y = guard
-        for _ in range(steps - step):           # straight back to the guard's screen
-            self.scroll_fortress(up=False)
-        if steps != step:                       # scrolled: locate the guard again
-            # look; wait once when the page should be right (animation); then correct one step
-            # towards where the guard was seen, then two steps the other way (one undoes the
-            # first fix), looking again after each move
-            toward = self.page_y < guard_page_y
-            fixes = ([None] if abs(self.page_y - guard_page_y) < FORTRESS["relocate_slack"] else []) + [toward, not toward, not toward]
-            for attempt in range(len(fixes) + 1):
-                _, guards, _ = self.visible_targets()
-                g = guards[0] if guards else None
-                if g is not None or attempt == len(fixes):
-                    break
-                log(f"Guard not found again after scrolling back (attempt {attempt + 1}); page at {self.page_y:.0f}, seen at {guard_page_y:.0f}")
-                if fixes[attempt] is None:
-                    self.wait_still()
-                else:
-                    self.scroll_fortress(up=fixes[attempt])
-            if g is None:
-                self.save_debug("guard_lost")
-                self.scroll_to_top()
-        return g
+    def settle_fresh_page(self):
+        """A fortress page just opened or first seen: the game may restore the last scroll
+        position, so the page is brought to the top unless its top layout already shows."""
+        self.wait_still()                       # the page may still be loading
+        at_top = self.page_at_top()
+        if not at_top:                          # the labels draw after the header: look once more
+            time.sleep(1.0)
+            at_top = self.page_at_top()
+        if at_top:
+            self.page_step = 0
+        elif self.scroll_to_top() is None:
+            log("Fortress page could not be brought to the top; its upper part may be missed this pass")
+            self.page_step, self.tried_spots = 0, []    # a re-opened page: the old position means nothing
 
-    MODAL_KEYS = ("ZBuyPrompt", "ZContinueHint", "ZEstimateLabel", "ZCancel")   # the tap went nowhere else
+    def page_at_top(self):
+        """The unscrolled page: 商店's label at its place below the title (a restored scroll of
+        a hundred px still shows the label, lower)."""
+        self.invalidate_shot()
+        color, gray = self.shot()
+        title = self.anchor("ZFortressTitle", gray)
+        if title is None:
+            return False
+        self.fortress_title = title
+        dy, tol = FORTRESS["shop_label_dy"]
+        tap_dy = FORTRESS["building_tap_dy"]
+        return any(abs(y + tap_dy - title.y - dy) <= tol
+                   for n, _, y, _ in self.buildings(color, gray, title, names=("商店",)))
+
+    def scroll_to_top(self):
+        """Scroll down until the page stops moving. The number of moves (0: it was at the top
+        already), or None when the page is not there / cannot be scrolled."""
+        for n in range(FORTRESS["max_scrolls"] + 1):
+            moved = self.scroll_fortress(up=False)
+            if moved is None:
+                return None                     # the page did not move: its position is still known
+            if not moved:
+                self.page_step = 0
+                return n
+        self.page_step, self.tried_spots = 0, []    # position unknown: the remembered spots mean nothing
+        return None
+
+    def pick_target(self):
+        """What to attack on the screen in front: a ready building, otherwise the first bright
+        guard; the page is scrolled only when the screen offers nothing: down to the end from
+        here, then from the top when the page had been scrolled. The page is left where the
+        search ended."""
+        above = self.page_step                  # screens above the starting point
+        t, stuck = self.scan_down()
+        if t is not None or stuck or not above:
+            if stuck:
+                log("Fortress page could not be scrolled; giving up this pass")
+            return t
+        if self.scroll_to_top() is None:
+            return None
+        t, _ = self.scan_down(screens=above)
+        return t
+
+    def scan_down(self, screens=None):
+        """Look at the screen in front, then scroll up the content and look again, until a
+        target shows, the page ends, `screens` screens were looked at or the scroll fails.
+        Returns (target or None, stuck): stuck when the page could not be scrolled."""
+        last = FORTRESS["max_scrolls"] if screens is None else min(screens, FORTRESS["max_scrolls"] + 1) - 1
+        for i in range(last + 1):
+            t = self.screen_target()
+            if t is not None:
+                return t, False
+            if i == last:
+                break
+            r = self.scroll_fortress(up=True)
+            if not r:
+                return None, r is None
+        return None, False
+
+    def screen_target(self):
+        """A ready building on the screen in front, else its first bright guard, else None."""
+        building, guards, _ = self.visible_targets()
+        if building is not None:
+            return building
+        return guards[0] if guards else None
 
     def tap_until(self, x, y, what, taps, keys, want="ZGuardAttack", timeout=None):
         """Tap (x, y) until one of `keys` shows (precedence in their order), at most `taps`
@@ -944,9 +1026,8 @@ class FortressFight(ZoneExplore):
 
     # what a tap on the fortress page may leave on top (the fleet panel is a map thing); the
     # guard popup's 袭击 ahead of the close hint here
-    FORTRESS_DIALOGS = ("ZBuyPrompt", "ZContinueHint", "ZEstimateLabel", "ZCancel", "ZGuardAttack") + tuple(
-        k for k in ZoneExplore.DIALOGS if k not in ("ZBuyPrompt", "ZContinueHint", "ZEstimateLabel", "ZCancel",
-                                                    "ZGuardAttack", "ZFleetSpeed"))
+    FORTRESS_DIALOGS = ZoneExplore.MODAL_KEYS + ("ZGuardAttack",) + tuple(
+        k for k in ZoneExplore.DIALOGS if k not in ZoneExplore.MODAL_KEYS + ("ZGuardAttack", "ZFleetSpeed"))
 
     def clear_fortress_dialogs(self, on_top=None, passes=3):
         """Dismiss what lies over the fortress page (purchase prompt, 点击任意处继续, estimate
@@ -1005,7 +1086,7 @@ class FortressFight(ZoneExplore):
             self.failed_targets[target.name] = time.time()
         else:
             log(f"This guard opens no 袭击; skipped for {FAILED_TARGET_TTL // 60} min")
-            self.tried_spots.append((target.x, target.y + self.page_y, time.time()))
+            self.tried_spots.append((self.page_step, target.x, target.y, time.time()))
         return "no_attack"
 
     def pick_dispatch_card(self, index):
@@ -1026,6 +1107,7 @@ class FortressFight(ZoneExplore):
         target = self.pick_target()
         if target is None:
             log("Nothing attackable on the fortress page")
+            self.leave_fortress()
             return False
         for _ in range(5):
             log(f"Attack {target.label} at ({target.x:.0f},{target.y:.0f}) with fleet {index}")
@@ -1034,11 +1116,11 @@ class FortressFight(ZoneExplore):
                 self.leave_fortress()                   # back to the map with the "<" button
                 return True
             if result in ("retry", "no_attack"):
-                # the page may have been left or re-opened at the top: locate a target afresh
-                # (a target that opened no 袭击 is already on the skip lists)
+                # the page may have been left or re-opened: locate a target afresh, on the screen
+                # in front first (a target that opened no 袭击 is already on the skip lists)
                 if not self.open_fortress():
                     break
-                target = self.pick_target(current_first=True)
+                target = self.pick_target()     # the screen in front first
                 if target is None:
                     break
                 continue
@@ -1054,7 +1136,7 @@ class FortressFight(ZoneExplore):
             self.clear_fortress_dialogs()
             if not self.open_fortress():                # returns at once when the page is in front
                 break
-            target = self.pick_target(current_first=True)    # the page was scanned moments ago
+            target = self.pick_target()
             if target is None:
                 break
             log("Actions bought -> selecting again")
@@ -1070,26 +1152,25 @@ class FortressFight(ZoneExplore):
         if picked != "raided":
             return picked
         for _ in range(12):
-            if single_find("ZBuyPrompt"):
+            k = self.seen("ZBuyPrompt", "ZEstimateLabel", "ZDispatchTitle", "ZContinueHint", fresh=True)
+            if k == "ZBuyPrompt":
                 return "buy"
-            if single_find("ZEstimateLabel"):
+            if k == "ZEstimateLabel":
                 if self.dry_run:
                     log("[DRY] estimate dialog reached -> would press 袭击; cancelling")
                     self.press("ZCancel", "取消 (dry run)", gone="ZEstimateLabel")
                     return "cancelled"
                 if not self.press("ZAttack", "袭击 (estimate)", gone="ZEstimateLabel"):   # estimates do not matter
-                    return "buy" if single_find("ZBuyPrompt") else "failed"
+                    return "buy" if self.seen("ZBuyPrompt", fresh=True) else "failed"
                 # the action is charged here: give a purchase prompt a moment to show up
-                for _ in range(6):
-                    if single_find("ZBuyPrompt"):
-                        return "buy"
-                    time.sleep(0.5)
+                if self.wait_seen(("ZBuyPrompt",), 6) is not None:
+                    return "buy"
                 log("Attack launched")
                 return "launched"
-            if single_find("ZDispatchTitle"):
+            if k == "ZDispatchTitle":
                 self.pick_dispatch_card(index)
                 continue
-            if single_find("ZContinueHint"):
+            if k == "ZContinueHint":
                 self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
                 continue
             time.sleep(1)
@@ -1158,6 +1239,46 @@ class FortressFight(ZoneExplore):
         log("Start the program on the zone map or on the game main screen")
         return False
 
+    def pause(self, msg):
+        """Log `msg` and wait POLL seconds before the next pass; False in a dry run (one pass)."""
+        log(msg)
+        if self.dry_run:
+            return False
+        time.sleep(POLL)
+        return True
+
+    def artifact_hopeless(self):
+        """残骸本源 failed on ARTIFACT_FLEETS_MAX different fleets: it is probably not in the
+        artifact list at all; the run stops for a check by hand."""
+        if len(self.artifact_bad) < ARTIFACT_FLEETS_MAX:
+            return False
+        log(f"残骸本源 could not be set on fleets {sorted(self.artifact_bad)}: is it in the artifact list at all? "
+            "Stopping; check by hand")
+        return True
+
+    def abandon_swap(self):
+        """A swap that could not be finished in SWAP_FINISH_TRIES passes: the gear must not
+        stay loose. Whoever holds it now (the target, when 一键配队 worked) becomes the holder,
+        else 一键配队 on the original holder takes the gear back; the fleets to repair wait
+        until the owner is known (一键配队 during their repair would take loose gear). The new
+        holder then gets one check swap (holder == target: 一键配队, loadout, 残骸本源) before
+        it attacks; a fleet whose 残骸本源 step failed is never attacked with."""
+        sw, self.swap = self.swap, None
+        log(f"Giving up on the gear swap to fleet {sw['target']} after {SWAP_FINISH_TRIES} passes")
+        self.deferred_repair |= sw["to_repair"]
+        if sw.get("artifact_failed"):
+            self.artifact_bad.add(sw["target"])
+        found = self.find_gear_holder()
+        if found is None and not self.lookup_unreadable and sw["holder"] != sw["target"]:
+            # the gear is loose (or split): 一键配队 on the original holder takes what is loose;
+            # the next lookup says whether that made it the holder again
+            log(f"Putting the gear back on fleet {sw['holder']}: {'done' if self.auto_equip(sw['holder']) else 'failed'}")
+            found = self.find_gear_holder()
+        self.close_fleet_page()
+        self.holder = found
+        if found is not None and sw["holder"] != sw["target"] and found not in self.artifact_bad:
+            self.swap = {"holder": found, "target": found, "to_repair": set(), "unequipped": True, "tries": 0}
+
     def run(self, monitor=False):
         if monitor:
             self.wait_for_dice_run()
@@ -1167,15 +1288,48 @@ class FortressFight(ZoneExplore):
         while True:
             if not self.on_map():
                 if not self.close_popup() and not self.enter_map_from_main():
-                    log("Not on the zone map and no known page to leave; waiting")
                     self.save_debug("unknown_page")
-                    if self.dry_run:
+                    if not self.pause("Not on the zone map and no known page to leave; waiting"):
                         return
-                    time.sleep(POLL)
                     continue
             if not calibrated and self.on_map():
                 calibrated = self.calibrate_scale()   # needs the map anchors; once per run
             ships = self.scan_ships()
+            if self.swap is not None:           # first: an interrupted swap, before anything repairs
+                self.swap["tries"] += 1         # (一键配队 on the stripped fleet would take the loose gear back)
+                if self.finish_swap():
+                    self.swap_fails = 0
+                    ships = self.scan_ships()
+                elif self.swap["tries"] >= SWAP_FINISH_TRIES:
+                    self.abandon_swap()
+                    if self.artifact_hopeless():
+                        return
+                    if not self.pause("Swap abandoned; the next pass checks the gear's owner first"):
+                        return
+                    continue                    # (the check swap, or the holder lookup, comes first)
+                elif not self.pause(f"Gear swap to fleet {self.swap['target']} unfinished; resumed in {POLL} s"):
+                    return
+                else:
+                    continue
+            if self.holder is None:
+                # every start looks for the gear afresh (it may have been moved by hand); inside
+                # the loop the holder is remembered and only verified when swapping
+                self.holder = self.find_gear_holder()
+                self.close_fleet_page()
+                log(f"Gear holder: fleet {self.holder}; map page back: {self.on_map()}")
+                ships = self.scan_ships()           # the earlier scan may have seen the dimmed bar
+            if self.holder is None:
+                self.holder_misses += 1
+                if self.dry_run or self.holder_misses >= HOLDER_LOOKUP_TRIES:
+                    log(f"Could not tell which fleet has the best gear after {self.holder_misses} looks; "
+                        "check the standard loadout screenshot (pages/boss/loadout_standard_user.png)")
+                    return
+                self.pause(f"Could not tell which fleet has the best gear; looking again in {POLL} s")
+                continue
+            self.holder_misses = 0
+            if self.deferred_repair:            # (a full-hp fleet is dropped by the repair loop itself)
+                self.pending_repair |= self.deferred_repair
+                self.deferred_repair = set()
             if self.pending_repair:
                 opened = False
                 for i in sorted(self.pending_repair):
@@ -1192,16 +1346,6 @@ class FortressFight(ZoneExplore):
                 if opened:
                     self.close_fleet_page()
                     ships = self.scan_ships()
-            if self.holder is None:
-                # every start looks for the gear afresh (it may have been moved by hand); inside
-                # the loop the holder is remembered and only verified when swapping
-                self.holder = self.find_gear_holder()
-                self.close_fleet_page()
-                log(f"Gear holder: fleet {self.holder}; map page back: {self.on_map()}")
-                ships = self.scan_ships()           # the earlier scan may have seen the dimmed bar
-            if self.holder is None:
-                log("Could not tell which fleet has the best gear")
-                return
             if not self.on_map():
                 self.close_fleet_page()
                 ships = self.scan_ships()
@@ -1209,36 +1353,32 @@ class FortressFight(ZoneExplore):
             if not h.get("idle"):
                 # the gear is on a fleet that is still out (sailing / fighting / returning):
                 # nothing can be swapped until it is back
-                log(f"Fleet {self.holder} (best gear) is {h.get('status', 'unknown')}; waiting for it to return")
-                if self.dry_run:
+                if not self.pause(f"Fleet {self.holder} (best gear) is {h.get('status', 'unknown')}; waiting for it to return"):
                     return
-                time.sleep(POLL)
                 continue
-            if h.get("hp") is not None and h["hp"] > HOLDER_OK_HP:
+            if h.get("hp") is not None and h["hp"] > HOLDER_OK_HP and self.holder not in self.artifact_bad:
                 log(f"Fleet {self.holder} still has {h['hp']}% hp: attacking again without a gear swap")
                 target = self.holder
             else:
                 fresh = [i for i, s in ships.items()
-                         if s["idle"] and s["hp"] == FULL_HP and i != self.holder]
+                         if s["idle"] and s["hp"] == FULL_HP and i != self.holder and i not in self.artifact_bad]
                 if not fresh:
-                    log("No idle fleet at 100% hp; waiting")
-                    if self.dry_run:
+                    if not self.pause("No idle fleet at 100% hp; waiting"):
                         return
-                    time.sleep(POLL)
                     continue
                 target = fresh[0]
-                if not self.swap_gear(self.holder, target):
-                    log("Gear swap failed")
-                    if self.dry_run:
+                if not self.swap_gear(self.holder, target, ships):
+                    if self.swap is None:       # failed before the swap started: the holder's page/tab
+                        self.swap_fails += 1    # (a started swap is resumed by the swap block)
+                    if self.swap_fails >= SWAP_FINISH_TRIES:
+                        self.holder, self.swap_fails = None, 0
+                    if not self.pause("Gear swap failed"):
                         return
-                    time.sleep(POLL)
                     continue
-                self.holder = target
-                self.save_state(holder=target)
+                self.swap_fails = 0
             if not self.attack_with(target):
-                if self.dry_run:
+                if not self.pause("Attack not launched; next pass"):
                     return
-                time.sleep(POLL)
                 continue
             if self.dry_run:
                 return

@@ -248,7 +248,7 @@ FACTORY_LAYOUT = {"slots": 5, "dx0": -47, "spacing": 80, "dy": 381, "free_plus_d
 # the selected tab is drawn on a bright background: a band tab_sel_dy below the title averages
 # ~115 there, the other tabs ~35
 FLEET_PAGE_LAYOUT = {"tab_dx0": -151, "tab_spacing": 76, "tab_dy": 66, "tab_sel_dy": 78, "tab_sel_half_w": 15,
-                     "tab_sel_min": 75, "tab_retries": 3}
+                     "tab_sel_min": 75, "tab_retries": 3, "dim_retries": 2}
 
 # Boosting a sailing fleet: click its rocket icon in the top bar (icon_dy above the status text;
 # cross-zone fleets sometimes need several clicks) -> panel with "加速" -> dialog with one row per
@@ -340,13 +340,6 @@ def _code_version():
         return "unknown"
 
 
-class _PageCovered(Exception):
-    """我的舰队 is dimmed by a dialog on top: no tab reads bright."""
-    def __init__(self, bright):
-        super().__init__("page covered")
-        self.bright = {k: round(v) for k, v in bright.items()}
-
-
 class ZoneExplore:
     def __init__(self, dry_run=False):
         self.dry_run = dry_run
@@ -389,11 +382,10 @@ class ZoneExplore:
     def shot(self):
         """(color RGB, gray) of the screen, reused for SHOT_TTL seconds so that the detectors of
         one stop (page check, frame lines, resources, gesture) share one capture."""
-        now = time.time()
-        if self._shot is None or now - self._shot_time > SHOT_TTL:
+        if self._shot is None or time.time() - self._shot_time > SHOT_TTL:
             color = np.array(pyautogui.screenshot())
             self._shot = (color, cv2.cvtColor(color, cv2.COLOR_RGB2GRAY))
-            self._shot_time = now
+            self._shot_time = time.time()       # stamped after the capture (it takes ~0.35 s)
         return self._shot
 
     def invalidate_shot(self):
@@ -414,6 +406,11 @@ class ZoneExplore:
             gs = self.shot()[1]
         return next((k for k in keys if self.visible(k, gs, th)), None)
 
+    @staticmethod
+    def frame_diff(a, b):
+        """Mean absolute difference of two gray frames of the same size."""
+        return float(np.abs(a.astype(int) - b.astype(int)).mean())
+
     def wait_still(self, timeout=2.5):
         """Block until two captures 0.25 s apart look the same: the map keeps gliding for a
         moment after a drag, and a frame taken mid-glide shows icons at the wrong place."""
@@ -424,7 +421,7 @@ class ZoneExplore:
             time.sleep(0.25)
             self.invalidate_shot()
             cur = self.shot()[1]
-            if float(np.abs(prev.astype(int) - cur.astype(int)).mean()) < 1.5:
+            if self.frame_diff(prev, cur) < 1.5:
                 return True
             prev = cur
         return False
@@ -630,11 +627,12 @@ class ZoneExplore:
                 best = (std, x, y)
         return Point(best[1], best[2])
 
-    # modal dialogs first: they sit over popups that template matching still sees through the
-    # dimming. The close hint before 袭击: on the map the fortress icon's popup carries both and
-    # closes with a tap under its hint.
-    DIALOGS = ("ZBuyPrompt", "ZContinueHint", "ZEstimateLabel", "ZCancel", "ZCloseHint", "ZBackArrow",
-               "ZFleetSpeed", "ZGo", "ZDispatchTitle", "ZGuardAttack")
+    # modal dialogs that take a tap for themselves; checked first: they sit over popups that
+    # template matching still sees through the dimming
+    MODAL_KEYS = ("ZBuyPrompt", "ZContinueHint", "ZEstimateLabel", "ZCancel")
+    # the close hint before 袭击: on the map the fortress icon's popup carries both and closes
+    # with a tap under its hint
+    DIALOGS = MODAL_KEYS + ("ZCloseHint", "ZBackArrow", "ZFleetSpeed", "ZGo", "ZDispatchTitle", "ZGuardAttack")
 
     def blank_spot(self):
         """Where to tap to close a popup that has no button of its own."""
@@ -824,19 +822,19 @@ class ZoneExplore:
             # plain grid in the overlap strip: decide between "did not move" and "moved as
             # asked" by comparing the whole area aligned both ways. An area that is itself
             # plain grid looks the same after any move, so "did not move" needs structure.
-            diff0 = float(np.abs(before.astype(int) - after.astype(int)).mean())
+            diff0 = self.frame_diff(before, after)
             if diff0 < DRAG_LAYOUT["static_diff"]:
                 return (0.0, 0.0) if float(before.std()) >= DRAG_LAYOUT["area_min_std"] else None
             moved = after[y1 + py:y2 + py, x1 + px:x2 + px] if 0 <= y1 + py and 0 <= x1 + px else None
             if moved is not None and moved.shape == strip.shape:
-                diff1 = float(np.abs(strip.astype(int) - moved.astype(int)).mean())
+                diff1 = self.frame_diff(strip, moved)
                 if diff1 < diff0 * 0.5:
                     return float(dx), float(dy)
             return None
         res = cv2.matchTemplate(after, strip, cv2.TM_CCOEFF_NORMED)
         _, peak, _, _ = cv2.minMaxLoc(res)
         if peak < DRAG_LAYOUT["patch_th"]:
-            diff = float(np.abs(before.astype(int) - after.astype(int)).mean())
+            diff = self.frame_diff(before, after)
             if diff < DRAG_LAYOUT["static_diff"] and float(before.std()) >= DRAG_LAYOUT["area_min_std"]:
                 return 0.0, 0.0
             return None
@@ -1631,9 +1629,10 @@ class ZoneExplore:
         self.invalidate_shot()
         return times
 
-    def band(self, cx, cy, half_w, half_h):
-        """Gray crop around a reference-frame point from the current shot (may be empty)."""
-        gray = self.shot()[1]
+    def band(self, cx, cy, half_w, half_h, gray=None):
+        """Gray crop around a reference-frame point from `gray` or the current shot (may be empty)."""
+        if gray is None:
+            gray = self.shot()[1]
         x1, x2 = int((cx - half_w) * self.sft), int((cx + half_w) * self.sft)
         y1, y2 = int((cy - half_h) * self.sft), int((cy + half_h) * self.sft)
         return gray[max(y1, 0):max(y2, 0), max(x1, 0):max(x2, 0)]
@@ -1650,42 +1649,73 @@ class ZoneExplore:
             log(f"  {what} not shown after tap {attempt + 1}")
         return False
 
-    def fleet_tab_brightness(self, title):
-        """Mean brightness under each tab label of 我的舰队 (index -> value, same shot)."""
+    def fleet_tab_brightness(self, title, gray):
+        """Mean brightness under each tab label of 我的舰队 (index -> value) on the capture
+        `gray` (the one `title` was located on)."""
         L = FLEET_PAGE_LAYOUT
-        self.invalidate_shot()
         out = {}
         for i in range(1, SHIP_LAYOUT["slots"] + 1):
             b = self.band(title.x + L["tab_dx0"] + (i - 1) * L["tab_spacing"], title.y + L["tab_sel_dy"],
-                          L["tab_sel_half_w"], 2)
-            out[i] = float(b.mean()) if b.size else 0.0
+                          L["tab_sel_half_w"], 2, gray)
+            out[i] = round(float(b.mean())) if b.size else 0
         return out
+
+    def read_tabs(self, looks):
+        """(title, brightness per tab) of 我的舰队 once the page is bright, looking up to `looks`
+        times a second apart (a fade, the panel sliding in); still dim after that, a purchase
+        prompt or 点击任意处继续 on top is closed and the page is looked at once more. (None,
+        None) when the page is not there or stays dim."""
+        L = FLEET_PAGE_LAYOUT
+        looks = max(1, looks)
+
+        def look():
+            self.invalidate_shot()
+            gray = self.shot()[1]               # one capture per look
+            title = self.anchor("ZMyFleet", gray)
+            bright = self.fleet_tab_brightness(title, gray) if title is not None else None
+            return title, bright, gray
+
+        for i in range(looks):
+            title, bright, gray = look()        # no title yet: the panel may still be sliding in
+            if title is not None and max(bright.values()) >= L["tab_sel_min"]:
+                return title, bright
+            if i < looks - 1:
+                time.sleep(1.0)
+        if title is None:
+            log("我的舰队 title not found")
+            return None, None
+        # a prompt that is safe to close (never 取消: that could discard a confirmation the flow
+        # is about to give)
+        k = self.seen("ZBuyPrompt", "ZContinueHint", gs=gray)
+        log(f"我的舰队 stays dimmed (tab brightness {bright}); dialog on top: {k}")
+        if k is None:
+            return None, None
+        self.dismiss(k, gray)
+        time.sleep(1.0)                         # the overlay fades
+        title, bright, _ = look()
+        if title is None or max(bright.values()) < L["tab_sel_min"]:
+            return None, None
+        return title, bright
 
     def select_tab(self, index):
         """Fleet tab on 我的舰队: tapped only when another tab is shown, verified afterwards (a
         dropped tap is retried). Confirming an edit sub-page returns to the same tab, so going
         through the gear slots of one fleet costs no tab taps. Exactly one tab is bright on the
-        page itself; none is when a dialog dims it, and then nothing is tapped."""
-        self.invalidate_shot()
-        title = self.anchor("ZMyFleet")
-        if title is None:
-            return False
+        page itself; none is when a dialog dims it (see read_tabs)."""
         L = FLEET_PAGE_LAYOUT
-
-        def shown():
-            bright = self.fleet_tab_brightness(title)
-            if max(bright.values()) < L["tab_sel_min"]:
-                raise _PageCovered(bright)
-            return bright[index] >= L["tab_sel_min"]
-
-        try:
-            if self.select_until(f"fleet tab {index}", shown,
-                                 lambda: self.burst(title.x + L["tab_dx0"] + (index - 1) * L["tab_spacing"],
-                                                    title.y + L["tab_dy"]),
-                                 L["tab_retries"], settle=1.0):
+        title, bright = self.read_tabs(L["dim_retries"])
+        for tap in range(L["tab_retries"] + 1):
+            if title is None:
+                log(f"我的舰队 is dimmed or gone; giving up tab {index}")
+                break
+            if bright[index] >= L["tab_sel_min"]:
                 return True
-        except _PageCovered as e:
-            log(f"我的舰队 is dimmed by something on top (tab brightness {e.bright}); not tapping tab {index}")
+            if tap == L["tab_retries"]:
+                log(f"  fleet tab {index} not shown after {tap} taps")
+                break
+            self.burst(title.x + L["tab_dx0"] + (index - 1) * L["tab_spacing"], title.y + L["tab_dy"])
+            time.sleep(1.0)
+            title, bright = self.read_tabs(L["dim_retries"])    # dim after a tap: a transient, or a dialog it opened
         self.save_debug(f"fleet_tab_{index}")
         return False
 

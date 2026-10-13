@@ -20,7 +20,6 @@ import os
 import time
 
 import cv2
-import numpy as np
 
 from click import move_to
 from common import single_find, get_center, get_all
@@ -130,7 +129,7 @@ class FestivalSit(ZoneExplore):
         time.sleep(FEST["settle"])
         self.wait_still()
         after = self.shot()[1]
-        return float(np.abs(before.astype(int) - after.astype(int)).mean()) > 3.0
+        return self.frame_diff(before, after) > 3.0
 
     def row_free_seat(self, label):
         """First 占据 inside this row's band (the row is a carousel: cards slide left)."""
@@ -162,7 +161,7 @@ class FestivalSit(ZoneExplore):
         time.sleep(FEST["settle"])
         self.wait_still()
         after = self.shot()[1][by0:by1]
-        return float(np.abs(before.astype(int) - after.astype(int)).mean()) > 3.0
+        return self.frame_diff(before, after) > 3.0
 
     def take_seat(self, s):
         if self.dry_run:
