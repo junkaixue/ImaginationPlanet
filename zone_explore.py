@@ -57,6 +57,7 @@ RESOURCE_SCORES = {
     "ZFactory2": 100,
     "ZFactory3": 100,
     "ZFactory4": 100,       # blue factory with an ore symbol
+    "ZFactory5": 100,       # fifth kind, template still to be captured (skipped while missing)
     "ZYellowBox": 4,        # golden chest, 4 points
     "ZBigBattle": 3,        # blue big battle, 3 points
     "ZRedBigBattle": 3,     # red big battle with star badge, 3 points
@@ -64,10 +65,10 @@ RESOURCE_SCORES = {
     "ZBox": 3,              # purple box, 3 points
     # "ZRedVehicle": 3,     # red car icon: user reports it is a small target, not worth an action
 }
-FACTORY_KINDS = {"ZFactory1", "ZFactory2", "ZFactory3", "ZFactory4"}
+FACTORY_KINDS = {k for k in RESOURCE_SCORES if k.startswith("ZFactory")}
 # Valuable kinds that may be half hidden under undiscovered map: also match each half of
 # the template (top/bottom/left/right) with a stricter threshold and click the visible half.
-PARTIAL_KINDS = {"ZFactory1", "ZFactory2", "ZFactory3", "ZFactory4", "ZBigBattle", "ZRedBigBattle", "ZYellowBox", "ZYellowBoss"}
+PARTIAL_KINDS = FACTORY_KINDS | {"ZBigBattle", "ZRedBigBattle", "ZYellowBox", "ZYellowBoss"}
 PARTIAL_TH = 0.85
 # Grayscale matching cannot tell icons apart by colour. The 3-point box is PURPLE (bright
 # pixels ~R159 G135 B230); the common teal box (~R125 G227 B208) has the same shape and is
@@ -200,7 +201,7 @@ ZONE_TITLE_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "zone_t
 SURVEY_TTL = 10 * 60                  # seconds a zone's memorized spots stay valid before re-surveying
 # Outer zones are surveyed for these kinds only and without the route-line checks (fast scan);
 # the central zone is surveyed for everything.
-OUTER_KINDS = ("ZFactory1", "ZFactory2", "ZFactory3", "ZFactory4", "ZYellowBox", "ZYellowBoss", "ZBox")
+OUTER_KINDS = FACTORY_KINDS | {"ZYellowBox", "ZYellowBoss", "ZBox"}
 SHOT_TTL = 0.3                        # seconds a screenshot is reused by the detectors of one stop
 DEBUG_SHOT_DIR = None                 # set by --debug-shots: every survey stop saves what the scanner saw
 MIN_IDLE_FOR_OTHER_ZONES = 2          # outer zones are only surveyed with at least this many idle ships
@@ -312,6 +313,19 @@ def _digits_confusable(a, b):
     if len(a) != len(b):
         return False
     return all(x == y or frozenset((x, y)) in OCR_CONFUSIONS for x, y in zip(a, b))
+
+
+def _zone_from_ocr(digits, prefer=()):
+    """The zone name an OCR reading stands for: the unique zone card whose number equals the
+    reading up to the known confusions; candidates in `prefer` (tied learned titles) win.
+    None when the reading fits no zone or several."""
+    if not digits:
+        return None
+    cards = [n for n in ZONE_LAYOUT["cards"] if n != "central" and _digits_confusable(digits, n)]
+    preferred = [n for n in cards if n in prefer]
+    if len(preferred) == 1:
+        return preferred[0]
+    return cards[0] if len(cards) == 1 else None
 
 
 def _code_version():
@@ -1642,19 +1656,18 @@ class ZoneExplore:
             aligned[name] = al
             scores[name] = float(cv2.matchTemplate(al[:, g0:g1], t[:, g0:g1], cv2.TM_CCOEFF_NORMED).max())
         ranked = sorted(scores.items(), key=lambda kv: -kv[1])
-        close = [n for n, s in ranked if s >= ZONE_LAYOUT["digit_match_th"] and ranked[0][1] - s < ZONE_LAYOUT["digit_margin"]]
+        best = ranked[0][1] if ranked else 0.0
+        close = [n for n, s in ranked if best - s < ZONE_LAYOUT["digit_margin"]] if best >= ZONE_LAYOUT["digit_match_th"] else []
         if len(close) == 1:
             return close[0]                     # one learned title clearly matches
-        # no clear learned match (a zone not learned yet, or two learned titles tied): OCR of
-        # the digit glyphs decides; tesseract confuses 3/8, 4/0 and 5/9 on this font, so a
-        # reading that is confusable with exactly one tied candidate picks that candidate
+        # no clear learned match (a zone not learned yet, or learned titles tied): OCR of the
+        # digit glyphs decides, resolved to a real zone name (tesseract confuses 3/8, 4/0 and
+        # 5/9 on this font); among tied learned titles the one OCR agrees with wins
         digits = self.ocr_title_digits(aligned[ranked[0][0]] if ranked else crop)
-        agreeing = [n for n in close if _digits_confusable(digits, n)] if digits else []
-        if len(agreeing) == 1:
-            return agreeing[0]
-        if digits and digits != "00" and not close:
-            return digits                       # a clean reading of an unlearned zone
-        if central_conf >= 0.8:
+        zone = _zone_from_ocr(digits, prefer=close)
+        if zone is not None:
+            return zone
+        if central_conf >= 0.8 and not digits:
             return "central"
         return None
 
@@ -1713,31 +1726,30 @@ class ZoneExplore:
         time.sleep(1)
         self.ensure_zoom()
         seen = self.read_zone()
-        if seen == name:
-            if name not in self.learned_titles():
-                self.learn_title(name)      # recognised by OCR only: keep the title for next time
-            self.zone = name
-            return True
-        if name not in self.learned_titles() and self.title_looks_like(name, seen):
-            self.learn_title(name)          # first visit: verified as far as OCR allows
+        learned = self.title_learned(name)
+        if seen == name or (not learned and seen is None and self.title_looks_like(name)):
+            if not learned:
+                self.learn_title(name)      # first visit (recognised by OCR): keep the title
             self.zone = name
             return True
         log(f"Landed on zone {seen}, expected {name}")
         self.zone = seen
         return False
 
-    def title_looks_like(self, name, seen):
-        """Before learning a title: it must not be a known other zone, and the OCR of the digit
-        glyphs (or their absence for central) must agree with the requested zone."""
-        if seen is not None and seen != name:
-            return False
+    @staticmethod
+    def title_learned(name):
+        return os.path.exists(os.path.join(ZONE_TITLE_DIR, f"{name}.png"))
+
+    def title_looks_like(self, name):
+        """Before learning a title that read_zone could not name: the OCR of the digit glyphs
+        (or their absence for central) must agree with the requested zone."""
         crop = self.title_crop()
         if crop is None:
             return False
         digits = self.ocr_title_digits(crop)
         if name == "central":
             return digits == ""
-        return _digits_confusable(digits, name)
+        return _zone_from_ocr(digits, prefer=[name]) == name
 
     # ------------------------------------------------------------------ survey then dispatch
     def to_map(self, x, y):

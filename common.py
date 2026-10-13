@@ -214,6 +214,7 @@ single_find_map = {
     "ZFactory2": get_image_path("zone/factory2.png"),   # green factory
     "ZFactory3": get_image_path("zone/factory3.png"),   # pink/orange factory
     "ZFactory4": get_image_path("zone/factory4.png"),   # blue factory with an ore symbol (04区)
+    "ZFactory5": get_image_path("zone/factory5.png"),   # fifth factory kind: template not captured yet
     "ZBigBattle": get_image_path("zone/big_battle.png"),
     "ZYellowBoss": get_image_path("zone/yellow_boss.png"),
     "ZBox": get_image_path("zone/box.png"),
