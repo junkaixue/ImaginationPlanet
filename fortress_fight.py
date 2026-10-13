@@ -168,9 +168,20 @@ class FortressFight(ZoneExplore):
     # ------------------------------------------------------------------ fleet page
     EDIT_PAGES = ("ZEditFleetTitle", "ZEditCatTitle", "ZEditGearTitle", "ZEditArtifactTitle")
 
-    def edit_page_open(self):
-        k = next((k for k in self.EDIT_PAGES if single_find(k)), None)
-        if k is None and single_find("ZCloseHint") and not single_find("ZMyFleet") and get_center("ZRepairOk", "Single"):
+    # dialogs that can sit on top of 我的舰队 without dimming its tabs; the slot must not be
+    # re-tapped into them
+    FLEET_DIALOGS = ("ZBuyPrompt", "ZRepairPrompt", "ZContinueHint", "ZCancel")
+
+    def edit_page_open(self, gs=None):
+        """Which edit sub-page is on top, or None. One capture for all the templates."""
+        if gs is None:
+            self.invalidate_shot()
+            gs = self.shot()[1]
+        k = self.seen(*self.EDIT_PAGES, gs=gs)
+        # 确认 is matched at get_center's 0.6: its template comes from the repair dialog and the
+        # artifact pages' button scores lower
+        if (k is None and self.seen("ZCloseHint", gs=gs) and not self.seen("ZMyFleet", gs=gs)
+                and self.seen("ZRepairOk", gs=gs, th=0.6)):
             k = "ZCloseHint"        # an edit page without a learned title (e.g. 编辑高级/顶级神器)
         return k
 
@@ -207,20 +218,24 @@ class FortressFight(ZoneExplore):
     def leave_fortress(self):
         """Fortress page -> zone map through the "<" button at the bottom left."""
         for _ in range(3):
-            if not single_find("ZFortressTitle"):
+            self.invalidate_shot()
+            gs = self.shot()[1]
+            if not self.seen("ZFortressTitle", gs=gs):
                 return True
-            if single_find("ZGuardAttack") or single_find("ZEstimateLabel") or single_find("ZDispatchTitle"):
+            if self.seen("ZGuardAttack", "ZEstimateLabel", "ZDispatchTitle", gs=gs):
                 super().close_popup(2)          # a guard popup / dialog is still on top
             if not self.press("ZFortressBack", "< (leave fortress)", gone="ZFortressTitle"):
                 break
         return self.wait_for("ZExplore", 5)
 
     def open_fleet_page(self):
-        if single_find("ZMyFleet"):
+        self.invalidate_shot()
+        gs = self.shot()[1]
+        if self.seen("ZMyFleet", gs=gs):
             return True
-        if self.edit_page_open():
+        if self.edit_page_open(gs):
             self.confirm_edit("open_fleet_page")
-            if single_find("ZMyFleet"):
+            if self.seen("ZMyFleet", fresh=True):
                 return True
         if not self.on_map():
             log("Not on the map page, closing what is open")
@@ -450,8 +465,11 @@ class FortressFight(ZoneExplore):
 
     def open_slot_page(self, index, dx, dy, what, opened, tries=3, wait=8.0):
         """Tap a slot on fleet `index`'s tab until `opened()` is true (the tap may be dropped or
-        land during a transition); the fleet page is re-opened between tries."""
+        land during a transition). When the fleet page is still showing after a failed tap the
+        slot is simply tapped again; the page is only closed and re-opened when something else
+        is on top."""
         for attempt in range(tries):
+            t0 = time.time()
             if not self.open_fleet_page() or not self.select_tab(index):
                 log(f"{what}: fleet page not available (attempt {attempt + 1})")
                 self.close_popup()
@@ -471,7 +489,12 @@ class FortressFight(ZoneExplore):
                     time.sleep(0.5)          # let the page settle before its anchors are read
                     return True
                 time.sleep(0.5)
-            log(f"{what}: page did not open (attempt {attempt + 1})")
+            # ZMyFleet last: it is also visible under a dialog; an edit page replaces it
+            k = self.seen(*self.EDIT_PAGES, *self.FLEET_DIALOGS, "ZMyFleet", fresh=True)
+            if k == "ZMyFleet":
+                log(f"{what}: page did not open in {time.time() - t0:.0f} s, tapping again (attempt {attempt + 1})")
+                continue
+            log(f"{what}: page did not open in {time.time() - t0:.0f} s; closing what is on top (attempt {attempt + 1})")
             self.close_popup()
         self.save_debug(f"slot_{what}")
         return False
@@ -619,7 +642,7 @@ class FortressFight(ZoneExplore):
             for tap in range(TAP_BURST):
                 self.click(icon.x, icon.y, 1.5, "铸械要塞", force=True)
                 for look in range(2):           # a slow popup must not get a second tap on 前往
-                    opened = next((k for k in ("ZFortressTitle", "ZGuardAttack", "ZGo") if single_find(k)), None)
+                    opened = self.seen("ZFortressTitle", "ZGuardAttack", "ZGo", fresh=True)
                     if opened or look:
                         break
                     time.sleep(1.0)
@@ -632,7 +655,7 @@ class FortressFight(ZoneExplore):
             if opened != "ZFortressTitle":
                 log(f"Fortress popup ({opened}) -> 袭击")
                 if not self.press("ZGuardAttack", "袭击 (fortress popup)", appears="ZFortressTitle") \
-                        and not single_find("ZFortressTitle") and single_find("ZGo"):
+                        and self.seen("ZFortressTitle", "ZGo", fresh=True) == "ZGo":
                     log("No 袭击 on the popup, using 前往")
                     self.click_button("ZGo", 2.5, force=True)
             if self.wait_for("ZFortressTitle", 8):      # the page may take a few seconds to load

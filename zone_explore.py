@@ -43,7 +43,8 @@ import pyautogui
 
 from click import click_at, drag
 from common import (get_scaling_factor, single_find, get_center, get_all, find_all_with_path,
-                    screen_shot, single_find_map, simple_single_find, single_find_with_path)
+                    screen_shot, single_find_map, simple_single_find, single_find_with_path,
+                    get_center_with_path)
 from log_helper import log
 
 Point = namedtuple('Point', ['x', 'y'])
@@ -398,6 +399,21 @@ class ZoneExplore:
     def invalidate_shot(self):
         self._shot_time = 0.0
 
+    def visible(self, key, gs, th=MATCH_TH):
+        """Template `key` matches on the gray capture `gs`."""
+        return single_find_with_path(single_find_map[key], gs, th)
+
+    def seen(self, *keys, fresh=False, gs=None, th=MATCH_TH):
+        """First of `keys` whose template is on one capture (`gs`, or the shared shot, taken anew
+        when `fresh`). A capture costs ~0.35 s, a match ~0.15 s; single_find captures per key.
+        Callers that check more keys afterwards pass the same `gs`, the shared shot expires
+        after SHOT_TTL."""
+        if gs is None:
+            if fresh:
+                self.invalidate_shot()
+            gs = self.shot()[1]
+        return next((k for k in keys if self.visible(k, gs, th)), None)
+
     def wait_still(self, timeout=2.5):
         """Block until two captures 0.25 s apart look the same: the map keeps gliding for a
         moment after a drag, and a frame taken mid-glide shows icons at the wrong place."""
@@ -597,7 +613,7 @@ class ZoneExplore:
         """True only when the map is clear: no dialog, no target popup (前往), no fleet panel.
         Template matching ignores dimming, so the map's own markers stay visible under a popup."""
         gs = self.shot()[1]
-        f = lambda key: single_find_with_path(single_find_map[key], gs, MATCH_TH)
+        f = lambda key: self.visible(key, gs)
         return (f("ZExplore") and not f("ZCloseHint") and not f("ZContinueHint") and not f("ZBuyPrompt")
                 and not f("ZGo") and not f("ZFleetSpeed") and not f("ZDispatchTitle") and not f("ZGuardAttack"))
 
@@ -622,22 +638,26 @@ class ZoneExplore:
     def close_popup(self, tries=6):
         """Get back to the map from any dialog. Clicks for real even in dry runs."""
         for _ in range(tries):
+            self.invalidate_shot()
             if self.on_map():
                 return True
-            if single_find("ZBuyPrompt"):
+            gs = self.shot()[1]
+            k = self.seen("ZBuyPrompt", "ZContinueHint", "ZCancel", "ZCloseHint", "ZBackArrow", "ZFleetSpeed",
+                          "ZGo", "ZDispatchTitle", "ZGuardAttack", gs=gs)
+            if k == "ZBuyPrompt":
                 self.click_button("ZBuyCancel", force=True)
-            elif single_find("ZContinueHint"):
+            elif k == "ZContinueHint":
                 self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
-            elif single_find("ZCancel"):
+            elif k == "ZCancel":
                 self.click_button("ZCancel", force=True)
-            elif single_find("ZCloseHint"):
-                c = get_center("ZCloseHint", "Single")
+            elif k == "ZCloseHint":
+                c = get_center_with_path(single_find_map["ZCloseHint"], gs, MATCH_TH)
                 self.click(c.x, c.y + 30, 1.5, "empty space", force=True)
-            elif single_find("ZBackArrow"):
+            elif k == "ZBackArrow":
                 self.click_button("ZBackArrow", force=True)
-            elif single_find("ZFleetSpeed"):
+            elif k == "ZFleetSpeed":
                 self.close_fleet_panel(self.last_dispatched or 1)
-            elif single_find("ZGo") or single_find("ZDispatchTitle") or single_find("ZGuardAttack"):
+            elif k is not None:             # 前往 popup / dispatch dialog / guard popup
                 p = self.plain_spot()
                 if p is not None:
                     self.click(p.x, p.y, 1.5, "map (close target popup)", force=True)
@@ -1192,7 +1212,7 @@ class ZoneExplore:
         start = time.time()
         while time.time() - start < timeout:
             gs = screen_shot()
-            f = lambda key: single_find_with_path(single_find_map[key], gs, MATCH_TH)
+            f = lambda key: self.visible(key, gs)
             if f("ZEstimateLabel"):
                 return "estimate"
             if f("ZBuyPrompt") or f("ZContinueHint"):
