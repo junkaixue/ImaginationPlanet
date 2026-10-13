@@ -612,19 +612,32 @@ class FortressFight(ZoneExplore):
                 continue
             log(f"铸械要塞 icon at ({icon.x:.0f},{icon.y:.0f})")
             # the icon opens an info popup (位置/坐标/距离/守卫等级) with a 袭击 button; a second
-            # tap is only sent when nothing opened (the popup covers the icon with 前往 etc.)
-            for _ in range(TAP_BURST):
-                self.click(icon.x, icon.y, 2, "铸械要塞", force=True)
-                if single_find("ZGuardAttack") or single_find("ZGo") or single_find("ZFortressTitle"):
+            # tap is only sent when nothing opened (the popup covers the icon with 前往 etc.).
+            # Every template lookup costs ~0.5 s, so the checks are kept to one pass per tap and
+            # a tap that opened nothing is reported instead of waited on.
+            opened = None
+            for tap in range(TAP_BURST):
+                self.click(icon.x, icon.y, 1.5, "铸械要塞", force=True)
+                for look in range(2):           # a slow popup must not get a second tap on 前往
+                    opened = next((k for k in ("ZFortressTitle", "ZGuardAttack", "ZGo") if single_find(k)), None)
+                    if opened or look:
+                        break
+                    time.sleep(1.0)
+                if opened:
                     break
-            if self.wait_for("ZGuardAttack", 5):
-                log("Fortress popup -> 袭击")
-                self.press("ZGuardAttack", "袭击 (fortress popup)", appears="ZFortressTitle")
-            elif single_find("ZGo"):
-                self.click_button("ZGo", 2.5, force=True)
-            if self.wait_for("ZFortressTitle", 8):      # whichever way it opened (a burst tap may
-                return True                             # have hit the popup's 袭击 already)
-            log(f"Fortress page not seen after clicking the icon (attempt {attempt + 1})")
+                log(f"  tap {tap + 1} on the icon opened nothing")
+            if opened is None:
+                log(f"Fortress icon did not respond (attempt {attempt + 1})")
+                continue
+            if opened != "ZFortressTitle":
+                log(f"Fortress popup ({opened}) -> 袭击")
+                if not self.press("ZGuardAttack", "袭击 (fortress popup)", appears="ZFortressTitle") \
+                        and not single_find("ZFortressTitle") and single_find("ZGo"):
+                    log("No 袭击 on the popup, using 前往")
+                    self.click_button("ZGo", 2.5, force=True)
+            if self.wait_for("ZFortressTitle", 8):      # the page may take a few seconds to load
+                return True
+            log(f"Fortress page not seen after the popup (attempt {attempt + 1})")
             self.close_popup()
         self.save_debug("fortress_page_missing")
         return False
