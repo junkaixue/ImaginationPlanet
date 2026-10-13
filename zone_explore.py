@@ -89,6 +89,7 @@ REPAIR_BELOW = 50          # repair an idle ship whose hp% is below this
 # so bought actions are only worth spending on high-value targets.
 ACTION_BUY_ENABLED = True      # buy "星级指令 x5" for 150 coins when free actions are gone
 ACTION_PACK_COINS = 150
+CONTINUE_TAP_DY = 80           # "点击任意处继续": tap this far below the text (the text is not a button)
 ACTION_PACK_SIZE = 5
 MIN_SCORE_FREE_ACTION = 1      # with free actions left, anything in RESOURCE_SCORES is fine
 MIN_SCORE_BOUGHT_ACTION = 1    # user: always buy actions, coins are the only limit
@@ -486,6 +487,31 @@ class ZoneExplore:
         dx, dy = FIXED_UI[name]
         return Point(base.x + dx, base.y + dy)
 
+    def press(self, but, what, gone=None, appears=None, tries=3, settle=0.8, dy=0):
+        """Click a template button after the popup has settled (the popup slides in, so the
+        position found during the animation is stale) and verify the click took: `gone` must
+        disappear or `appears` must show up; otherwise re-locate and click again."""
+        for attempt in range(tries):
+            time.sleep(settle)
+            self.invalidate_shot()
+            c = get_center(but, "Single")
+            if c is None:
+                if (gone and not single_find(gone)) or (appears and single_find(appears)):
+                    return True
+                log(f"{what}: button not found (attempt {attempt + 1})")
+                continue
+            self.click(c.x, c.y + dy, 1.5, what, force=True)
+            for _ in range(6):
+                if (gone and not single_find(gone)) or (appears and single_find(appears)):
+                    return True
+                time.sleep(0.5)
+            log(f"{what}: no effect yet (attempt {attempt + 1})")
+        self.save_debug(f"press_{but}")
+        return False
+
+    def save_debug(self, name):
+        """Hook for subclasses with a debug directory."""
+
     # ------------------------------------------------------------------ helpers
     def click(self, x, y, delay=1.0, what="", force=False):
         """Click in the reference frame. Dry runs only log, except for `force` clicks (closing
@@ -585,7 +611,7 @@ class ZoneExplore:
             if single_find("ZBuyPrompt"):
                 self.click_button("ZBuyCancel", force=True)
             elif single_find("ZContinueHint"):
-                self.click_button("ZContinueHint", force=True)
+                self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
             elif single_find("ZCancel"):
                 self.click_button("ZCancel", force=True)
             elif single_find("ZCloseHint"):
@@ -1172,16 +1198,25 @@ class ZoneExplore:
         return "unknown", False
 
     def handle_buy_prompt(self, allow_buy):
-        """'是否花费150幻想币购买星级指令x5?' -> 确定, then '点击任意处继续'. Returns True if bought."""
+        """'是否花费150幻想币购买星级指令x5?' -> 确定, then '点击任意处继续'. Returns True only when
+        the purchase receipt (the 继续 hint) was seen. Dry runs never spend coins."""
+        if self.dry_run:
+            log("[DRY] action purchase prompt -> cancel")
+            self.press("ZBuyCancel", "取消 (dry run)", gone="ZBuyPrompt")
+            return False
         if not allow_buy or self.packs_bought >= MAX_PACKS_PER_RUN:
             log("Action purchase prompt -> cancel (not allowed for this target)")
-            self.click_button("ZBuyCancel", 1.5)
+            self.press("ZBuyCancel", "取消 (buy actions)", gone="ZBuyPrompt")
             return False
         log(f"Buying {ACTION_PACK_SIZE} actions for {ACTION_PACK_COINS} coins")
-        self.click_button("ZBuyOk", 2)
+        if not self.press("ZBuyOk", "确定 (buy actions)", appears="ZContinueHint"):
+            # the prompt closed without the receipt (e.g. not enough coins): nothing was bought
+            log("No purchase receipt after 确定; treating the purchase as failed")
+            self.close_popup()
+            return False
         self.packs_bought += 1
-        if self.wait_for("ZContinueHint", 6):
-            self.click_button("ZContinueHint", 1.5)
+        # tapping the hint text itself does nothing; tap the empty area below it
+        self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY)
         return True
 
     def dispatch(self, cand, allow_buy=False):
@@ -1305,7 +1340,7 @@ class ZoneExplore:
                     break
                 continue
             if single_find("ZContinueHint"):
-                self.click_button("ZContinueHint", 1.5)
+                self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
                 continue
             if single_find("ZEstimateLabel"):
                 est, win = self.read_estimate()
@@ -1401,7 +1436,7 @@ class ZoneExplore:
                         return False
                     continue
                 if single_find("ZContinueHint"):
-                    self.click_button("ZContinueHint", 1.5)
+                    self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
                     continue
                 if single_find("ZEstimateLabel"):
                     est, win = self.read_estimate()
@@ -1493,7 +1528,7 @@ class ZoneExplore:
             self.click(row.x + BOOST_LAYOUT["use_dx"], row.y + BOOST_LAYOUT["use_dy"], 2, "使用")
             ok = True
             if single_find("ZContinueHint"):
-                self.click_button("ZContinueHint", 1.5)
+                self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
         self.close_popup()
         self.close_fleet_panel(index)
         log("Boost used" if ok else "Boost not used")
@@ -1515,7 +1550,7 @@ class ZoneExplore:
         self.close_popup()
         return ok
 
-    def select_fleet_tab(self, index):
+    def select_tab(self, index):
         title = self.anchor("ZMyFleet")
         if title is None:
             return False
@@ -1523,33 +1558,28 @@ class ZoneExplore:
                    title.y + FLEET_PAGE_LAYOUT["tab_dy"], 1.5, f"fleet tab {index}", force=True)
         return True
 
-    def fleet_repairing(self, index):
-        """True when the open 我的舰队 page shows fleet `index` under repair ("舰队修理中...")."""
-        return (self.select_fleet_tab(index) and self.wait_for("ZMyFleet", 2)
-                and bool(single_find("ZFleetRepairing")))
-
     def confirm_repair(self, index):
         """On 我的舰队: press 修理舰队 on fleet `index`, confirm, and verify that the tab now
         shows "舰队修理中..."; retried, because a dropped tap here leaves the fleet damaged for
         good (only full-hp fleets are ever picked again). Returns True when the repair runs."""
         for attempt in range(3):
-            if not self.select_fleet_tab(index) or not self.wait_for("ZMyFleet", 3):
+            if not self.select_tab(index):
                 log(f"Fleet {index}: 我的舰队 page is not open")
                 return False
             if single_find("ZFleetRepairing"):
                 log(f"Fleet {index} is under repair")
                 return True
-            if not self.click_button("ZRepair", 2, force=True):
-                log(f"Fleet {index}: 修理舰队 button not found (attempt {attempt + 1})")
-            elif self.wait_for("ZRepairPrompt", 6) and not self.click_button("ZRepairOk", 2, force=True):
-                log(f"Fleet {index}: 确认 not found on the repair prompt (attempt {attempt + 1})")
-            time.sleep(2)
-            if self.fleet_repairing(index):
+            if not self.press("ZRepair", f"修理舰队 (fleet {index})", appears="ZRepairPrompt", tries=1):
+                log(f"Fleet {index}: 修理舰队 did not open its prompt (attempt {attempt + 1})")
+                continue
+            self.press("ZRepairOk", "确认 (repair)", gone="ZRepairPrompt", tries=2)
+            time.sleep(1.5)
+            if single_find("ZFleetRepairing"):
                 log(f"Fleet {index} repair confirmed")
                 return True
             log(f"Fleet {index}: repair not running after confirming (attempt {attempt + 1})")
-            if single_find("ZRepairPrompt") or single_find("ZCancel"):
-                self.click_button("ZCancel", 1.5, force=True)   # a stuck prompt: dismiss and retry
+            if single_find("ZRepairPrompt"):
+                self.press("ZCancel", "取消 (stuck repair prompt)", gone="ZRepairPrompt", tries=1)
         log(f"Fleet {index} repair failed")
         return False
 

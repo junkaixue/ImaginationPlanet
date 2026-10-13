@@ -38,7 +38,7 @@ from common import single_find, get_center, get_all, single_find_map
 from log_helper import log
 from click import click_at
 from zone_explore import (ZoneExplore, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH,
-                          MONITOR_POLL, RUN_IDLE_SECONDS, _code_version)
+                          MONITOR_POLL, RUN_IDLE_SECONDS, CONTINUE_TAP_DY, _code_version)
 
 # ---- 我的舰队 page, logical px relative to the "我的舰队" title center (ZMyFleet)
 EQUIP_LAYOUT = {
@@ -239,28 +239,6 @@ class FortressFight(ZoneExplore):
         self.save_debug("fleet_page_missing")
         return False
 
-    def press(self, but, what, gone=None, appears=None, tries=3, settle=0.8):
-        """Click a template button after the popup has settled (the popup slides in, so the
-        position found during the animation is stale) and verify the click took: `gone` must
-        disappear or `appears` must show up; otherwise re-locate and click again."""
-        for attempt in range(tries):
-            time.sleep(settle)
-            self.invalidate_shot()
-            c = get_center(but, "Single")
-            if c is None:
-                if (gone and not single_find(gone)) or (appears and single_find(appears)):
-                    return True
-                log(f"{what}: button not found (attempt {attempt + 1})")
-                continue
-            self.click(c.x, c.y, 1.5, what, force=True)
-            for _ in range(6):
-                if (gone and not single_find(gone)) or (appears and single_find(appears)):
-                    return True
-                time.sleep(0.5)
-            log(f"{what}: no effect yet (attempt {attempt + 1})")
-        self.save_debug(f"press_{but}")
-        return False
-
     def save_debug(self, name):
         if not DEBUG_DIR:
             return
@@ -286,9 +264,6 @@ class FortressFight(ZoneExplore):
             self.click(title.x + EQUIP_LAYOUT["close_dx"], title.y + EQUIP_LAYOUT["close_dy"], 1.5,
                        "dimmed top bar (close 我的舰队)", force=True)
         return self.close_popup()
-
-    def select_fleet_tab(self, index):          # shared helper (zone_explore) -> burst version
-        return self.select_tab(index)
 
     def select_tab(self, index):
         title = self.fleet_title()
@@ -727,6 +702,15 @@ class FortressFight(ZoneExplore):
                 break
         return None
 
+    def select_and_raid(self, x, y, name):
+        """Click a target on the fortress page and press its 袭击."""
+        self.click(x, y, 1.5, name, force=True)
+        if not self.wait_for("ZGuardAttack", 5):
+            log("袭击 did not appear")
+            self.save_debug("no_guard_attack")
+            return False
+        return self.press("ZGuardAttack", f"袭击 ({name})", gone="ZGuardAttack")
+
     def pick_dispatch_card(self, index):
         title = get_center("ZDispatchTitle", "Single")
         if title is None:
@@ -736,7 +720,9 @@ class FortressFight(ZoneExplore):
         return True
 
     def attack_with(self, index):
-        """Select an attackable target on the fortress page and send fleet `index`."""
+        """Select an attackable target on the fortress page and send fleet `index`. The action
+        is spent at the final 袭击 of the estimate dialog: when the purchase prompt pops up there
+        (or anywhere earlier), the actions are bought and the whole selection is redone."""
         if not self.open_fortress():
             log("Could not open the fortress page")
             return False
@@ -746,39 +732,57 @@ class FortressFight(ZoneExplore):
             return False
         name, x, y = target
         log(f"Attack {name} at ({x:.0f},{y:.0f}) with fleet {index}")
-        # a dry run goes all the way to the battle estimate (selecting the guard, 袭击 and the
-        # fleet card are reversible) and cancels there instead of attacking
-        self.click(x, y, 1.5, name, force=True)
-        if not self.wait_for("ZGuardAttack", 5):
-            log("袭击 did not appear")
-            self.save_debug("no_guard_attack")
-            return False
-        if not self.press("ZGuardAttack", "袭击 (guard)", gone="ZGuardAttack"):
-            return False
+        for round_no in range(3):
+            result = self.raid_once(index, name, x, y)
+            if result == "launched":
+                self.leave_fortress()                   # back to the map with the "<" button
+                return True
+            if result == "cancelled":                   # dry run
+                self.leave_fortress()
+                return True
+            if result != "buy":
+                break
+            # out of actions: buy, then the target has to be selected and 袭击 pressed again
+            if not self.handle_buy_prompt(True):
+                log("Could not buy actions" if not self.dry_run else "[DRY] stopped at the purchase prompt")
+                break
+            time.sleep(1.5)
+            self.close_popup() if not single_find("ZFortressTitle") else None
+            log(f"Actions bought -> selecting {name} again")
+        log("Attack not launched")
+        self.leave_fortress()
+        return False
+
+    def raid_once(self, index, name, x, y):
+        """One pass: target -> 袭击 -> fleet card -> estimate -> 袭击. Returns 'launched',
+        'cancelled' (dry run), 'buy' (purchase prompt appeared) or 'failed'."""
+        if not self.select_and_raid(x, y, name):
+            return "buy" if single_find("ZBuyPrompt") else "failed"
         for _ in range(12):
+            if single_find("ZBuyPrompt"):
+                return "buy"
             if single_find("ZEstimateLabel"):
                 if self.dry_run:
                     log("[DRY] estimate dialog reached -> would press 袭击; cancelling")
-                    self.click_button("ZCancel", 2, force=True)
-                    self.leave_fortress()
-                    return True
-                self.click_button("ZAttack", 2)         # estimates do not matter here
+                    self.press("ZCancel", "取消 (dry run)", gone="ZEstimateLabel")
+                    return "cancelled"
+                self.press("ZAttack", "袭击 (estimate)", gone="ZEstimateLabel")   # estimates do not matter here
+                # the action is charged here: give a purchase prompt a moment to show up
+                for _ in range(6):
+                    if single_find("ZBuyPrompt"):
+                        return "buy"
+                    time.sleep(0.5)
                 log("Attack launched")
-                self.leave_fortress()                   # back to the map with the "<" button
-                return True
+                return "launched"
             if single_find("ZDispatchTitle"):
                 self.pick_dispatch_card(index)
                 continue
-            if single_find("ZBuyPrompt"):
-                self.handle_buy_prompt(True)
-                continue
             if single_find("ZContinueHint"):
-                self.click_button("ZContinueHint", 1.5)
+                self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
                 continue
             time.sleep(1)
         log("Attack flow did not reach the estimate dialog")
-        self.leave_fortress()
-        return False
+        return "failed"
 
     # ------------------------------------------------------------------ cycle
     def full_hp_idle(self, exclude):
@@ -859,9 +863,14 @@ class FortressFight(ZoneExplore):
                     continue
             if not calibrated and self.on_map():
                 calibrated = self.calibrate_scale()   # needs the map anchors; once per run
-            for i in sorted(self.pending_repair):
-                if self.open_fleet_page() and self.repair_fleet(i):
-                    self.pending_repair.discard(i)
+            if self.pending_repair:
+                ships = self.scan_ships()
+                for i in sorted(self.pending_repair):
+                    s = ships.get(i, {})
+                    if s.get("status") == "repairing" or s.get("hp") == FULL_HP:
+                        self.pending_repair.discard(i)      # nothing left to repair
+                    elif s.get("idle") and self.repair_fleet(i):
+                        self.pending_repair.discard(i)
                 self.close_fleet_page()
             if self.holder is None:
                 # every start looks for the gear afresh (it may have been moved by hand); inside
