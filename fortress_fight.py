@@ -162,6 +162,7 @@ class FortressFight(ZoneExplore):
         super().__init__(dry_run=dry_run)
         self.holder = None        # fleet index currently carrying the best gear
         self.pending_repair = set()   # fleets whose repair could not be started yet
+        self.artifacts_stripped = True   # False when the old holder's right-column artifacts stayed on
         log(f"FortressFight ready (code={_code_version()})")
 
     # ------------------------------------------------------------------ fleet page
@@ -374,16 +375,15 @@ class FortressFight(ZoneExplore):
     # ------------------------------------------------------------------ equipment moves
     def unequip_all(self, index):
         """Remove every piece of gear from fleet `index` through the 编辑舰队 tabs."""
-        if not self.open_fleet_page():
-            return False
-        self.select_tab(index)
-        title = self.fleet_title()
-        self.click(title.x + EQUIP_LAYOUT["slot_dx"][0], title.y + EQUIP_LAYOUT["row_dy"][0], 2, "gear slot", force=True)
-        if not self.wait_for("ZEditFleetTitle", 8):
+        self.artifacts_stripped = False
+        if not self.open_slot_page(index, EQUIP_LAYOUT["slot_dx"][0], EQUIP_LAYOUT["row_dy"][0], "gear slot",
+                                   lambda: single_find("ZEditFleetTitle")):
             log("编辑舰队 did not open")
-            self.close_popup()
             return False
         et = get_center("ZEditFleetTitle", "Single")
+        if et is None:
+            log("编辑舰队 title lost after opening")
+            return False
         for name, tab_dx, clicks in EDIT_LAYOUT["tabs"]:
             if not self.select_edit_tab(et, name, tab_dx):
                 log(f"  {name}: tab could not be selected, skipped")
@@ -398,33 +398,31 @@ class FortressFight(ZoneExplore):
         log("Gear removed and confirmed" if ok else "编辑舰队 could not be confirmed")
         if ok:
             self.unequip_cats(index)
-            self.unequip_right_artifacts(index)
-        if ok and UNEQUIP_BOTTOM_ARTIFACTS:
-            self.unequip_bottom_artifacts(index)
+            self.artifacts_stripped = self.unequip_right_artifacts(index)
+            if UNEQUIP_BOTTOM_ARTIFACTS:
+                self.unequip_bottom_artifacts(index)
         return ok
 
     def unequip_right_artifacts(self, index):
         """The artifact slots in the right column (rows 1 and 2) each open their own edit page;
         the equipped artifact sits in the preview area above 取消/确认, tapping it removes it."""
+        all_ok = True
         for row in ARTIFACT_SLOTS["rows"]:
-            if not self.open_fleet_page():
-                return False
-            self.select_tab(index)
-            title = self.fleet_title()
-            self.click(title.x + EQUIP_LAYOUT["slot_dx"][4], title.y + EQUIP_LAYOUT["row_dy"][row], 2,
-                       f"artifact slot row {row + 1}", force=True)
-            if not self.wait_for("ZCloseHint", 6):
-                log(f"Artifact page for row {row + 1} did not open")
+            if not self.open_slot_page(index, EQUIP_LAYOUT["slot_dx"][4], EQUIP_LAYOUT["row_dy"][row],
+                                       f"artifact slot row {row + 1}", self.artifact_page_open):
+                all_ok = False
                 continue
             ok = get_center("ZRepairOk", "Single")
             if ok is None:
                 log("确认 not found on the artifact page")
                 self.close_popup()
+                all_ok = False
                 continue
             px, py = ARTIFACT_SLOTS["preview_from_confirm"]
             self.burst(ok.x + px, ok.y + py, 3)
-            self.confirm_edit(f"artifact row {row + 1}")
-        return True
+            if not self.confirm_edit(f"artifact row {row + 1}"):
+                all_ok = False
+        return all_ok
 
     def burst(self, x, y, times):
         """Tap the same spot many times quickly: removal taps on an already empty position do
@@ -458,20 +456,49 @@ class FortressFight(ZoneExplore):
             log(f"  tab {name} not selected yet (attempt {attempt + 1})")
         return False
 
+    def artifact_page_open(self):
+        """An artifact edit page (编辑低级/高级/顶级神器): the fleet page is gone and the page has
+        its confirm button. ZCloseHint alone is not enough, the fleet page shows it too."""
+        page = self.edit_page_open()
+        if page in ("ZEditFleetTitle", "ZEditCatTitle", "ZEditGearTitle"):
+            return False                    # a neighbouring slot's page, not an artifact page
+        return bool(page == "ZEditArtifactTitle"
+                    or (single_find("ZCloseHint") and not single_find("ZMyFleet") and get_center("ZRepairOk", "Single")))
+
+    def open_slot_page(self, index, dx, dy, what, opened, tries=3, wait=8.0):
+        """Tap a slot on fleet `index`'s tab until `opened()` is true (the tap may be dropped or
+        land during a transition); the fleet page is re-opened between tries."""
+        for attempt in range(tries):
+            if not self.open_fleet_page() or not self.select_tab(index):
+                log(f"{what}: fleet page not available (attempt {attempt + 1})")
+                self.close_popup()
+                continue
+            title = self.fleet_title()
+            if title is None:
+                continue
+            self.click(title.x + dx, title.y + dy, 2, what, force=True)
+            start = time.time()
+            while time.time() - start < wait:
+                if opened():
+                    time.sleep(0.5)          # let the page settle before its anchors are read
+                    return True
+                time.sleep(0.5)
+            log(f"{what}: page did not open (attempt {attempt + 1})")
+            self.close_popup()
+        self.save_debug(f"slot_{what}")
+        return False
+
     def unequip_cats(self, index):
         """The cat slot (left of the artifact) opens 编辑猫护法; the three equipped cats sit at
         the bottom, tapping the leftmost one repeatedly removes them."""
-        if not self.open_fleet_page():
-            return False
-        self.select_tab(index)
-        title = self.fleet_title()
         dx, dy = CAT_LAYOUT["slot"]
-        self.click(title.x + dx, title.y + dy, 2, "cat slot", force=True)
-        if not self.wait_for("ZEditCatTitle", 8):
+        if not self.open_slot_page(index, dx, dy, "cat slot", lambda: single_find("ZEditCatTitle")):
             log("编辑猫护法 did not open")
-            self.close_popup()
             return False
         ct = get_center("ZEditCatTitle", "Single")
+        if ct is None:
+            log("编辑猫护法 title lost after opening")
+            return False
         ix, iy = CAT_LAYOUT["item"]
         self.burst(ct.x + ix, ct.y + iy, CAT_LAYOUT["count"] * 3)
         ok = self.confirm_edit("编辑猫护法")
@@ -481,16 +508,14 @@ class FortressFight(ZoneExplore):
     def unequip_bottom_artifacts(self, index):
         """The four bottom-row artifact slots open 编辑装备 (tabs 炬团令牌/烙印/战旗/密契); the
         equipped one is shown in the preview area. Clicking the preview is assumed to remove it."""
-        if not self.open_fleet_page():
-            return False
-        self.select_tab(index)
-        title = self.fleet_title()
-        self.click(title.x + EQUIP_LAYOUT["slot_dx"][0], title.y + EQUIP_LAYOUT["row_dy"][4], 2, "bottom artifact slot", force=True)
-        if not self.wait_for("ZEditGearTitle", 8):
+        if not self.open_slot_page(index, EQUIP_LAYOUT["slot_dx"][0], EQUIP_LAYOUT["row_dy"][4], "bottom artifact slot",
+                                   lambda: single_find("ZEditGearTitle")):
             log("编辑装备 did not open")
-            self.close_popup()
             return False
         gt = get_center("ZEditGearTitle", "Single")
+        if gt is None:
+            log("编辑装备 title lost after opening")
+            return False
         for tab_dx in GEAR_LAYOUT["tab_dx"]:
             for attempt in range(EDIT_LAYOUT["tab_retries"]):
                 self.burst(gt.x + tab_dx, gt.y + GEAR_LAYOUT["tab_dy"], TAP_BURST)
@@ -520,21 +545,9 @@ class FortressFight(ZoneExplore):
 
     def ensure_boss_artifact(self, index):
         """Top-right artifact slot must hold 残骸本源."""
-        if not self.open_fleet_page():
-            return False
-        self.select_tab(index)
-        title = self.fleet_title()
         dx, dy = EQUIP_LAYOUT["artifact_slot"]
-        self.click(title.x + dx, title.y + dy, 2, "artifact slot", force=True)
-        opened = False
-        for _ in range(16):
-            if self.edit_page_open():
-                opened = True
-                break
-            time.sleep(0.5)
-        if not opened:
+        if not self.open_slot_page(index, dx, dy, "artifact slot", self.artifact_page_open):
             log("The artifact page did not open")
-            self.close_popup()
             return False
         target = get_center("ZArtifactTarget", "Single")
         check = get_center("ZArtifactCheck", "Single")
@@ -581,7 +594,17 @@ class FortressFight(ZoneExplore):
         if not self.auto_equip(target):
             return False
         if not self.ensure_boss_artifact(target):
-            return False
+            if self.artifacts_stripped:
+                return False
+            # 残骸本源 still sits on the old holder (its artifact page did not open): strip it
+            # again and retry once
+            log("残骸本源 not set on the new fleet; stripping the old holder's artifacts again")
+            self.artifacts_stripped = self.unequip_right_artifacts(holder)
+            if not self.artifacts_stripped:
+                log(f"Could not strip the artifacts of fleet {holder}")
+                return False
+            if not self.ensure_boss_artifact(target):
+                return False
         self.open_fleet_page()
         self.select_tab(target)
         score = self.loadout_score()
