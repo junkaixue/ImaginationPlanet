@@ -287,6 +287,7 @@ class FortressFight(ZoneExplore):
         log(f"Opening 队伍 at ({team.x:.0f},{team.y:.0f})")
         self.click(team.x, team.y, 2, "队伍", force=True)
         if self.wait_for("ZMyFleet", 8):
+            self.wait_still()                   # the panel slides in: taps during the animation are lost
             return True
         log("我的舰队 did not appear after clicking 队伍")
         self.save_debug("fleet_page_missing")
@@ -526,6 +527,7 @@ class FortressFight(ZoneExplore):
                     time.sleep(0.5)          # let the page settle before its anchors are read
                     return True
                 time.sleep(0.5)
+            self.save_debug(f"slot_{what}_try{attempt + 1}")
             # ZMyFleet last: it is also visible under a dialog; an edit page replaces it
             k = self.seen(*self.EDIT_PAGES, *self.FLEET_DIALOGS, "ZMyFleet", fresh=True)
             if k == "ZMyFleet":

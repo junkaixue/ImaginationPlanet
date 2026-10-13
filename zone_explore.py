@@ -1639,14 +1639,16 @@ class ZoneExplore:
         return gray[max(y1, 0):max(y2, 0), max(x1, 0):max(x2, 0)]
 
     def select_until(self, what, shown, tap, retries, settle=0.8):
-        """Tap until `shown()` holds, checking before the first tap and after the last one."""
+        """Tap until `shown()` holds, checking before the first tap and after every tap."""
+        if shown():
+            return True
         for attempt in range(retries):
-            if shown():
-                return True
             tap()
             time.sleep(settle)
-            log(f"  {what} not shown yet (attempt {attempt + 1})")
-        return shown()
+            if shown():
+                return True
+            log(f"  {what} not shown after tap {attempt + 1}")
+        return False
 
     def fleet_tab_brightness(self, title):
         """Mean brightness under each tab label of 我的舰队 (index -> value, same shot)."""
