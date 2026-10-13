@@ -315,16 +315,12 @@ def _digits_confusable(a, b):
     return all(x == y or frozenset((x, y)) in OCR_CONFUSIONS for x, y in zip(a, b))
 
 
-def _zone_from_ocr(digits, prefer=()):
+def _zone_from_ocr(digits):
     """The zone name an OCR reading stands for: the unique zone card whose number equals the
-    reading up to the known confusions; candidates in `prefer` (tied learned titles) win.
-    None when the reading fits no zone or several."""
+    reading up to the known confusions, None when it fits no zone or several."""
     if not digits:
         return None
     cards = [n for n in ZONE_LAYOUT["cards"] if n != "central" and _digits_confusable(digits, n)]
-    preferred = [n for n in cards if n in prefer]
-    if len(preferred) == 1:
-        return preferred[0]
     return cards[0] if len(cards) == 1 else None
 
 
@@ -364,6 +360,7 @@ class ZoneExplore:
         self.last_shift = (0.0, 0.0)  # how far the view moved during the last dispatch
         self.rescan_needed = False    # set when a memorized resource is gone (zone memory dropped)
         self._shot, self._shot_time = None, 0.0
+        self._title_ocr = None        # OCR reading of the last read_zone (None = not run / failed)
         self.last_drag_unknown = False
         self._scan_frame = None
         self.last_landmarks = []      # every template hit of the last scan (any colour): used as landmarks
@@ -1658,25 +1655,31 @@ class ZoneExplore:
         ranked = sorted(scores.items(), key=lambda kv: -kv[1])
         best = ranked[0][1] if ranked else 0.0
         close = [n for n, s in ranked if best - s < ZONE_LAYOUT["digit_margin"]] if best >= ZONE_LAYOUT["digit_match_th"] else []
+        self._title_ocr = None
         if len(close) == 1:
             return close[0]                     # one learned title clearly matches
         # no clear learned match (a zone not learned yet, or learned titles tied): OCR of the
         # digit glyphs decides, resolved to a real zone name (tesseract confuses 3/8, 4/0 and
-        # 5/9 on this font); among tied learned titles the one OCR agrees with wins
+        # 5/9 on this font)
         digits = self.ocr_title_digits(aligned[ranked[0][0]] if ranked else crop)
-        zone = _zone_from_ocr(digits, prefer=close)
-        if zone is not None:
-            return zone
-        if central_conf >= 0.8 and not digits:
+        self._title_ocr = digits
+        zone = _zone_from_ocr(digits) if digits else None
+        if zone in close:
+            return zone                         # OCR picks among the tied learned titles
+        if zone is not None and not self.title_learned(zone):
+            return zone                         # a zone not learned yet
+        if close and (digits is None or zone is None):
+            return close[0]                     # OCR unavailable or unusable: best learned tie
+        if central_conf >= 0.8 and digits == "":
             return "central"
-        return None
+        return None                             # OCR names a learned zone whose title did not match
 
     def ocr_title_digits(self, title):
         """OCR of the two digit glyphs of an (aligned) outer-zone title crop -> '05' or ''."""
         c0, c1 = ZONE_LAYOUT["digit_c0"], ZONE_LAYOUT["digit_c1"]
         dg = title[:, c0:c1]
         if dg.size == 0:
-            return ""
+            return None
         try:
             import pytesseract
             dg = cv2.resize(dg, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
@@ -1684,7 +1687,7 @@ class ZoneExplore:
             dg = cv2.copyMakeBorder(dg, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
             txt = pytesseract.image_to_string(dg, config="--psm 7 -c tessedit_char_whitelist=0123456789")
         except Exception:
-            return ""
+            return None                     # OCR unavailable: unknown, not "no digits"
         digits = "".join(ch for ch in txt if ch.isdigit())
         return digits[-2:].zfill(2) if digits else ""
 
@@ -1742,14 +1745,17 @@ class ZoneExplore:
 
     def title_looks_like(self, name):
         """Before learning a title that read_zone could not name: the OCR of the digit glyphs
-        (or their absence for central) must agree with the requested zone."""
-        crop = self.title_crop()
-        if crop is None:
+        (or their absence for central) must agree with the requested zone. Reuses the reading
+        read_zone just made on the aligned crop; an unavailable OCR never allows learning."""
+        digits = self._title_ocr
+        if digits is None:
+            crop = self.title_crop()
+            digits = self.ocr_title_digits(crop) if crop is not None else None
+        if digits is None:
             return False
-        digits = self.ocr_title_digits(crop)
         if name == "central":
             return digits == ""
-        return _zone_from_ocr(digits, prefer=[name]) == name
+        return _zone_from_ocr(digits) == name
 
     # ------------------------------------------------------------------ survey then dispatch
     def to_map(self, x, y):
@@ -2076,11 +2082,13 @@ class ZoneExplore:
     def enter_zone_explore(self):
         """From the main (dice) page: close the dice popup and click 星际探险 until the map shows."""
         for _ in range(3):
-            c = get_center("ZMoreDice", "Single")
-            if c is None:
+            if not single_find("ZMoreDice"):
                 break
-            self.click(c.x + MORE_DICE_LAYOUT["close_dx"], c.y + MORE_DICE_LAYOUT["close_dy"], 1.5, "close dice popup")
-        if not self.click_button("ZStarExplore", 3):
+            c = get_center("ZMoreDice", "Single")
+            self.click(c.x + MORE_DICE_LAYOUT["close_dx"], c.y + MORE_DICE_LAYOUT["close_dy"], 1.5,
+                       "close dice popup", force=True)
+        # navigation, harmless: a dry run clicks it too
+        if not self.click_button("ZStarExplore", 3, force=True):
             log("星际探险 button not found")
             return False
         if self.wait_for("ZExplore", 15):

@@ -193,10 +193,24 @@ class FortressFight(ZoneExplore):
         return False
 
     def close_popup(self, tries=6):
-        """Edit sub-pages are confirmed, not cancelled; then the generic popup handling."""
+        """Edit sub-pages are confirmed, not cancelled; the fortress page is left through its
+        bottom-left "<"; then the generic popup handling."""
         if self.edit_page_open():
             self.confirm_edit("close_popup")
+        if single_find("ZFortressTitle"):
+            self.leave_fortress()
         return super().close_popup(tries)
+
+    def leave_fortress(self):
+        """Fortress page -> zone map through the "<" button at the bottom left."""
+        for _ in range(3):
+            if not single_find("ZFortressTitle"):
+                return True
+            if single_find("ZGuardAttack") or single_find("ZEstimateLabel") or single_find("ZDispatchTitle"):
+                super().close_popup(2)          # a guard popup / dialog is still on top
+            if not self.press("ZFortressBack", "< (leave fortress)", gone="ZFortressTitle"):
+                break
+        return self.wait_for("ZExplore", 5)
 
     def open_fleet_page(self):
         if single_find("ZMyFleet"):
@@ -597,6 +611,9 @@ class FortressFight(ZoneExplore):
             return True
         if not self.on_map():
             self.close_popup()
+        # the fortress icon template was captured at 75%; the game may come up at 50%
+        self.ensure_zoom()
+        self.invalidate_shot()
         # the program is started in the central zone with the fortress on screen; no zone logic
         icon = get_center("ZFortressMap", "Single")
         if icon is None:
@@ -730,11 +747,11 @@ class FortressFight(ZoneExplore):
                 if self.dry_run:
                     log("[DRY] estimate dialog reached -> would press 袭击; cancelling")
                     self.click_button("ZCancel", 2, force=True)
-                    self.close_popup()
+                    self.leave_fortress()
                     return True
                 self.click_button("ZAttack", 2)         # estimates do not matter here
                 log("Attack launched")
-                self.close_popup()
+                self.leave_fortress()                   # back to the map with the "<" button
                 return True
             if single_find("ZDispatchTitle"):
                 self.pick_dispatch_card(index)
@@ -747,7 +764,7 @@ class FortressFight(ZoneExplore):
                 continue
             time.sleep(1)
         log("Attack flow did not reach the estimate dialog")
-        self.close_popup()
+        self.leave_fortress()
         return False
 
     # ------------------------------------------------------------------ cycle
@@ -775,7 +792,7 @@ class FortressFight(ZoneExplore):
         log("Monitor: waiting for the dice run to end before the fortress fight")
         idle_since = None
         while True:
-            if single_find("ZExplore") or single_find("ZFortressTitle"):
+            if self.on_known_page():
                 return True
             if single_find("ZMoreDice"):
                 log("Dice ran out -> entering 星际探险")
@@ -797,13 +814,37 @@ class FortressFight(ZoneExplore):
                 log("Unknown page, waiting")
             time.sleep(MONITOR_POLL)
 
+    KNOWN_PAGES = ("ZExplore", "ZFortressTitle", "ZMyFleet")
+
+    def on_known_page(self):
+        return any(single_find(k) for k in self.KNOWN_PAGES)
+
+    def enter_map_from_main(self):
+        """Started on the game main screen (dice board): go to 星际探险 first."""
+        if self.on_known_page():
+            return True
+        if single_find("ZStarExplore"):
+            log("Main screen -> 星际探险")
+            return self.enter_zone_explore()
+        log("Start the program on the zone map or on the game main screen")
+        return False
+
     def run(self, monitor=False):
-        self.calibrate_scale()
         if monitor:
             self.wait_for_dice_run()
+        else:
+            self.enter_map_from_main()
         while True:
-            if not self.on_map():
-                self.close_popup()
+            if self.on_map():
+                self.calibrate_scale()      # needs the map anchors; re-measured every pass
+            else:
+                if not self.close_popup() and not self.enter_map_from_main():
+                    log("Not on the zone map and no known page to leave; waiting")
+                    self.save_debug("unknown_page")
+                    if self.dry_run:
+                        return
+                    time.sleep(POLL)
+                    continue
             if self.holder is None:
                 # every start looks for the gear afresh (it may have been moved by hand); inside
                 # the loop the holder is remembered and only verified when swapping

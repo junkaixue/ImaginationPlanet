@@ -272,6 +272,7 @@ single_find_map = {
     # Fortress (铸械要塞) boss fight and the equipment pages
     "ZFortressMap": get_image_path("zone/fortress_map.png"),          # 铸械要塞 icon on the map
     "ZFortressTitle": get_image_path("zone/fortress_title.png"),      # "深寒铸械要塞" page title
+    "ZFortressBack": get_image_path("zone/fortress_back.png"),        # "<" bottom-left of the fortress page
     "ZGuardBright": get_image_path("zone/guard_bright.png"),          # guard rocket cell
     "ZGuardAttack": get_image_path("zone/guard_attack.png"),          # "袭击" under a selected guard
     "ZShopLabel": get_image_path("zone/shop_label.png"),              # 商店
@@ -332,7 +333,7 @@ no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "C
                  "ZStarExplore", "ZAutoThrowing", "ZMoreDice", "ZLongPressAuto",
                  "ZFleetSpeed", "ZAccelerate", "ZReturnHome", "ZBoostPage", "ZQuantumBoost", "ZSuperBoost", "ZLargeBoost", "ZUseButton",
                  "ZZoneList", "ZSelectZone", "ZRivalPanel",
-                 "ZFortressTitle", "ZGuardAttack", "ZAutoEquip", "ZEditFleetTitle", "ZEditArtifactTitle",
+                 "ZFortressTitle", "ZFortressBack", "ZGuardAttack", "ZAutoEquip", "ZEditFleetTitle", "ZEditArtifactTitle",
                  "ZArtifactTarget", "ZArtifactCheck", "ZArtifactSlot", "ZLoadoutStandard", "ZPlusSlot",
                  "ZFestMainBtn", "ZFestTitle", "ZFestGo", "ZFestMe", "ZFestPav1", "ZFestPavilion", "ZFestBack", "ZFestOccupy", "ZFestEmpty", "ZFestRow", "ZEditGearTitle", "ZEditCatTitle", "ZShopLabel", "ZDepotLabel", "ZCommandLabel"]
 
