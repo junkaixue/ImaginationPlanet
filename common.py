@@ -279,6 +279,9 @@ single_find_map = {
     "ZShopLabel": get_image_path("zone/shop_label.png"),              # 商店
     "ZDepotLabel": get_image_path("zone/depot_label.png"),            # 委托站
     "ZCommandLabel": get_image_path("zone/command_label.png"),        # 指挥所
+    "ZResourceLabel": get_image_path("zone/resource_label.png"),      # 资源库 (lower part of the page)
+    "ZMilitaryLabel": get_image_path("zone/military_label.png"),      # 军事基地 (lower part of the page)
+    "ZBrokenBadge": get_image_path("zone/broken_badge.png"),          # yellow "已损坏" on a raided building
     "ZAutoEquip": get_image_path("zone/auto_equip.png"),              # "一键配队"
     "ZEditFleetTitle": get_image_path("zone/edit_fleet_title.png"),   # "编辑舰队"
     "ZEditArtifactTitle": get_image_path("zone/edit_artifact_title.png"),  # "编辑低级神器"

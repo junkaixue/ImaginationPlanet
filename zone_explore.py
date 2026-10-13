@@ -565,12 +565,7 @@ class ZoneExplore:
         return False
 
     def wait_for(self, but, timeout=10):
-        start = time.time()
-        while time.time() - start < timeout:
-            if single_find(but):
-                return True
-            time.sleep(0.5)
-        return False
+        return self.wait_seen((but,), timeout) is not None
 
     def find(self, but, th=MATCH_TH):
         return simple_single_find(but, "Single", th)
@@ -635,35 +630,71 @@ class ZoneExplore:
                 best = (std, x, y)
         return Point(best[1], best[2])
 
-    def close_popup(self, tries=6):
-        """Get back to the map from any dialog. Clicks for real even in dry runs."""
+    # modal dialogs first: they sit over popups that template matching still sees through the
+    # dimming. The close hint before 袭击: on the map the fortress icon's popup carries both and
+    # closes with a tap under its hint.
+    DIALOGS = ("ZBuyPrompt", "ZContinueHint", "ZEstimateLabel", "ZCancel", "ZCloseHint", "ZBackArrow",
+               "ZFleetSpeed", "ZGo", "ZDispatchTitle", "ZGuardAttack")
+
+    def blank_spot(self):
+        """Where to tap to close a popup that has no button of its own."""
+        return self.plain_spot()
+
+    def dismiss(self, k, gs=None):
+        """Close the dialog `k` (a key of DIALOGS) found on the capture `gs`."""
+        if k == "ZBuyPrompt":
+            self.click_button("ZBuyCancel", force=True)
+        elif k == "ZContinueHint":
+            self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
+        elif k in ("ZCancel", "ZEstimateLabel"):    # the estimate dialog closes with its 取消
+            self.click_button("ZCancel", force=True)
+        elif k == "ZCloseHint":
+            c = get_center_with_path(single_find_map["ZCloseHint"], gs if gs is not None else self.shot()[1], MATCH_TH)
+            if c is not None:
+                self.click(c.x, c.y + 30, 1.5, "empty space", force=True)
+        elif k == "ZBackArrow":
+            self.click_button("ZBackArrow", force=True)
+        elif k == "ZFleetSpeed":
+            self.close_fleet_panel(self.last_dispatched or 1)
+        else:                               # 前往 popup / dispatch dialog / guard popup
+            p = self.blank_spot()
+            if p is not None:
+                self.click(p.x, p.y, 1.5, "blank spot (close popup)", force=True)
+
+    def dismiss_all(self, keys, tries, done=None, first=None, idle=1.0):
+        """Dismiss whatever of `keys` is on top, up to `tries` times. With `done` the loop ends
+        when done() holds (waiting `idle` seconds when nothing is seen); without it, when
+        nothing of `keys` is seen. `first` is a key the caller has already detected."""
         for _ in range(tries):
             self.invalidate_shot()
-            if self.on_map():
+            if done is not None and done():
                 return True
-            gs = self.shot()[1]
-            k = self.seen("ZBuyPrompt", "ZContinueHint", "ZCancel", "ZCloseHint", "ZBackArrow", "ZFleetSpeed",
-                          "ZGo", "ZDispatchTitle", "ZGuardAttack", gs=gs)
-            if k == "ZBuyPrompt":
-                self.click_button("ZBuyCancel", force=True)
-            elif k == "ZContinueHint":
-                self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
-            elif k == "ZCancel":
-                self.click_button("ZCancel", force=True)
-            elif k == "ZCloseHint":
-                c = get_center_with_path(single_find_map["ZCloseHint"], gs, MATCH_TH)
-                self.click(c.x, c.y + 30, 1.5, "empty space", force=True)
-            elif k == "ZBackArrow":
-                self.click_button("ZBackArrow", force=True)
-            elif k == "ZFleetSpeed":
-                self.close_fleet_panel(self.last_dispatched or 1)
-            elif k is not None:             # 前往 popup / dispatch dialog / guard popup
-                p = self.plain_spot()
-                if p is not None:
-                    self.click(p.x, p.y, 1.5, "map (close target popup)", force=True)
+            gs = None
+            if first is None:
+                gs = self.shot()[1]
+                k = self.seen(*keys, gs=gs)
             else:
-                time.sleep(1)
-        return self.on_map()
+                k, first = first, None          # no capture needed: dismiss() takes one for the close hint
+            if k is not None:
+                self.dismiss(k, gs)
+            elif done is None:
+                return True
+            else:
+                time.sleep(idle)
+        return done() if done is not None else self.seen(*keys, fresh=True) is None
+
+    def close_popup(self, tries=6):
+        """Get back to the map from any dialog. Clicks for real even in dry runs."""
+        return self.dismiss_all(self.DIALOGS, tries, done=self.on_map)
+
+    def wait_seen(self, keys, timeout):
+        """Poll until one of `keys` (in their order of precedence) is on screen; the key or None."""
+        start = time.time()
+        while True:
+            k = self.seen(*keys, fresh=True)
+            if k is not None or time.time() - start >= timeout:
+                return k
+            time.sleep(0.5)
 
     def zoom75_selected(self):
         """True when the 75% label sits on the purple (selected) pill. Returns None if the

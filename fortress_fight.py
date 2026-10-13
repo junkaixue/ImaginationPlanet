@@ -11,10 +11,12 @@ Cycle (user rules):
        残骸本源 (一键配队 may pick another one): open it, select 残骸本源, confirm.
     5. Back on the old holder's tab: 一键配队 (a fleet without a loadout cannot be repaired),
        then 修理舰队, confirm.
-    6. Map -> 铸械要塞 -> click a bright guard (dim ones are not attackable yet) -> 袭击 ->
-       派遣舰队 list: pick the fresh fleet's card (it also has the highest 战力) -> battle
-       estimate: always attack. When no guard is bright, the buildings (商店/委托站/指挥所)
-       whose guards are cleared are attacked the same way.
+    6. Map -> 铸械要塞 -> scroll through the whole page for a ready building (bright: the
+       guards around it are cleared and it has recovered; a broken one, just raided, or one
+       still guarded is dim) -> otherwise the first bright guard (dim ones are not attackable
+       yet) -> 袭击 -> 派遣舰队 list: pick the fresh fleet's card (it also has the highest
+       战力) -> battle estimate: always attack. A building that shows no 袭击 when tapped is
+       left alone for FAILED_TARGET_TTL.
     7. Wait for the fleet to come back, then repeat with the next full-hp fleet.
 
 Only one fleet fights at a time (there is one set of best gear). No zoom or map dragging.
@@ -29,6 +31,7 @@ Usage:
 import argparse
 import os
 import time
+from collections import namedtuple
 
 import cv2
 import numpy as np
@@ -36,7 +39,7 @@ import pyautogui
 
 from common import single_find, get_center, get_all, single_find_map
 from log_helper import log
-from zone_explore import (ZoneExplore, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH,
+from zone_explore import (ZoneExplore, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH, DRAG_LAYOUT,
                           MONITOR_POLL, RUN_IDLE_SECONDS, CONTINUE_TAP_DY, _code_version)
 
 # ---- 我的舰队 page, logical px relative to the "我的舰队" title center (ZMyFleet)
@@ -85,11 +88,24 @@ FORTRESS = {
     "bright_min": 75,         # mean grey of the cell: attackable guards ~86-104, dim ones ~46-65
     "building_bright_min": 75,
     "grid_top_dy": 200,       # guard grid lies below the title by at least this (logical px)
-    "scroll_dy": 380,         # the page is taller than the screen: scroll this much per step
     "scroll_x_dx": 0,         # scroll gesture column, relative to the title
-    "scroll_y0_dy": 650,      # gesture from title+y0 up to title+y1 (content moves up)
-    "scroll_y1_dy": 270,
-    "max_scrolls": 6,
+    "scroll_y0_dy": 650,      # gesture from title+y0 up to title+y1 (content moves up by y0-y1 = 220,
+    "scroll_y1_dy": 430,      # less than the measured content area so that the move can be matched)
+    "max_scrolls": 10,
+    "blank_dy": 45,           # the description line under the title: tapping it closes popups
+    "cell_half": 10,          # guard brightness: half size of the sampled square (logical px)
+    "building_patch": (45, 5, 20),   # building brightness: from 45 to 5 px above the label, +-20 wide
+    "spot_radius": 20,        # a guard this close to a tried spot (page coordinates) is the same guard; cells are ~33 apart
+    "grid_half_w": 230,       # the page content spans this far left/right of the title (shift measurement)
+    "bottom_labels": ("资源库", "军事基地"),   # once these are seen the scan has reached the last buildings
+    "content_bottom_dy": 530, # the page content measured for scrolling ends this far below the title (above 停机坪)
+    "scan_valid": 60,         # seconds a full page scan stays trusted for the "no ready building" shortcut
+    "relocate_slack": 60,     # page_y may differ this much from where the guard was seen before scrolling again
+    "tap_timeout": 5.0,       # seconds a tap on a target gets to open something
+    "icon_timeout": 2.0,      # the map icon's popup shows within a second
+    "want_grace": 2.0,        # seconds 袭击 still gets after another part of its popup showed
+    "tap_settle": 1.0,        # a popup draws its parts over a few frames: look once more after this
+    "building_tap_dy": 35,    # tap point above a building's label
 }
 FULL_HP = 100
 TAP_BURST = 3                # taps per burst on idempotent buttons (tabs, 一键配队): a dropped tap is harmless
@@ -99,6 +115,19 @@ DEBUG_DIR = None             # --debug-shots: save the OCR crops here
 STATE_FILE = os.path.join(os.path.dirname(single_find_map["ZBase"]), "fortress_state.json")   # {"holder": N}
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
 POLL = 30
+FAILED_TARGET_TTL = 15 * 60  # seconds a building is skipped after FAILED_TARGET_MISSES taps showed no 袭击
+FAILED_TARGET_MISSES = 2     # taps on a building in one go that showed no 袭击: the first may be dropped
+
+# something to attack on the fortress page: kind "building" (name 商店/委托站/...) or "guard"
+# (name None); x, y in the reference frame
+class Target(namedtuple("Target", "kind name x y")):
+    __slots__ = ()
+    label = property(lambda t: t.name or t.kind)
+
+
+# the scroll gesture must leave an overlap that measure_shift can match (strip inset + a margin)
+assert (FORTRESS["scroll_y0_dy"] - FORTRESS["scroll_y1_dy"] + 2 * DRAG_LAYOUT["strip_inset"] + 40
+        < FORTRESS["content_bottom_dy"] - FORTRESS["grid_top_dy"]), "fortress scroll step too long to measure"
 
 
 DIGIT_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "digits")
@@ -163,6 +192,11 @@ class FortressFight(ZoneExplore):
         self.holder = None        # fleet index currently carrying the best gear
         self.pending_repair = set()   # fleets whose repair could not be started yet
         self.repair_tries = {}        # fleet -> attempts made from pending_repair
+        self.failed_targets = {}      # building name -> time its tap showed no 袭击
+        self.page_y = 0.0             # how far down the fortress page is scrolled (logical px, measured)
+        self.tried_spots = []         # (x, page y, time) of guards that opened no 袭击
+        self.page_scanned = 0.0       # when the whole fortress page was last scanned (0: not since opened)
+        self.fortress_title = None    # title position on the open fortress page (the header does not scroll)
         log(f"FortressFight ready (code={_code_version()})")
 
     # ------------------------------------------------------------------ fleet page
@@ -221,11 +255,14 @@ class FortressFight(ZoneExplore):
             self.invalidate_shot()
             gs = self.shot()[1]
             if not self.seen("ZFortressTitle", gs=gs):
+                self.fortress_title = None
                 return True
-            if self.seen("ZGuardAttack", "ZEstimateLabel", "ZDispatchTitle", gs=gs):
-                super().close_popup(2)          # a guard popup / dialog is still on top
+            k = self.seen(*self.FORTRESS_DIALOGS, gs=gs)    # a guard popup / dialog / building panel on top
+            if k is not None:
+                self.clear_fortress_dialogs(k)
             if not self.press("ZFortressBack", "< (leave fortress)", gone="ZFortressTitle"):
                 break
+        self.fortress_title = None
         return self.wait_for("ZExplore", 5)
 
     def open_fleet_page(self):
@@ -618,6 +655,8 @@ class FortressFight(ZoneExplore):
         """Zone map -> fortress icon -> info popup -> 袭击 -> fortress page. Each step is
         retried: taps on the map are sometimes dropped by the emulator."""
         if single_find("ZFortressTitle"):
+            if self.fortress_title is None:     # first sight of the page this run: it may be scrolled
+                self.scroll_to_top()
             return True
         if not self.on_map():
             self.close_popup()
@@ -635,20 +674,9 @@ class FortressFight(ZoneExplore):
                 continue
             log(f"铸械要塞 icon at ({icon.x:.0f},{icon.y:.0f})")
             # the icon opens an info popup (位置/坐标/距离/守卫等级) with a 袭击 button; a second
-            # tap is only sent when nothing opened (the popup covers the icon with 前往 etc.).
-            # Every template lookup costs ~0.5 s, so the checks are kept to one pass per tap and
-            # a tap that opened nothing is reported instead of waited on.
-            opened = None
-            for tap in range(TAP_BURST):
-                self.click(icon.x, icon.y, 1.5, "铸械要塞", force=True)
-                for look in range(2):           # a slow popup must not get a second tap on 前往
-                    opened = self.seen("ZFortressTitle", "ZGuardAttack", "ZGo", fresh=True)
-                    if opened or look:
-                        break
-                    time.sleep(1.0)
-                if opened:
-                    break
-                log(f"  tap {tap + 1} on the icon opened nothing")
+            # tap is only sent when nothing opened (the popup covers the icon with 前往 etc.)
+            opened = self.tap_until(icon.x, icon.y, "铸械要塞", TAP_BURST, ("ZFortressTitle", "ZGuardAttack", "ZGo"),
+                                    want=None, timeout=FORTRESS["icon_timeout"])
             if opened is None:
                 log(f"Fortress icon did not respond (attempt {attempt + 1})")
                 continue
@@ -659,65 +687,118 @@ class FortressFight(ZoneExplore):
                     log("No 袭击 on the popup, using 前往")
                     self.click_button("ZGo", 2.5, force=True)
             if self.wait_for("ZFortressTitle", 8):      # the page may take a few seconds to load
+                self.page_y, self.fortress_title, self.page_scanned = 0.0, None, 0.0   # fresh page, at the top
                 return True
             log(f"Fortress page not seen after the popup (attempt {attempt + 1})")
             self.close_popup()
         self.save_debug("fortress_page_missing")
         return False
 
-    def guard_cells(self):
+    def guard_cells(self, gray, title):
         """[(x, y, bright)] of every guard cell on the fortress page (logical px)."""
-        title = get_center("ZFortressTitle", "Single")
-        color, gray = self.shot()
         t = self.full_template("ZGuardBright")
+        h = int(FORTRESS["cell_half"] * self.sft)
         out = []
         for cx, cy, conf in match_all(gray, t, FORTRESS["guard_th"]):
             x, y = cx / self.sft, cy / self.sft
             if title is not None and y < title.y + FORTRESS["grid_top_dy"]:
                 continue
-            cell = gray[cy - 20:cy + 20, cx - 20:cx + 20]
+            cell = gray[cy - h:cy + h, cx - h:cx + h]
             out.append((x, y, float(cell.mean()) >= FORTRESS["bright_min"]))
         return out
 
-    def buildings(self):
-        """[(name, x, y, bright)] for 商店 / 委托站 / 指挥所."""
-        color, gray = self.shot()
-        out = []
-        for key, name in (("ZShopLabel", "商店"), ("ZDepotLabel", "委托站"), ("ZCommandLabel", "指挥所")):
-            p = get_center(key, "Single")
-            if p is None:
-                continue
-            px, py = int(p.x * self.sft), int(p.y * self.sft)
-            patch = gray[max(0, py - 90):py - 10, max(0, px - 40):px + 40]      # the building above its label
-            out.append((name, p.x, p.y - 35, float(patch.mean()) >= FORTRESS["building_bright_min"]))
-        return out
+    # building name labels on the fortress page (商店/委托站/指挥所 on the first screen, 资源库/
+    # 军事基地 further down). A ready building (guards around it cleared and recovered) is bright
+    # above its label: pages/boss/building_ready.png 商店 ~118, the still guarded 委托站/指挥所
+    # ~50. A raided one stays bright but wears a yellow 已损坏 badge over the building
+    # (building_broken.png) until it recovers. A ready building's tap shows 袭击 below the label
+    # (building_clicked.png), the same button and dispatch list as a guard.
+    BUILDING_LABELS = (("ZShopLabel", "商店"), ("ZDepotLabel", "委托站"), ("ZCommandLabel", "指挥所"),
+                       ("ZResourceLabel", "资源库"), ("ZMilitaryLabel", "军事基地"))
+    BUILDING_LABEL_TH = 0.8     # real labels match >= 0.97 on every page screenshot, other labels <= 0.68
+    BADGE_TH = 0.8
+    BADGE_DX, BADGE_DY = 45, (5, 70)    # 已损坏 badge centre relative to the label: |dx| and dy above
 
-    def visible_target(self):
-        cells = self.guard_cells()
-        bright = [c for c in cells if c[2]]
+    def buildings(self, gray, title):
+        """[(name, x, y, state)] for every building label on screen, top to bottom; state is
+        "ready", "dim" (guarded) or "broken" (已损坏 badge). Labels are matched below the
+        header only (on the unscrolled page 商店's label sits ~324 px below the title, a label
+        nearer than grid_top_dy has its building hidden under the header); the badge is looked
+        for only when some building is bright."""
+        top, bottom, half = (int(v * self.sft) for v in FORTRESS["building_patch"])
+        # the patch above the label must lie below the header too
+        y0 = int((title.y + FORTRESS["grid_top_dy"]) * self.sft) + top if title is not None else 0
+        y0 = max(0, min(y0, gray.shape[0]))
+        below = gray[y0:]
+        found = []
+        for key, name in self.BUILDING_LABELS:
+            hits = match_all(below, self.full_template(key), self.BUILDING_LABEL_TH)
+            if not hits:
+                continue
+            cx, cy, _ = hits[0]                 # match_all yields the best match first
+            cy += y0
+            if cy - top < 0:
+                continue
+            patch = gray[cy - top:cy - bottom, max(0, cx - half):cx + half]      # the building above its label
+            found.append((name, cx / self.sft, cy / self.sft, float(patch.mean()) >= FORTRESS["building_bright_min"]))
+        badges = []
+        if any(b[3] for b in found):            # the badge may reach above the label band
+            badges = [(cx / self.sft, cy / self.sft)
+                      for cx, cy, _ in match_all(gray, self.full_template("ZBrokenBadge"), self.BADGE_TH)]
+        out = []
+        for name, x, y, bright in found:
+            broken = any(abs(bx - x) < self.BADGE_DX and self.BADGE_DY[0] < y - by < self.BADGE_DY[1] for bx, by in badges)
+            out.append((name, x, y - FORTRESS["building_tap_dy"], "broken" if broken else "ready" if bright else "dim"))
+        return sorted(out, key=lambda b: (b[2], b[1]))
+
+    def visible_targets(self):
+        """(ready building or None, bright guards top to bottom, names of the building labels
+        on screen); one capture for all. Buildings whose taps showed no 袭击 recently and guard
+        spots that opened nothing (page coordinates, FAILED_TARGET_TTL) are skipped."""
+        self.invalidate_shot()
+        gray = self.shot()[1]
+        title = self.anchor("ZFortressTitle", gray) or self.fortress_title   # the header does not scroll
+        if title is not None:
+            self.fortress_title = title
+        blds = self.buildings(gray, title)
+        now = time.time()
+        for name, t in list(self.failed_targets.items()):
+            if now - t > FAILED_TARGET_TTL:
+                del self.failed_targets[name]
+        log("Buildings: " + (", ".join(f"{n} {st}{' (skipped)' if n in self.failed_targets else ''}" for n, _, _, st in blds)
+                             or "none on screen"))
+        building = next((Target("building", n, x, y) for n, x, y, st in blds
+                         if st == "ready" and n not in self.failed_targets), None)
+        cells = self.guard_cells(gray, title)
+        r = FORTRESS["spot_radius"]
+        self.tried_spots = [t for t in self.tried_spots if now - t[2] <= FAILED_TARGET_TTL]
+        bright = sorted((c for c in cells if c[2] and not any(abs(c[0] - sx) < r and abs(c[1] + self.page_y - sy) < r
+                                                              for sx, sy, _ in self.tried_spots)),
+                        key=lambda c: (c[1], c[0]))
         log(f"Guards: {len(cells)} cells, {len(bright)} attackable")
-        if bright:
-            bright.sort(key=lambda c: (c[1], c[0]))
-            x, y, _ = bright[0]
-            return "guard", x, y
-        for name, x, y, ok in self.buildings():
-            if ok:
-                return name, x, y
-        return None
+        guards = [Target("guard", None, x, y) for x, y, _ in bright]
+        return building, guards, {n for n, _, _, _ in blds}
 
     def scroll_fortress(self, up=True):
         """Scroll the fortress page (it is taller than the screen). Returns False when the page
         did not move, i.e. the end was reached."""
         from zone_explore import drag as _drag
-        title = get_center("ZFortressTitle", "Single")
+        title = self.fortress_title or get_center("ZFortressTitle", "Single")
         if title is None:
-            return False
+            return None                         # not on the fortress page (None, not "end")
         x = title.x + FORTRESS["scroll_x_dx"]
         y0, y1 = title.y + FORTRESS["scroll_y0_dy"], title.y + FORTRESS["scroll_y1_dy"]
         if not up:
             y0, y1 = y1, y0
+        # the page content between the header and the window bottom, for measuring the move
         self.invalidate_shot()
-        before = self.shot()[1]
+        h, w = self.shot()[1].shape
+        region = (max(0, title.x - FORTRESS["grid_half_w"]), title.y + FORTRESS["grid_top_dy"],
+                  min(w / self.sft, title.x + FORTRESS["grid_half_w"]), min(h / self.sft, title.y + FORTRESS["content_bottom_dy"]))
+        before = self.grab_region(region)
+        if before.size == 0:
+            log("Fortress page content area is off screen")
+            return None
         rx0, ry0 = self.to_real(x, y0)
         rx1, ry1 = self.to_real(x, y1)
         if self.dry_run:
@@ -726,33 +807,190 @@ class FortressFight(ZoneExplore):
         self.invalidate_shot()
         time.sleep(0.6)
         self.wait_still()
-        after = self.shot()[1]
-        moved = float(np.abs(before.astype(int) - after.astype(int)).mean()) > 3.0
-        log(f"Fortress page scroll {'up' if up else 'down'}: {'moved' if moved else 'end'}")
+        after = self.grab_region(region)
+        # "did not move" as measure_shift sees it (static_diff), so that the page end is reported
+        # even when a glowing cell changes a few pixels
+        moved = float(np.abs(before.astype(int) - after.astype(int)).mean()) > DRAG_LAYOUT["static_diff"]
+        if moved:
+            shift = self.measure_shift(before, after, 0, y1 - y0)
+            if shift is not None and abs(shift[1]) < 2:
+                moved = False                   # matched at zero: only the lighting changed
+            else:
+                dy = -shift[1] if shift is not None else (y0 - y1)     # content up = page scrolled down
+                if shift is None:
+                    log("  scroll move not measurable, nominal distance assumed")
+                self.page_y = max(0.0, self.page_y + dy)
+        log(f"Fortress page scroll {'up' if up else 'down'}: {'moved' if moved else 'end'} (page at {self.page_y:.0f})")
         return moved
 
-    def pick_target(self):
-        """First attackable thing on the page, scrolling down through it when the visible part
-        has none. Scrolls back up when nothing is found at all."""
+    def scroll_to_top(self):
+        """Scroll down to the page end; page_y is only reset when the top was really reached."""
+        for _ in range(FORTRESS["max_scrolls"] + 1):
+            moved = self.scroll_fortress(up=False)
+            if moved is None:
+                return False                    # page not there: page_y stays as it was
+            if not moved:
+                self.page_y = 0.0
+                self.page_scanned = 0.0         # the page moved: what was scanned may have changed
+                return True
+        return False
+
+    def pick_target(self, current_first=False):
+        """A ready building anywhere on the page (scanned top to bottom), otherwise the first
+        bright guard seen on the way, after scrolling back to its screen and locating it again
+        (the scroll is not exact). The scan stops early once the bottom buildings have been
+        seen and a guard is in hand. `current_first` takes what the current screen offers
+        before scanning: a ready building, or a guard when the page was already scanned since
+        it was opened. Leaves the page at the top when nothing is attackable."""
+        first = None
+        if current_first:
+            first = self.visible_targets()
+            if first[0] is not None:
+                return first[0]
+            if first[1] and time.time() - self.page_scanned < FORTRESS["scan_valid"]:
+                return first[1][0]
+        if self.page_y > 0:                     # left mid-way by an earlier pick
+            self.scroll_to_top()
+            first = None
+        guard, steps, seen_labels = None, 0, set()
         for i in range(FORTRESS["max_scrolls"] + 1):
-            t = self.visible_target()
-            if t is not None:
-                return t
+            building, guards, names = first if (i == 0 and first is not None) else self.visible_targets()
+            seen_labels |= names
+            if building is not None:
+                return building
+            if guards and guard is None:
+                guard = (i, guards[0], self.page_y)
+            if guard is not None and seen_labels >= set(FORTRESS["bottom_labels"]):
+                steps = i                       # the last buildings seen, none ready, a guard in hand
+                self.page_scanned = time.time()
+                break
             if i == FORTRESS["max_scrolls"] or not self.scroll_fortress(up=True):
+                steps = i
+                self.page_scanned = time.time()
                 break
-        for _ in range(FORTRESS["max_scrolls"]):
-            if not self.scroll_fortress(up=False):
-                break
+        if guard is None:
+            if steps:
+                self.scroll_to_top()
+            return None
+        step, g, guard_page_y = guard
+        for _ in range(steps - step):           # straight back to the guard's screen
+            self.scroll_fortress(up=False)
+        if steps != step:                       # scrolled: locate the guard again
+            # look; wait once when the page should be right (animation); then correct one step
+            # towards where the guard was seen, then two steps the other way (one undoes the
+            # first fix), looking again after each move
+            toward = self.page_y < guard_page_y
+            fixes = ([None] if abs(self.page_y - guard_page_y) < FORTRESS["relocate_slack"] else []) + [toward, not toward, not toward]
+            for attempt in range(len(fixes) + 1):
+                _, guards, _ = self.visible_targets()
+                g = guards[0] if guards else None
+                if g is not None or attempt == len(fixes):
+                    break
+                log(f"Guard not found again after scrolling back (attempt {attempt + 1}); page at {self.page_y:.0f}, seen at {guard_page_y:.0f}")
+                if fixes[attempt] is None:
+                    self.wait_still()
+                else:
+                    self.scroll_fortress(up=fixes[attempt])
+            if g is None:
+                self.save_debug("guard_lost")
+                self.scroll_to_top()
+        return g
+
+    MODAL_KEYS = ("ZBuyPrompt", "ZContinueHint", "ZEstimateLabel", "ZCancel")   # the tap went nowhere else
+
+    def tap_until(self, x, y, what, taps, keys, want="ZGuardAttack", timeout=None):
+        """Tap (x, y) until one of `keys` shows (precedence in their order), at most `taps`
+        times: the emulator drops taps now and then, but a tap must not be repeated while a
+        slow popup is still drawing (it would land on the popup). After a tap the keys are
+        polled for `timeout` seconds (tap_timeout); when another part of a popup shows before
+        `want` (袭击, drawn last), `want` still gets the rest of the timeout and at least
+        want_grace seconds. A modal dialog is returned at once: the tap went nowhere else.
+        Returns the key seen, or None."""
+        timeout = FORTRESS["tap_timeout"] if timeout is None else timeout
+        for tap in range(taps):
+            self.click(x, y, 1.5, what, force=True)
+            deadline = time.time() + timeout
+            k = self.wait_seen(keys, timeout)
+            if k is None:                       # a very slow popup: look once more before re-tapping
+                time.sleep(FORTRESS["tap_settle"])
+                k = self.seen(*keys, fresh=True)
+            if k is not None and want is not None and k != want and k not in self.MODAL_KEYS:
+                until = max(deadline, time.time() + FORTRESS["want_grace"])
+                while time.time() < until:
+                    time.sleep(0.5)
+                    if self.seen(want, fresh=True):
+                        k = want
+                        break
+            if k is not None:
+                return k
+            log(f"  tap {tap + 1} on {what} opened nothing")
         return None
 
-    def select_and_raid(self, x, y, name):
-        """Click a target on the fortress page and press its 袭击."""
-        self.click(x, y, 1.5, name, force=True)
-        if not self.wait_for("ZGuardAttack", 5):
-            log("袭击 did not appear")
+    # what a tap on the fortress page may leave on top (the fleet panel is a map thing); the
+    # guard popup's 袭击 ahead of the close hint here
+    FORTRESS_DIALOGS = ("ZBuyPrompt", "ZContinueHint", "ZEstimateLabel", "ZCancel", "ZGuardAttack") + tuple(
+        k for k in ZoneExplore.DIALOGS if k not in ("ZBuyPrompt", "ZContinueHint", "ZEstimateLabel", "ZCancel",
+                                                    "ZGuardAttack", "ZFleetSpeed"))
+
+    def clear_fortress_dialogs(self, on_top=None, passes=3):
+        """Dismiss what lies over the fortress page (purchase prompt, 点击任意处继续, estimate
+        dialog, building panel, dispatch list, guard popup). `on_top` is the key already
+        detected by the caller. Stops as soon as nothing is seen."""
+        return self.dismiss_all(self.FORTRESS_DIALOGS, passes, first=on_top)
+
+    def blank_spot(self):
+        """On the fortress page: the description text under the title (the map's plain_spot
+        needs the map anchors, which the fortress page does not show)."""
+        title = self.anchor("ZFortressTitle") or self.fortress_title   # the header may be dimmed by the popup
+        if title is not None:
+            return Point(title.x, title.y + FORTRESS["blank_dy"])
+        return super().blank_spot()
+
+    def select_and_raid(self, target):
+        """Click a target on the fortress page and press its 袭击. Returns "raided", "buy"
+        (the purchase prompt is up), "retry" (a dialog took the tap, the page moved or the
+        target could not be located again: not the target's fault, pick again) or "no_attack"
+        (the target opens no 袭击; a building is then skipped for FAILED_TARGET_TTL, a guard
+        spot likewise). A tap may be dropped, so a target that shows nothing at all is
+        located again and tapped up to FAILED_TARGET_MISSES times; a target that answers
+        with its own panel is given up at once."""
+        r = FORTRESS["spot_radius"]
+        for tap in range(FAILED_TARGET_MISSES):
+            on_top = self.tap_until(target.x, target.y, target.label, 1, self.FORTRESS_DIALOGS)
+            if on_top == "ZGuardAttack":
+                if self.press("ZGuardAttack", f"袭击 ({target.label})", gone="ZGuardAttack"):
+                    return "raided"
+                if self.seen("ZBuyPrompt", fresh=True):
+                    return "buy"
+                self.clear_fortress_dialogs()   # the popup is still open: do not pick on a dimmed page
+                return "retry"
+            log(f"袭击 did not appear for {target.label} (tap {tap + 1}): {on_top or 'nothing opened'}")
             self.save_debug("no_guard_attack")
-            return False
-        return self.press("ZGuardAttack", f"袭击 ({name})", gone="ZGuardAttack")
+            if on_top == "ZBuyPrompt":
+                return "buy"
+            if on_top == "ZCloseHint":          # its own panel, no 袭击: not attackable
+                self.clear_fortress_dialogs(on_top)
+                break
+            if on_top is not None:              # a dialog took the tap
+                self.clear_fortress_dialogs(on_top)
+                return "retry"
+            if tap + 1 < FAILED_TARGET_MISSES:  # nothing opened: locate it again before the next tap
+                building, guards, _ = self.visible_targets()
+                if target.kind == "building":
+                    again = building if building is not None and building.name == target.name else None
+                else:
+                    again = next((g for g in guards if abs(g.x - target.x) < r and abs(g.y - target.y) < r), None)
+                if again is None:
+                    log(f"{target.label} not found again; picking anew")
+                    return "retry"
+                target = again
+        if target.kind == "building":
+            log(f"{target.label} opens no 袭击; skipped for {FAILED_TARGET_TTL // 60} min")
+            self.failed_targets[target.name] = time.time()
+        else:
+            log(f"This guard opens no 袭击; skipped for {FAILED_TARGET_TTL // 60} min")
+            self.tried_spots.append((target.x, target.y + self.page_y, time.time()))
+        return "no_attack"
 
     def pick_dispatch_card(self, index):
         title = get_center("ZDispatchTitle", "Single")
@@ -773,13 +1011,21 @@ class FortressFight(ZoneExplore):
         if target is None:
             log("Nothing attackable on the fortress page")
             return False
-        name, x, y = target
-        log(f"Attack {name} at ({x:.0f},{y:.0f}) with fleet {index}")
-        for _ in range(3):
-            result = self.raid_once(index, name, x, y)
+        for _ in range(5):
+            log(f"Attack {target.label} at ({target.x:.0f},{target.y:.0f}) with fleet {index}")
+            result = self.raid_once(index, target)
             if result in ("launched", "cancelled"):     # cancelled = dry run
                 self.leave_fortress()                   # back to the map with the "<" button
                 return True
+            if result in ("retry", "no_attack"):
+                # the page may have been left or re-opened at the top: locate a target afresh
+                # (a target that opened no 袭击 is already on the skip lists)
+                if not self.open_fortress():
+                    break
+                target = self.pick_target(current_first=True)
+                if target is None:
+                    break
+                continue
             if result != "buy":
                 break
             # out of actions: buy, then the target has to be selected and 袭击 pressed again
@@ -789,24 +1035,24 @@ class FortressFight(ZoneExplore):
             time.sleep(1.5)
             # the estimate dialog or the guard popup may still be up under the dimmed title:
             # clear them, then make sure the fortress page is really in front
-            if single_find("ZEstimateLabel") or single_find("ZGuardAttack") or single_find("ZDispatchTitle"):
-                super().close_popup(3)
-            if not single_find("ZFortressTitle") and not self.open_fortress():
+            self.clear_fortress_dialogs()
+            if not self.open_fortress():                # returns at once when the page is in front
                 break
-            target = self.pick_target()
+            target = self.pick_target(current_first=True)    # the page was scanned moments ago
             if target is None:
                 break
-            name, x, y = target
-            log(f"Actions bought -> selecting {name} at ({x:.0f},{y:.0f}) again")
+            log("Actions bought -> selecting again")
         log("Attack not launched")
         self.leave_fortress()
         return False
 
-    def raid_once(self, index, name, x, y):
+    def raid_once(self, index, target):
         """One pass: target -> 袭击 -> fleet card -> estimate -> 袭击. Returns 'launched',
-        'cancelled' (dry run), 'buy' (purchase prompt appeared) or 'failed'."""
-        if not self.select_and_raid(x, y, name):
-            return "buy" if single_find("ZBuyPrompt") else "failed"
+        'cancelled' (dry run), 'buy' (purchase prompt appeared), 'no_attack' (the target opens
+        no 袭击), 'retry' (a dialog took the tap / the target was lost) or 'failed'."""
+        picked = self.select_and_raid(target)
+        if picked != "raided":
+            return picked
         for _ in range(12):
             if single_find("ZBuyPrompt"):
                 return "buy"
