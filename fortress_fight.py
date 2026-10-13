@@ -65,7 +65,7 @@ EDIT_LAYOUT = {
         ("骰子皮肤", 49, [(0, 500, 4), (-40, 500, 4)]),
         ("棋子", 149, [(-152.5, 465, 6), (-76.5, 465, 30)]),
     ],
-    "burst_gap": 0.12,         # seconds between removal taps (bursts are cheap, extra taps hit "+")
+    "burst_gap": 0.1,          # seconds between taps of a burst
     "tab_underline_dy": 82,    # the selected tab has a bright underline this far below the title (mean ~209 vs ~36)
     "tab_half_w": 40,
     "tab_retries": 4,
@@ -93,11 +93,12 @@ FORTRESS = {
     "max_scrolls": 6,
 }
 FULL_HP = 100
+TAP_BURST = 3                # taps per burst on idempotent buttons (tabs, 一键配队): a dropped tap is harmless
 HOLDER_OK_HP = 90            # the gear holder attacks again by itself above this hp (no swap)
 DEBUG_DIR = None             # --debug-shots: save the OCR crops here
 STATE_FILE = os.path.join(os.path.dirname(single_find_map["ZBase"]), "fortress_state.json")   # {"holder": N}
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
-POLL = 60
+POLL = 30
 
 
 DIGIT_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "digits")
@@ -289,8 +290,10 @@ class FortressFight(ZoneExplore):
         title = self.fleet_title()
         if title is None:
             return False
-        self.click(title.x + FLEET_PAGE_LAYOUT["tab_dx0"] + (index - 1) * FLEET_PAGE_LAYOUT["tab_spacing"],
-                   title.y + FLEET_PAGE_LAYOUT["tab_dy"], 1.5, f"fleet tab {index}", force=True)
+        # tabs are idempotent: a short burst makes a dropped tap harmless
+        self.burst(title.x + FLEET_PAGE_LAYOUT["tab_dx0"] + (index - 1) * FLEET_PAGE_LAYOUT["tab_spacing"],
+                   title.y + FLEET_PAGE_LAYOUT["tab_dy"], TAP_BURST)
+        time.sleep(1.0)
         return True
 
     def read_power(self):
@@ -469,7 +472,8 @@ class FortressFight(ZoneExplore):
 
     def select_edit_tab(self, et, name, tab_dx):
         for attempt in range(EDIT_LAYOUT["tab_retries"]):
-            self.click(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_dy"], 1.2, f"tab {name}", force=True)
+            self.burst(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_dy"], TAP_BURST)
+            time.sleep(0.8)
             if self.tab_selected(et, tab_dx):
                 return True
             log(f"  tab {name} not selected yet (attempt {attempt + 1})")
@@ -510,7 +514,8 @@ class FortressFight(ZoneExplore):
         gt = get_center("ZEditGearTitle", "Single")
         for tab_dx in GEAR_LAYOUT["tab_dx"]:
             for attempt in range(EDIT_LAYOUT["tab_retries"]):
-                self.click(gt.x + tab_dx, gt.y + GEAR_LAYOUT["tab_dy"], 1.2, "gear tab", force=True)
+                self.burst(gt.x + tab_dx, gt.y + GEAR_LAYOUT["tab_dy"], TAP_BURST)
+                time.sleep(0.8)
                 if self.tab_selected(gt, tab_dx):
                     break
                 log(f"  gear tab {tab_dx:+} not selected yet (attempt {attempt + 1})")
@@ -524,9 +529,12 @@ class FortressFight(ZoneExplore):
         if not self.open_fleet_page():
             return False
         self.select_tab(index)
-        if not self.click_button("ZAutoEquip", 2, force=True):
+        b = get_center("ZAutoEquip", "Single")
+        if b is None:
             log("一键配队 not found")
             return False
+        self.burst(b.x, b.y, TAP_BURST)             # idempotent: repeated taps re-apply the same loadout
+        time.sleep(2)
         if self.wait_for("ZRepairOk", 3):           # a confirmation dialog, if any
             self.click_button("ZRepairOk", 2, force=True)
         return True
@@ -834,10 +842,9 @@ class FortressFight(ZoneExplore):
             self.wait_for_dice_run()
         else:
             self.enter_map_from_main()
+        calibrated = False
         while True:
-            if self.on_map():
-                self.calibrate_scale()      # needs the map anchors; re-measured every pass
-            else:
+            if not self.on_map():
                 if not self.close_popup() and not self.enter_map_from_main():
                     log("Not on the zone map and no known page to leave; waiting")
                     self.save_debug("unknown_page")
@@ -845,6 +852,8 @@ class FortressFight(ZoneExplore):
                         return
                     time.sleep(POLL)
                     continue
+            if not calibrated and self.on_map():
+                calibrated = self.calibrate_scale()   # needs the map anchors; once per run
             if self.holder is None:
                 # every start looks for the gear afresh (it may have been moved by hand); inside
                 # the loop the holder is remembered and only verified when swapping

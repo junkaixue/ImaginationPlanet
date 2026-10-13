@@ -1629,6 +1629,7 @@ class ZoneExplore:
         """Zone name from the map title. Central ("深寒战场") is matched as a whole; outer zones
         differ only in two digits, so after aligning a learned title on the crop only the digit
         glyphs are compared. OCR of those glyphs is the fallback for zones not learned yet."""
+        self._title_ocr = None
         crop = self.title_crop()
         if crop is None:
             return None
@@ -1655,7 +1656,6 @@ class ZoneExplore:
         ranked = sorted(scores.items(), key=lambda kv: -kv[1])
         best = ranked[0][1] if ranked else 0.0
         close = [n for n, s in ranked if best - s < ZONE_LAYOUT["digit_margin"]] if best >= ZONE_LAYOUT["digit_match_th"] else []
-        self._title_ocr = None
         if len(close) == 1:
             return close[0]                     # one learned title clearly matches
         # no clear learned match (a zone not learned yet, or learned titles tied): OCR of the
@@ -1666,13 +1666,16 @@ class ZoneExplore:
         zone = _zone_from_ocr(digits) if digits else None
         if zone in close:
             return zone                         # OCR picks among the tied learned titles
-        if zone is not None and not self.title_learned(zone):
-            return zone                         # a zone not learned yet
-        if close and (digits is None or zone is None):
-            return close[0]                     # OCR unavailable or unusable: best learned tie
-        if central_conf >= 0.8 and digits == "":
+        if zone is not None and not close:
+            # a zone not learned yet, or a learned title that no longer matches (captured
+            # with an overlay, or at another window size): the stored title is stale
+            if self.title_learned(zone):
+                log(f"Learned title of zone {zone} did not match the screen; replacing it")
+                self.learn_title(zone)
+            return zone
+        if central_conf >= 0.8 and digits in (None, ""):
             return "central"
-        return None                             # OCR names a learned zone whose title did not match
+        return None                             # tied learned titles that OCR could not separate
 
     def ocr_title_digits(self, title):
         """OCR of the two digit glyphs of an (aligned) outer-zone title crop -> '05' or ''."""
@@ -2082,9 +2085,9 @@ class ZoneExplore:
     def enter_zone_explore(self):
         """From the main (dice) page: close the dice popup and click 星际探险 until the map shows."""
         for _ in range(3):
-            if not single_find("ZMoreDice"):
+            c = get_center("ZMoreDice", "Single")    # not cached; None once the popup is gone
+            if c is None:
                 break
-            c = get_center("ZMoreDice", "Single")
             self.click(c.x + MORE_DICE_LAYOUT["close_dx"], c.y + MORE_DICE_LAYOUT["close_dy"], 1.5,
                        "close dice popup", force=True)
         # navigation, harmless: a dry run clicks it too
