@@ -162,7 +162,6 @@ class FortressFight(ZoneExplore):
         super().__init__(dry_run=dry_run)
         self.holder = None        # fleet index currently carrying the best gear
         self.pending_repair = set()   # fleets whose repair could not be started yet
-        self.artifacts_stripped = True   # False when the old holder's right-column artifacts stayed on
         log(f"FortressFight ready (code={_code_version()})")
 
     # ------------------------------------------------------------------ fleet page
@@ -375,7 +374,6 @@ class FortressFight(ZoneExplore):
     # ------------------------------------------------------------------ equipment moves
     def unequip_all(self, index):
         """Remove every piece of gear from fleet `index` through the 编辑舰队 tabs."""
-        self.artifacts_stripped = False
         if not self.open_slot_page(index, EQUIP_LAYOUT["slot_dx"][0], EQUIP_LAYOUT["row_dy"][0], "gear slot",
                                    lambda: single_find("ZEditFleetTitle")):
             log("编辑舰队 did not open")
@@ -398,7 +396,7 @@ class FortressFight(ZoneExplore):
         log("Gear removed and confirmed" if ok else "编辑舰队 could not be confirmed")
         if ok:
             self.unequip_cats(index)
-            self.artifacts_stripped = self.unequip_right_artifacts(index)
+            self.unequip_right_artifacts(index)
             if UNEQUIP_BOTTOM_ARTIFACTS:
                 self.unequip_bottom_artifacts(index)
         return ok
@@ -459,11 +457,9 @@ class FortressFight(ZoneExplore):
     def artifact_page_open(self):
         """An artifact edit page (编辑低级/高级/顶级神器): the fleet page is gone and the page has
         its confirm button. ZCloseHint alone is not enough, the fleet page shows it too."""
-        page = self.edit_page_open()
-        if page in ("ZEditFleetTitle", "ZEditCatTitle", "ZEditGearTitle"):
-            return False                    # a neighbouring slot's page, not an artifact page
-        return bool(page == "ZEditArtifactTitle"
-                    or (single_find("ZCloseHint") and not single_find("ZMyFleet") and get_center("ZRepairOk", "Single")))
+        # edit_page_open() reports "ZCloseHint" for an edit page without a learned title, which
+        # is what the 高级/顶级 artifact pages are; the other titled pages are neighbours' slots
+        return self.edit_page_open() in ("ZEditArtifactTitle", "ZCloseHint")
 
     def open_slot_page(self, index, dx, dy, what, opened, tries=3, wait=8.0):
         """Tap a slot on fleet `index`'s tab until `opened()` is true (the tap may be dropped or
@@ -594,13 +590,14 @@ class FortressFight(ZoneExplore):
         if not self.auto_equip(target):
             return False
         if not self.ensure_boss_artifact(target):
-            if self.artifacts_stripped:
+            # 残骸本源 may still sit on the old holder (a dropped tap on its artifact page):
+            # check its slot, strip again and retry once
+            self.open_fleet_page()
+            self.select_tab(holder)
+            if not self.has_boss_artifact():
                 return False
-            # 残骸本源 still sits on the old holder (its artifact page did not open): strip it
-            # again and retry once
-            log("残骸本源 not set on the new fleet; stripping the old holder's artifacts again")
-            self.artifacts_stripped = self.unequip_right_artifacts(holder)
-            if not self.artifacts_stripped:
+            log(f"残骸本源 is still on fleet {holder}; stripping its artifacts again")
+            if not self.unequip_right_artifacts(holder):
                 log(f"Could not strip the artifacts of fleet {holder}")
                 return False
             if not self.ensure_boss_artifact(target):
@@ -618,30 +615,39 @@ class FortressFight(ZoneExplore):
 
     # ------------------------------------------------------------------ fortress page
     def open_fortress(self):
+        """Zone map -> fortress icon -> info popup -> 袭击 -> fortress page. Each step is
+        retried: taps on the map are sometimes dropped by the emulator."""
         if single_find("ZFortressTitle"):
             return True
         if not self.on_map():
             self.close_popup()
         # the fortress icon template was captured at 75%; the game may come up at 50%
         self.ensure_zoom()
-        self.invalidate_shot()
-        # the program is started in the central zone with the fortress on screen; no zone logic
-        icon = get_center("ZFortressMap", "Single")
-        if icon is None:
-            log("铸械要塞 icon not on screen")
-            self.save_debug("no_fortress_icon")
-            return False
-        log(f"铸械要塞 icon at ({icon.x:.0f},{icon.y:.0f})")
-        self.click(icon.x, icon.y, 2.5, "铸械要塞", force=True)
-        # the icon opens an info popup (位置/坐标/距离/守卫等级) with a 袭击 button -> fortress page
-        if self.wait_for("ZGuardAttack", 5):
-            log("Fortress popup -> 袭击")
-            self.press("ZGuardAttack", "袭击 (fortress popup)", appears="ZFortressTitle")
-        elif single_find("ZGo"):
-            self.click_button("ZGo", 2.5, force=True)
-        if self.wait_for("ZFortressTitle", 8):
-            return True
-        log("Fortress page title not seen after clicking the icon")
+        for attempt in range(3):
+            if not self.on_map():
+                self.close_popup()          # a leftover popup from the previous attempt hides the icon
+            self.invalidate_shot()
+            # the program is started in the central zone with the fortress on screen; no zone logic
+            icon = get_center("ZFortressMap", "Single")
+            if icon is None:
+                log(f"铸械要塞 icon not on screen (attempt {attempt + 1})")
+                self.save_debug("no_fortress_icon")
+                continue
+            log(f"铸械要塞 icon at ({icon.x:.0f},{icon.y:.0f})")
+            # the icon opens an info popup (位置/坐标/距离/守卫等级) with a 袭击 button; tapping the
+            # icon is idempotent while the popup is up, so a short burst covers a dropped tap
+            self.burst(icon.x, icon.y, TAP_BURST)
+            time.sleep(2)
+            if self.wait_for("ZGuardAttack", 5):
+                log("Fortress popup -> 袭击")
+                if self.press("ZGuardAttack", "袭击 (fortress popup)", appears="ZFortressTitle"):
+                    return True
+            elif single_find("ZGo"):
+                self.click_button("ZGo", 2.5, force=True)
+                if self.wait_for("ZFortressTitle", 8):
+                    return True
+            log(f"Fortress page not seen after clicking the icon (attempt {attempt + 1})")
+            self.close_popup()
         self.save_debug("fortress_page_missing")
         return False
 
@@ -755,13 +761,10 @@ class FortressFight(ZoneExplore):
             return False
         name, x, y = target
         log(f"Attack {name} at ({x:.0f},{y:.0f}) with fleet {index}")
-        for round_no in range(3):
+        for _ in range(3):
             result = self.raid_once(index, name, x, y)
-            if result == "launched":
+            if result in ("launched", "cancelled"):     # cancelled = dry run
                 self.leave_fortress()                   # back to the map with the "<" button
-                return True
-            if result == "cancelled":                   # dry run
-                self.leave_fortress()
                 return True
             if result != "buy":
                 break
@@ -770,8 +773,15 @@ class FortressFight(ZoneExplore):
                 log("Could not buy actions" if not self.dry_run else "[DRY] stopped at the purchase prompt")
                 break
             time.sleep(1.5)
-            self.close_popup() if not single_find("ZFortressTitle") else None
-            log(f"Actions bought -> selecting {name} again")
+            # the receipt may have closed more than the prompt: get back onto the fortress
+            # page and pick the target afresh (the page can have scrolled or re-rendered)
+            if not single_find("ZFortressTitle") and not self.open_fortress():
+                break
+            target = self.pick_target()
+            if target is None:
+                break
+            name, x, y = target
+            log(f"Actions bought -> selecting {name} at ({x:.0f},{y:.0f}) again")
         log("Attack not launched")
         self.leave_fortress()
         return False
@@ -789,7 +799,8 @@ class FortressFight(ZoneExplore):
                     log("[DRY] estimate dialog reached -> would press 袭击; cancelling")
                     self.press("ZCancel", "取消 (dry run)", gone="ZEstimateLabel")
                     return "cancelled"
-                self.press("ZAttack", "袭击 (estimate)", gone="ZEstimateLabel")   # estimates do not matter here
+                if not self.press("ZAttack", "袭击 (estimate)", gone="ZEstimateLabel"):   # estimates do not matter
+                    return "buy" if single_find("ZBuyPrompt") else "failed"
                 # the action is charged here: give a purchase prompt a moment to show up
                 for _ in range(6):
                     if single_find("ZBuyPrompt"):

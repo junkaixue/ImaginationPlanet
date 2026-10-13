@@ -1209,7 +1209,11 @@ class ZoneExplore:
             self.press("ZBuyCancel", "取消 (buy actions)", gone="ZBuyPrompt")
             return False
         log(f"Buying {ACTION_PACK_SIZE} actions for {ACTION_PACK_COINS} coins")
-        if not self.press("ZBuyOk", "确定 (buy actions)", appears="ZContinueHint"):
+        if not self.press("ZBuyOk", "确定 (buy actions)", gone="ZBuyPrompt"):
+            log("The purchase prompt did not close")
+            self.close_popup()
+            return False
+        if not self.wait_for("ZContinueHint", 10):
             # the prompt closed without the receipt (e.g. not enough coins): nothing was bought
             log("No purchase receipt after 确定; treating the purchase as failed")
             self.close_popup()
@@ -1551,11 +1555,16 @@ class ZoneExplore:
         return ok
 
     def select_tab(self, index):
+        """Fleet tab on 我的舰队; idempotent, so a short burst covers a dropped tap."""
         title = self.anchor("ZMyFleet")
         if title is None:
             return False
-        self.click(title.x + FLEET_PAGE_LAYOUT["tab_dx0"] + (index - 1) * FLEET_PAGE_LAYOUT["tab_spacing"],
-                   title.y + FLEET_PAGE_LAYOUT["tab_dy"], 1.5, f"fleet tab {index}", force=True)
+        x = title.x + FLEET_PAGE_LAYOUT["tab_dx0"] + (index - 1) * FLEET_PAGE_LAYOUT["tab_spacing"]
+        y = title.y + FLEET_PAGE_LAYOUT["tab_dy"]
+        for _ in range(3):
+            self.raw_click(x, y)
+            time.sleep(0.1)
+        time.sleep(1.0)
         return True
 
     def confirm_repair(self, index):
@@ -1579,7 +1588,7 @@ class ZoneExplore:
                 return True
             log(f"Fleet {index}: repair not running after confirming (attempt {attempt + 1})")
             if single_find("ZRepairPrompt"):
-                self.press("ZCancel", "取消 (stuck repair prompt)", gone="ZRepairPrompt", tries=1)
+                self.close_popup()          # dismiss the stuck prompt (its 取消 matches the generic template)
         log(f"Fleet {index} repair failed")
         return False
 
