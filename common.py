@@ -211,7 +211,7 @@ single_find_map = {
     "ZSelectZone": get_image_path("zone/select_zone.png"),
     # map resources
     "ZFactory1": get_image_path("zone/factory1.png"),
-    "ZFactory2": get_image_path("zone/factory2.png"),   # green factory: template not captured yet (optional)
+    "ZFactory2": get_image_path("zone/factory2.png"),   # green factory
     "ZFactory3": get_image_path("zone/factory3.png"),   # pink/orange factory
     "ZFactory4": get_image_path("zone/factory4.png"),   # blue factory with an ore symbol (04区)
     "ZBigBattle": get_image_path("zone/big_battle.png"),

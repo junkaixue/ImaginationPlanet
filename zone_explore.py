@@ -183,7 +183,9 @@ ZONE_LAYOUT = {
     "title_dx": 28, "title_dy": 75, "title_half_w": 62, "title_half_h": 13,   # map title digits, from ZBase
     "title_match_th": 0.9,
     # "深寒外环0X区" is 7 glyphs from x=19 to 220 in the learned crops; glyphs 5-6 are the digits
-    "digit_c0": 128, "digit_c1": 196, "digit_match_th": 0.95, "digit_margin": 0.03,
+    "digit_c0": 128, "digit_c1": 196,       # both digit glyphs (OCR window)
+    "glyph_c0": 169, "glyph_c1": 190,       # the second digit only: the leading "0" is the same everywhere
+    "digit_match_th": 0.9, "digit_margin": 0.05,
 }
 # Rival fleets heading to the same target: clicking the target shows a panel "舰队N同目标点舰队:"
 # with one "预计到达: hh:mm:ss" per rival. Our own remaining time is the countdown under the
@@ -300,6 +302,16 @@ def _install_screenshot_scaler():
 def _uninstall_screenshot_scaler():
     if pyautogui.screenshot is _scaled_screenshot and _SCREENSHOT["orig"] is not None:
         pyautogui.screenshot = _SCREENSHOT["orig"]
+
+
+OCR_CONFUSIONS = {frozenset("38"), frozenset("40"), frozenset("59")}   # tesseract on the zone title font
+
+
+def _digits_confusable(a, b):
+    """True when the two digit strings are equal up to the known OCR confusions."""
+    if len(a) != len(b):
+        return False
+    return all(x == y or frozenset((x, y)) in OCR_CONFUSIONS for x, y in zip(a, b))
 
 
 def _code_version():
@@ -1619,23 +1631,29 @@ class ZoneExplore:
             central_conf = cv2.minMaxLoc(cv2.matchTemplate(padded, central, cv2.TM_CCOEFF_NORMED))[1]
             if central_conf >= ZONE_LAYOUT["title_match_th"]:
                 return "central"
-        c0, c1 = ZONE_LAYOUT["digit_c0"], ZONE_LAYOUT["digit_c1"]
-        scores, aligned = {}, None
+        # Only the second digit glyph is compared: the leading "0" is identical for every outer
+        # zone and would make e.g. 05 and 06 look 96% alike.
+        g0, g1 = ZONE_LAYOUT["glyph_c0"], ZONE_LAYOUT["glyph_c1"]
+        scores, aligned = {}, {}
         for name, t in titles.items():
             r = cv2.matchTemplate(padded, t, cv2.TM_CCOEFF_NORMED)
             _, _, _, loc = cv2.minMaxLoc(r)
             al = padded[loc[1]:loc[1] + t.shape[0], loc[0]:loc[0] + t.shape[1]]
-            if aligned is None:
-                aligned = al
-            scores[name] = float(cv2.matchTemplate(al[:, c0:c1], t[:, c0:c1], cv2.TM_CCOEFF_NORMED).max())
-        if scores:
-            ranked = sorted(scores.items(), key=lambda kv: -kv[1])
-            best, second = ranked[0][1], ranked[1][1] if len(ranked) > 1 else 0.0
-            if best >= ZONE_LAYOUT["digit_match_th"] and best - second >= ZONE_LAYOUT["digit_margin"]:
-                return ranked[0][0]
-        digits = self.ocr_title_digits(aligned if aligned is not None else crop)
-        if digits:
-            return digits
+            aligned[name] = al
+            scores[name] = float(cv2.matchTemplate(al[:, g0:g1], t[:, g0:g1], cv2.TM_CCOEFF_NORMED).max())
+        ranked = sorted(scores.items(), key=lambda kv: -kv[1])
+        close = [n for n, s in ranked if s >= ZONE_LAYOUT["digit_match_th"] and ranked[0][1] - s < ZONE_LAYOUT["digit_margin"]]
+        if len(close) == 1:
+            return close[0]                     # one learned title clearly matches
+        # no clear learned match (a zone not learned yet, or two learned titles tied): OCR of
+        # the digit glyphs decides; tesseract confuses 3/8, 4/0 and 5/9 on this font, so a
+        # reading that is confusable with exactly one tied candidate picks that candidate
+        digits = self.ocr_title_digits(aligned[ranked[0][0]] if ranked else crop)
+        agreeing = [n for n in close if _digits_confusable(digits, n)] if digits else []
+        if len(agreeing) == 1:
+            return agreeing[0]
+        if digits and digits != "00" and not close:
+            return digits                       # a clean reading of an unlearned zone
         if central_conf >= 0.8:
             return "central"
         return None
@@ -1696,6 +1714,8 @@ class ZoneExplore:
         self.ensure_zoom()
         seen = self.read_zone()
         if seen == name:
+            if name not in self.learned_titles():
+                self.learn_title(name)      # recognised by OCR only: keep the title for next time
             self.zone = name
             return True
         if name not in self.learned_titles() and self.title_looks_like(name, seen):
@@ -1717,7 +1737,7 @@ class ZoneExplore:
         digits = self.ocr_title_digits(crop)
         if name == "central":
             return digits == ""
-        return digits == name
+        return _digits_confusable(digits, name)
 
     # ------------------------------------------------------------------ survey then dispatch
     def to_map(self, x, y):
