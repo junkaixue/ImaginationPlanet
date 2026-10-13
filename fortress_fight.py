@@ -428,24 +428,18 @@ class FortressFight(ZoneExplore):
     def tab_selected(self, et, tab_dx):
         """The selected tab shows a bright underline below its label."""
         self.invalidate_shot()
-        gray = self.shot()[1]
-        cx, cy = et.x + tab_dx, et.y + EDIT_LAYOUT["tab_underline_dy"]
-        x1, x2 = int((cx - EDIT_LAYOUT["tab_half_w"]) * self.sft), int((cx + EDIT_LAYOUT["tab_half_w"]) * self.sft)
-        y1, y2 = int((cy - 5) * self.sft), int((cy + 5) * self.sft)
-        band = gray[y1:y2, x1:x2]
+        band = self.band(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_underline_dy"], EDIT_LAYOUT["tab_half_w"], 5)
         if band.size == 0:
             return False
         rows = band.mean(axis=1)
         return float(rows.max()) > 110          # unselected tabs stay below ~45 here
 
-    def select_edit_tab(self, et, name, tab_dx):
-        for attempt in range(EDIT_LAYOUT["tab_retries"]):
-            self.burst(et.x + tab_dx, et.y + EDIT_LAYOUT["tab_dy"], TAP_BURST)
-            time.sleep(0.8)
-            if self.tab_selected(et, tab_dx):
-                return True
-            log(f"  tab {name} not selected yet (attempt {attempt + 1})")
-        return False
+    def select_edit_tab(self, et, name, tab_dx, tab_dy=None):
+        """Tab of an edit page (编辑舰队 / 编辑装备): tapped until its underline shows."""
+        dy = EDIT_LAYOUT["tab_dy"] if tab_dy is None else tab_dy
+        return self.select_until(f"tab {name}", lambda: self.tab_selected(et, tab_dx),
+                                 lambda: self.burst(et.x + tab_dx, et.y + dy, TAP_BURST),
+                                 EDIT_LAYOUT["tab_retries"])
 
     def artifact_page_open(self):
         """An artifact edit page (编辑低级/高级/顶级神器): the fleet page is gone and the page has
@@ -463,7 +457,12 @@ class FortressFight(ZoneExplore):
                 self.close_popup()
                 continue
             title = self.fleet_title()
+            if title is None:               # a transient miss (tab animation): look once more
+                self.invalidate_shot()
+                title = self.fleet_title()
             if title is None:
+                log(f"{what}: 我的舰队 title lost (attempt {attempt + 1})")
+                self.close_popup()
                 continue
             self.click(title.x + dx, title.y + dy, 2, what, force=True)
             start = time.time()
@@ -506,12 +505,8 @@ class FortressFight(ZoneExplore):
             log("编辑装备 title lost after opening")
             return False
         for tab_dx in GEAR_LAYOUT["tab_dx"]:
-            for attempt in range(EDIT_LAYOUT["tab_retries"]):
-                self.burst(gt.x + tab_dx, gt.y + GEAR_LAYOUT["tab_dy"], TAP_BURST)
-                time.sleep(0.8)
-                if self.tab_selected(gt, tab_dx):
-                    break
-                log(f"  gear tab {tab_dx:+} not selected yet (attempt {attempt + 1})")
+            if not self.select_edit_tab(gt, f"gear {tab_dx:+}", tab_dx, GEAR_LAYOUT["tab_dy"]):
+                log(f"  gear tab {tab_dx:+} underline not seen; tapping its preview anyway")
             px, py = GEAR_LAYOUT["preview"]
             self.burst(gt.x + px, gt.y + py, 3)
         ok = self.confirm_edit("编辑装备")

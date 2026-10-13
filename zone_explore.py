@@ -244,7 +244,10 @@ FACTORY_LAYOUT = {"slots": 5, "dx0": -47, "spacing": 80, "dy": 381, "free_plus_d
                   "quota_dx": 115, "quota_dy": -190, "quota_half_w": 140, "quota_half_h": 10}
 
 # "我的舰队" page: fleet tab centers relative to the title center.
-FLEET_PAGE_LAYOUT = {"tab_dx0": -151, "tab_spacing": 76, "tab_dy": 66}
+# the selected tab is drawn on a bright background: a band tab_sel_dy below the title averages
+# ~115 there, the other tabs ~35
+FLEET_PAGE_LAYOUT = {"tab_dx0": -151, "tab_spacing": 76, "tab_dy": 66, "tab_sel_dy": 78, "tab_sel_half_w": 15,
+                     "tab_sel_min": 75, "tab_retries": 3}
 
 # Boosting a sailing fleet: click its rocket icon in the top bar (icon_dy above the status text;
 # cross-zone fleets sometimes need several clicks) -> panel with "加速" -> dialog with one row per
@@ -334,6 +337,13 @@ def _code_version():
                                        stderr=subprocess.DEVNULL, timeout=3).decode().strip()
     except Exception:
         return "unknown"
+
+
+class _PageCovered(Exception):
+    """我的舰队 is dimmed by a dialog on top: no tab reads bright."""
+    def __init__(self, bright):
+        super().__init__("page covered")
+        self.bright = {k: round(v) for k, v in bright.items()}
 
 
 class ZoneExplore:
@@ -1570,15 +1580,61 @@ class ZoneExplore:
         self.invalidate_shot()
         return times
 
+    def band(self, cx, cy, half_w, half_h):
+        """Gray crop around a reference-frame point from the current shot (may be empty)."""
+        gray = self.shot()[1]
+        x1, x2 = int((cx - half_w) * self.sft), int((cx + half_w) * self.sft)
+        y1, y2 = int((cy - half_h) * self.sft), int((cy + half_h) * self.sft)
+        return gray[max(y1, 0):max(y2, 0), max(x1, 0):max(x2, 0)]
+
+    def select_until(self, what, shown, tap, retries, settle=0.8):
+        """Tap until `shown()` holds, checking before the first tap and after the last one."""
+        for attempt in range(retries):
+            if shown():
+                return True
+            tap()
+            time.sleep(settle)
+            log(f"  {what} not shown yet (attempt {attempt + 1})")
+        return shown()
+
+    def fleet_tab_brightness(self, title):
+        """Mean brightness under each tab label of 我的舰队 (index -> value, same shot)."""
+        L = FLEET_PAGE_LAYOUT
+        self.invalidate_shot()
+        out = {}
+        for i in range(1, SHIP_LAYOUT["slots"] + 1):
+            b = self.band(title.x + L["tab_dx0"] + (i - 1) * L["tab_spacing"], title.y + L["tab_sel_dy"],
+                          L["tab_sel_half_w"], 2)
+            out[i] = float(b.mean()) if b.size else 0.0
+        return out
+
     def select_tab(self, index):
-        """Fleet tab on 我的舰队; idempotent, so a short burst covers a dropped tap."""
+        """Fleet tab on 我的舰队: tapped only when another tab is shown, verified afterwards (a
+        dropped tap is retried). Confirming an edit sub-page returns to the same tab, so going
+        through the gear slots of one fleet costs no tab taps. Exactly one tab is bright on the
+        page itself; none is when a dialog dims it, and then nothing is tapped."""
+        self.invalidate_shot()
         title = self.anchor("ZMyFleet")
         if title is None:
             return False
-        self.burst(title.x + FLEET_PAGE_LAYOUT["tab_dx0"] + (index - 1) * FLEET_PAGE_LAYOUT["tab_spacing"],
-                   title.y + FLEET_PAGE_LAYOUT["tab_dy"])
-        time.sleep(1.0)
-        return True
+        L = FLEET_PAGE_LAYOUT
+
+        def shown():
+            bright = self.fleet_tab_brightness(title)
+            if max(bright.values()) < L["tab_sel_min"]:
+                raise _PageCovered(bright)
+            return bright[index] >= L["tab_sel_min"]
+
+        try:
+            if self.select_until(f"fleet tab {index}", shown,
+                                 lambda: self.burst(title.x + L["tab_dx0"] + (index - 1) * L["tab_spacing"],
+                                                    title.y + L["tab_dy"]),
+                                 L["tab_retries"], settle=1.0):
+                return True
+        except _PageCovered as e:
+            log(f"我的舰队 is dimmed by something on top (tab brightness {e.bright}); not tapping tab {index}")
+        self.save_debug(f"fleet_tab_{index}")
+        return False
 
     def confirm_repair(self, index):
         """On 我的舰队: press 修理舰队 on fleet `index`, confirm, and verify that the tab now
@@ -1586,7 +1642,7 @@ class ZoneExplore:
         good (only full-hp fleets are ever picked again). Returns True when the repair runs."""
         for attempt in range(3):
             if not self.select_tab(index):
-                log(f"Fleet {index}: 我的舰队 page is not open")
+                log(f"Fleet {index}: its tab could not be selected on 我的舰队")
                 return False
             if single_find("ZFleetRepairing"):
                 log(f"Fleet {index} is under repair")
