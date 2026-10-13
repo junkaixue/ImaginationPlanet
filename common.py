@@ -257,6 +257,7 @@ single_find_map = {
     "ZRepair": get_image_path("zone/repair.png"),
     "ZRepairPrompt": get_image_path("zone/repair_prompt.png"),
     "ZRepairOk": get_image_path("zone/repair_ok.png"),
+    "ZFleetRepairing": get_image_path("zone/fleet_repairing.png"),   # "舰队修理中..." on a fleet tab under repair
     # zone map
     "ZZoneList": get_image_path("zone/zone_list_title.png"),       # "远古深寒区" title of the zone chooser
     # Fleet panel (click a sailing ship in the top bar) and the boost dialog
@@ -329,7 +330,7 @@ no_cache_list = ["CatHouse", "Exit", "Replace", "Chat", "RollRed", "DiamRed", "C
                  "ShipFree", "Star", "BlackMarket", "CloseTab",
                  "ZBase", "ZGo", "ZEnergy", "ZAttack", "ZCancel", "ZCloseHint", "ZBackArrow", "ZSlotPower",
                  "ZFactoryPage", "ZZoom50", "ZTeam", "ZMyFleet", "ZRepair", "ZDispatchTitle", "ZEstimateLabel",
-                 "ZBuyOk", "ZBuyCancel", "ZContinueHint", "ZAttackPage", "ZRepairOk", "ZSlotFree", "ZOurGoing",
+                 "ZBuyOk", "ZBuyCancel", "ZContinueHint", "ZAttackPage", "ZRepairOk", "ZFleetRepairing", "ZSlotFree", "ZOurGoing",
                  "ZStarExplore", "ZAutoThrowing", "ZMoreDice", "ZLongPressAuto",
                  "ZFleetSpeed", "ZAccelerate", "ZReturnHome", "ZBoostPage", "ZQuantumBoost", "ZSuperBoost", "ZLargeBoost", "ZUseButton",
                  "ZZoneList", "ZSelectZone", "ZRivalPanel",

@@ -161,6 +161,7 @@ class FortressFight(ZoneExplore):
     def __init__(self, dry_run=False):
         super().__init__(dry_run=dry_run)
         self.holder = None        # fleet index currently carrying the best gear
+        self.pending_repair = set()   # fleets whose repair could not be started yet
         log(f"FortressFight ready (code={_code_version()})")
 
     # ------------------------------------------------------------------ fleet page
@@ -285,6 +286,9 @@ class FortressFight(ZoneExplore):
             self.click(title.x + EQUIP_LAYOUT["close_dx"], title.y + EQUIP_LAYOUT["close_dy"], 1.5,
                        "dimmed top bar (close 我的舰队)", force=True)
         return self.close_popup()
+
+    def select_fleet_tab(self, index):          # shared helper (zone_explore) -> burst version
+        return self.select_tab(index)
 
     def select_tab(self, index):
         title = self.fleet_title()
@@ -573,13 +577,13 @@ class FortressFight(ZoneExplore):
         return ok
 
     def repair_fleet(self, index):
-        """一键配队 first (a fleet without a loadout cannot be repaired), then 修理舰队."""
+        """一键配队 first (a fleet without a loadout cannot be repaired), then the shared
+        verified repair (修理舰队 -> 确认 -> "舰队修理中..." shown)."""
         if not self.auto_equip(index):
             return False
-        ok = self.click_button("ZRepair", 2, force=True)
-        if ok and self.wait_for("ZRepairPrompt", 6):
-            ok = self.click_button("ZRepairOk", 2, force=True)
-        log(f"Fleet {index} repair {'confirmed' if ok else 'failed'}")
+        ok = self.confirm_repair(index)
+        if not ok:
+            self.save_debug(f"repair_failed_{index}")
         return ok
 
     def swap_gear(self, holder, target):
@@ -609,7 +613,8 @@ class FortressFight(ZoneExplore):
         log(f"Fleet {target} loadout vs standard: {score:.2f}")
         if score < EQUIP_LAYOUT["loadout_th"]:
             log("Loadout differs from the standard screenshot; check the equipment by hand")
-        self.repair_fleet(holder)
+        if not self.repair_fleet(holder):
+            self.pending_repair.add(holder)     # retried at the start of every later pass
         self.close_fleet_page()
         return True
 
@@ -854,6 +859,10 @@ class FortressFight(ZoneExplore):
                     continue
             if not calibrated and self.on_map():
                 calibrated = self.calibrate_scale()   # needs the map anchors; once per run
+            for i in sorted(self.pending_repair):
+                if self.open_fleet_page() and self.repair_fleet(i):
+                    self.pending_repair.discard(i)
+                self.close_fleet_page()
             if self.holder is None:
                 # every start looks for the gear afresh (it may have been moved by hand); inside
                 # the loop the holder is remembered and only verified when swapping

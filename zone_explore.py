@@ -1511,16 +1511,47 @@ class ZoneExplore:
             log("Fleet page did not open")
             self.close_popup()
             return False
-        title = self.anchor("ZMyFleet")
-        tx = title.x + FLEET_PAGE_LAYOUT["tab_dx0"] + (index - 1) * FLEET_PAGE_LAYOUT["tab_spacing"]
-        ty = title.y + FLEET_PAGE_LAYOUT["tab_dy"]
-        self.click(tx, ty, 2, f"fleet tab {index}")
-        ok = self.click_button("ZRepair", 2)
-        if ok and self.wait_for("ZRepairPrompt", 6):
-            ok = self.click_button("ZRepairOk", 2)
-            log("Repair confirmed" if ok else "Repair confirm button not found")
+        ok = self.confirm_repair(index)
         self.close_popup()
         return ok
+
+    def select_fleet_tab(self, index):
+        title = self.anchor("ZMyFleet")
+        if title is None:
+            return False
+        self.click(title.x + FLEET_PAGE_LAYOUT["tab_dx0"] + (index - 1) * FLEET_PAGE_LAYOUT["tab_spacing"],
+                   title.y + FLEET_PAGE_LAYOUT["tab_dy"], 1.5, f"fleet tab {index}", force=True)
+        return True
+
+    def fleet_repairing(self, index):
+        """True when the open 我的舰队 page shows fleet `index` under repair ("舰队修理中...")."""
+        return (self.select_fleet_tab(index) and self.wait_for("ZMyFleet", 2)
+                and bool(single_find("ZFleetRepairing")))
+
+    def confirm_repair(self, index):
+        """On 我的舰队: press 修理舰队 on fleet `index`, confirm, and verify that the tab now
+        shows "舰队修理中..."; retried, because a dropped tap here leaves the fleet damaged for
+        good (only full-hp fleets are ever picked again). Returns True when the repair runs."""
+        for attempt in range(3):
+            if not self.select_fleet_tab(index) or not self.wait_for("ZMyFleet", 3):
+                log(f"Fleet {index}: 我的舰队 page is not open")
+                return False
+            if single_find("ZFleetRepairing"):
+                log(f"Fleet {index} is under repair")
+                return True
+            if not self.click_button("ZRepair", 2, force=True):
+                log(f"Fleet {index}: 修理舰队 button not found (attempt {attempt + 1})")
+            elif self.wait_for("ZRepairPrompt", 6) and not self.click_button("ZRepairOk", 2, force=True):
+                log(f"Fleet {index}: 确认 not found on the repair prompt (attempt {attempt + 1})")
+            time.sleep(2)
+            if self.fleet_repairing(index):
+                log(f"Fleet {index} repair confirmed")
+                return True
+            log(f"Fleet {index}: repair not running after confirming (attempt {attempt + 1})")
+            if single_find("ZRepairPrompt") or single_find("ZCancel"):
+                self.click_button("ZCancel", 1.5, force=True)   # a stuck prompt: dismiss and retry
+        log(f"Fleet {index} repair failed")
+        return False
 
     # ------------------------------------------------------------------ main loop
     def process_screen(self):
