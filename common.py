@@ -284,9 +284,6 @@ single_find_map = {
     "ZAutoEquip": get_image_path("zone/auto_equip.png"),              # "一键配队"
     "ZEditFleetTitle": get_image_path("zone/edit_fleet_title.png"),   # "编辑舰队"
     "ZEditArtifactTitle": get_image_path("zone/edit_artifact_title.png"),  # "编辑低级神器"
-    "ZArtifactTarget": get_image_path("zone/artifact_target.png"),    # 残骸本源 (boss artifact)
-    "ZArtifactCheck": get_image_path("zone/artifact_check.png"),      # check mark on the equipped artifact
-    "ZArtifactSlot": get_image_path("zone/artifact_slot.png"),        # 残骸本源 as shown in the fleet page slot
     "ZLoadoutStandard": get_image_path("zone/loadout_standard.png"),  # the complete best loadout (我的舰队 grid)
     "ZPlusSlot": get_image_path("zone/plus_slot.png"),                # "+" empty slot in 编辑舰队
     "ZEditGearTitle": get_image_path("zone/edit_gear_title.png"),     # "编辑装备" (bottom-row artifacts)
