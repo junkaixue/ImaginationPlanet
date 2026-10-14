@@ -79,7 +79,10 @@ GEAR_LAYOUT = {"tab_dx": (-150, -50, 50, 150), "tab_dy": 62, "preview": (0, 470)
 CAT_LAYOUT = {"slot": (76.5, 132.5), "item": (-76, 511), "count": 3}
 # ---- right-column artifact slots (row 1 = 高级, holds 残骸本源; row 2 = 顶级, lv.14): on the page the equipped
 # artifact is shown in the preview area above the buttons; tapping it removes it.
-ARTIFACT_SLOTS = {"rows": (0, 1), "preview_from_confirm": (-92, -147)}
+# boss_th: 残骸本源's template score needed per right-column row. Row 0: other gold artifacts
+# score <= 0.79. Row 1: the 顶级 artifacts score <= 0.43; 残骸本源 was never captured there, so
+# the bar is a little lower, still above what any other gold artifact reaches (0.79)
+ARTIFACT_SLOTS = {"rows": (0, 1), "preview_from_confirm": (-92, -147), "boss_th": (0.9, 0.85)}
 UNEQUIP_BOTTOM_ARTIFACTS = True     # the four bottom slots (not the lv.6 shield); flow unverified
 # ---- 派遣舰队 list, card centers relative to the "派遣舰队" title
 DISPATCH_CARDS = {"dx": -15, "dy0": 105, "spacing": 125}
@@ -116,15 +119,41 @@ FORTRESS = {
 FULL_HP = 100
 TAP_BURST = 3                # taps per burst on idempotent buttons (tabs, 一键配队): a dropped tap is harmless
 PENDING_REPAIR_TRIES = 3     # passes a failed repair is retried from pending_repair before giving up
+DEFERRED_EQUIP_TRIES = 3     # passes a stripped fleet's deferred 一键配队 is retried before giving up
 SWAP_FINISH_TRIES = 3        # passes an unfinished gear swap is resumed before it is abandoned
 HOLDER_LOOKUP_TRIES = 3      # consecutive failures to find the gear holder before the run stops
+SHIPS_FRESH = 20             # seconds a ship bar reading is trusted to say a fleet is idle
 ARTIFACT_FLEETS_MAX = 2      # fleets on which 残骸本源 could not be set before the run stops
 HOLDER_OK_HP = 90            # the gear holder attacks again by itself above this hp (no swap)
 DEBUG_DIR = None             # --debug-shots: save the OCR crops here
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
+OWNER_WAIT_MAX = 2 * RETURN_TIMEOUT   # a swap waits this long for the 残骸本源 owner; then each pass is a failed try
+ARTIFACT_SEEN_TTL = 120      # seconds a 残骸本源 slot reading of a fleet tab stays usable (no edit since)
 POLL = 30
 FAILED_TARGET_TTL = 15 * 60  # seconds a building is skipped after FAILED_TARGET_MISSES taps showed no 袭击
 FAILED_TARGET_MISSES = 2     # taps on a building in one go that showed no 袭击: the first may be dropped
+
+# result sentinels
+
+
+class _Sentinel:
+    """A result marker. Compared with `is`; a truth test is a bug and raises."""
+    def __init__(self, name):
+        self.name = name
+
+    def __repr__(self):
+        return self.name
+
+    def __bool__(self):
+        raise TypeError(f"compare {self.name} with `is`, not by truth value")
+
+
+BLOCKED = _Sentinel("BLOCKED")          # finish_swap: waiting for the fleet that holds 残骸本源
+UNREADABLE = _Sentinel("UNREADABLE")    # boss_artifact_row: the fleet tab could not be read
+UNCLEAR = _Sentinel("UNCLEAR")          # scroll_fortress: an end decided on an unexplained change
+SECOND_SLOT = _Sentinel("SECOND_SLOT")  # ensure_boss_artifact: 残骸本源 sits in the second artifact slot
+CHECKED = _Sentinel("CHECKED")          # ensure_boss_artifact: checked in the grid, slot not recognised
+NOWHERE = _Sentinel("NOWHERE")          # locate_boss_artifact: on no fleet
 
 # something to attack on the fortress page: kind "building" (name 商店/委托站/...) or "guard"
 # (name None); x, y in the reference frame
@@ -195,6 +224,8 @@ def read_yellow_number(rgb):
 
 
 class FortressFight(ZoneExplore):
+    TAB_DIM_LOOKS = 3                   # the fleet panel here is often still fading when a tab is read
+
     def __init__(self, dry_run=False):
         super().__init__(dry_run=dry_run)
         self.holder = None        # fleet index currently carrying the best gear
@@ -204,10 +235,18 @@ class FortressFight(ZoneExplore):
         self.artifact_bad = set()     # fleets on which 残骸本源 could not be set repeatedly: never attack with them
         self.lookup_unreadable = False  # the last find_gear_holder failed to read the fleet page (not: no match)
         self.swap_fails = 0           # consecutive swap_gear failures before the holder is looked for again
+        self.calibrated = False       # the window scale was measured on the map
+        self.ships_at = 0.0           # time of the last scan_ships
         self.swap = None              # an unfinished gear swap (see finish_swap)
         self.deferred_repair = set()  # fleets to repair once the gear has a known owner again
+        self.deferred_equip = set()   # full-hp stripped fleets to 一键配队 once the gear has an owner
+        self.equip_tries = {}         # fleet -> deferred 一键配队 attempts
+        self.holder_artifact_check = False  # 残骸本源 was taken off a non-holder: set it on the holder
+        self.artifact_seen = {}       # fleet -> (残骸本源 row or None, time) read on its tab; cleared by any edit
+        self.no_direct_attack = set() # holders whose check swap failed: they attack only after a swap
         self.failed_targets = {}      # building name -> time its tap showed no 袭击
-        self.tried_spots = []         # (page step, x, y, time) of guards that opened no 袭击
+        self.tried_spots = []         # (x, page y, time) of guards that opened no 袭击
+        self.page_off = 0.0           # how far the content is scrolled from the top (measured px)
         self.page_step = 0            # up-scrolls from the top of the fortress page (screens are 220 px apart)
         self.fortress_title = None    # title position on the open fortress page (the header does not scroll)
         log(f"FortressFight ready (code={_code_version()})")
@@ -235,6 +274,7 @@ class FortressFight(ZoneExplore):
     def confirm_edit(self, what="edit page"):
         """Press 确认 on an edit sub-page and wait until it is gone. Never 取消: that would undo
         every removal made on the page."""
+        self.artifact_seen.clear()              # equipment changes: the slot readings are stale
         for attempt in range(3):
             page = self.edit_page_open()
             if page is None:
@@ -353,19 +393,40 @@ class FortressFight(ZoneExplore):
         except ValueError:
             return None
 
-    def has_boss_artifact(self):
-        """True when the top-right slot of the open fleet tab shows 残骸本源."""
+    def boss_artifact_row(self):
+        """Which right-column artifact slot of the open fleet tab shows 残骸本源 (0: the top-right
+        one, 1: the one below), None when neither, UNREADABLE when the tab cannot be read."""
         title = self.fleet_title()
         if title is None:
-            return False
+            return UNREADABLE
         self.invalidate_shot()
         gray = self.shot()[1]
-        dx, dy = EQUIP_LAYOUT["artifact_slot"]
-        # other gold artifacts (冰核本源, 蓝冰本源) match this icon at <= 0.79, 残骸本源 at >= 0.99
-        for cx, cy, conf in match_all(gray, self.full_template("ZArtifactSlot"), 0.9):
-            if abs(cx / self.sft - (title.x + dx)) < 40 and abs(cy / self.sft - (title.y + dy)) < 40:
-                return True
-        return False
+        dx, dy0 = EQUIP_LAYOUT["artifact_slot"]     # row 0 is the top-right slot; row 1 below it
+        # other gold artifacts (冰核本源, 蓝冰本源) match this icon at <= 0.79, 残骸本源 at >= 0.99;
+        # the second row's artifacts score <= 0.43 (pages/boss fleet screenshots)
+        hits = match_all(gray, self.full_template("ZArtifactSlot"), min(ARTIFACT_SLOTS["boss_th"]))
+        for row in ARTIFACT_SLOTS["rows"]:
+            dy = dy0 + EQUIP_LAYOUT["row_dy"][row] - EQUIP_LAYOUT["row_dy"][0]
+            if any(conf >= ARTIFACT_SLOTS["boss_th"][row]
+                   and abs(cx / self.sft - (title.x + dx)) < 40 and abs(cy / self.sft - (title.y + dy)) < 40
+                   for cx, cy, conf in hits):
+                return row
+        return None
+
+    def scan_ships(self):
+        ships = super().scan_ships()
+        self.ships_at = time.time()             # how old the ship bar reading is (claim_from_owner)
+        return ships
+
+    def artifact_row_on(self, index):
+        """boss_artifact_row on fleet `index`'s tab (page opened, tab selected: select_tab does
+        not tap when the tab is shown already). UNREADABLE when that fails."""
+        if not (self.open_fleet_page() and self.select_tab(index)):
+            return UNREADABLE
+        row = self.boss_artifact_row()
+        if row is not UNREADABLE:
+            self.artifact_seen[index] = (row, time.time())
+        return row
 
     def loadout_score(self):
         """How well the open tab's equipment grid matches the standard best loadout (0..1)."""
@@ -404,6 +465,9 @@ class FortressFight(ZoneExplore):
                 return None
             powers[i] = self.read_power()
             scores[i] = self.loadout_score()
+            row = self.boss_artifact_row()      # (the tab is shown anyway: saves a later walk)
+            if row is not UNREADABLE:
+                self.artifact_seen[i] = (row, time.time())
         log("Fleet power: " + ", ".join(f"{i}:{p}" for i, p in powers.items())
             + " | loadout match: " + ", ".join(f"{i}:{s:.2f}" for i, s in scores.items()))
         matching = [i for i, s in scores.items() if s >= EQUIP_LAYOUT["loadout_th"]]
@@ -449,24 +513,16 @@ class FortressFight(ZoneExplore):
             if UNEQUIP_BOTTOM_ARTIFACTS:
                 self.unequip_bottom_artifacts(index)
             # the one thing the next fleet cannot do without: 残骸本源 must be off this fleet
-            for _ in range(2):
-                if not self.open_fleet_page() or not self.select_tab(index):
-                    log(f"Fleet {index}: cannot verify the artifact slot, fleet page not open")
-                    return False
-                if not self.has_boss_artifact():
-                    break
-                log(f"残骸本源 is still on fleet {index}; stripping its artifacts again")
-                self.unequip_right_artifacts(index)
-            else:
-                log(f"Could not strip 残骸本源 from fleet {index}")
+            if not self.strip_boss_artifact(index, first_check=True):
                 return False
         return ok
 
-    def unequip_right_artifacts(self, index):
-        """The artifact slots in the right column (rows 1 and 2) each open their own edit page;
-        the equipped artifact sits in the preview area above 取消/确认, tapping it removes it."""
+    def unequip_right_artifacts(self, index, rows=ARTIFACT_SLOTS["rows"]):
+        """The artifact slots in the right column (`rows`, by default rows 1 and 2) each open
+        their own edit page; the equipped artifact sits in the preview area above 取消/确认,
+        tapping it removes it."""
         all_ok = True
-        for row in ARTIFACT_SLOTS["rows"]:
+        for row in rows:
             if not self.open_slot_page(index, EQUIP_LAYOUT["slot_dx"][4], EQUIP_LAYOUT["row_dy"][row],
                                        f"artifact slot row {row + 1}", self.artifact_page_open):
                 all_ok = False
@@ -588,37 +644,198 @@ class FortressFight(ZoneExplore):
             log("一键配队 not found")
             return False
         self.burst(b.x, b.y, TAP_BURST)             # idempotent: repeated taps re-apply the same loadout
+        self.artifact_seen.clear()                  # (it may take a loose 残骸本源)
         time.sleep(2)
         if self.wait_for("ZRepairOk", 3):           # a confirmation dialog, if any
             self.click_button("ZRepairOk", 2, force=True)
         return True
 
     def ensure_boss_artifact(self, index):
-        """Top-right artifact slot must hold 残骸本源."""
+        """Top-right artifact slot must hold 残骸本源. True: it does; SECOND_SLOT: it sits in this
+        fleet's second artifact slot; None: it is not in the artifact grid (equipped on another
+        fleet); CHECKED: the grid shows it equipped on this fleet but the tab did not show where
+        (trusted unless another fleet has it); False: any other failure."""
+        def from_row(row):                      # what a read of the fleet tab says, or None
+            if row == 0:
+                log("残骸本源 already equipped")
+                return True
+            if row == 1:                        # in the second slot: taken off and set again
+                log("残骸本源 sits in the second artifact slot")
+                return SECOND_SLOT
+            return None
+
+        # the fleet tab shows it directly: no need to open the grid when it is in place
+        row = self.artifact_row_on(index)       # (select_tab already waits out a fading panel)
+        r = from_row(row)
+        if r is not None:
+            return r
         dx, dy = EQUIP_LAYOUT["artifact_slot"]
         if not self.open_slot_page(index, dx, dy, "artifact slot", self.artifact_page_open):
             log("The artifact page did not open")
             return False
         target = get_center("ZArtifactTarget", "Single")
+        if target is None:                      # the grid may still be settling: look once more
+            time.sleep(0.5)
+            target = get_center("ZArtifactTarget", "Single")
         check = get_center("ZArtifactCheck", "Single")
         if target is None:
-            log("残骸本源 not found in the artifact grid")
+            log("残骸本源 not found in the artifact grid (equipped on another fleet?)")
             self.click_button("ZCancel", 2, force=True)
-            return False
+            return None
         if check is not None and abs(check.x - target.x) < 60 and abs(check.y - target.y) < 80:
-            log("残骸本源 already equipped")
             self.click_button("ZCancel", 2, force=True)
-            return True
+            again = self.artifact_row_on(index)
+            r = from_row(again)
+            if r is not None:
+                return r
+            if again is UNREADABLE:             # the tab cannot be read: the check mark is trusted
+                log("残骸本源 already equipped (check mark; the tab could not be read)")
+                return True
+            log("残骸本源 is checked in the grid but its slot was not recognised; looking at the other fleets")
+            return CHECKED
         self.click(target.x, target.y, 1.5, "残骸本源", force=True)
         ok = self.confirm_edit("编辑低级神器")
         log("Artifact set to 残骸本源" if ok else "编辑低级神器 could not be confirmed")
         return ok
 
-    def repair_fleet(self, index):
+    def locate_boss_artifact(self, target):
+        """Where 残骸本源 is equipped on another fleet than `target` (it cannot be taken from the
+        grid while it is; ensure_boss_artifact has just read the target's own tab): (fleet,
+        row), NOWHERE, or UNREADABLE when a tab could not be read."""
+        unread = []
+        for i in range(1, SHIP_LAYOUT["slots"] + 1):
+            if i == target:
+                continue
+            seen = self.artifact_seen.get(i)    # a recent reading with no edit since needs no tab tap
+            row = seen[0] if seen and time.time() - seen[1] < ARTIFACT_SEEN_TTL else self.artifact_row_on(i)
+            if row is UNREADABLE:
+                unread.append(i)                # the others may still tell
+                continue
+            if row is not None:
+                log(f"残骸本源 is equipped on fleet {i} (artifact row {row + 1})")
+                return i, row
+        if unread:
+            log(f"残骸本源 not on the readable fleets; tabs {unread} could not be read")
+            return UNREADABLE
+        log("残骸本源 is on no fleet")
+        return NOWHERE
+
+    def strip_boss_artifact(self, index, rows=ARTIFACT_SLOTS["rows"], first_check=False):
+        """Make sure 残骸本源 is off fleet `index`: empty its right artifact `rows` and check the
+        tab, two rounds. `first_check` looks before the first strip (it may be off already).
+        True: off; False: still on; None: the final check could not read the tab (falsy for
+        callers that only need "made sure")."""
+        for attempt in range(2):
+            if first_check or attempt:
+                row = self.artifact_row_on(index)
+                if row is UNREADABLE:
+                    log(f"Fleet {index}: cannot check the artifact slots")
+                    return None                 # (not known: not a failed take)
+                if row is None:
+                    return True
+                if attempt:
+                    rows = (row,)               # where it is now
+            log(f"Taking 残骸本源 off fleet {index} (round {attempt + 1})")
+            self.unequip_right_artifacts(index, rows=rows)
+        row = self.artifact_row_on(index)
+        if row is UNREADABLE:
+            log(f"Fleet {index}: the artifact slots could not be checked after the strip")
+            return None                         # (not known: not a failed take)
+        log(f"残骸本源 {'removed from' if row is None else 'still on'} fleet {index}")
+        return row is None
+
+    def claim_from_owner(self, sw, ships, recheck=False):
+        """Take 残骸本源 off sw['artifact_owner'] once that fleet is idle (waited for as long as
+        it takes: BLOCKED meanwhile, also when its status cannot be read; idle is read again
+        right before the strip). True when taken; a damaged owner is repaired as the swap ends.
+        False when the take failed (the pass counts as a failed try)."""
+        owner, row = sw["artifact_owner"]
+        s = (ships or {}).get(owner, {})
+        if owner != sw["target"]:
+            if s.get("idle") and recheck and time.time() - self.ships_at > SHIPS_FRESH:
+                # the pass's scan is old by now (the tab walk took a while): read the bar again
+                self.close_fleet_page()
+                s = self.scan_ships().get(owner, {})    # (unread: not known to be idle, wait)
+            if not s.get("idle"):
+                now_t = time.time()
+                sw["owner_since"] = sw["owner_since"] or now_t
+                sw["owner_warned"] = sw["owner_warned"] or sw["owner_since"]
+                waited = now_t - sw["owner_since"]
+                if waited > OWNER_WAIT_MAX:
+                    # never read idle in all this time (its status may not be readable at all):
+                    # each pass now counts as a failed try, so the swap is abandoned in the end
+                    # (not held against the owner: nothing was tried on it)
+                    log(f"Fleet {owner} (残骸本源) not idle after {waited // 60:.0f} min, status "
+                        f"{s.get('status', 'unknown')}; this pass counts as a failed try")
+                    sw["take_failed"] = False
+                    return False
+                if now_t - sw["owner_warned"] > RETURN_TIMEOUT:     # once per RETURN_TIMEOUT
+                    log(f"Warning: still waiting for fleet {owner} (残骸本源) for {waited // 60:.0f} min, status "
+                        f"{s.get('status', 'unknown')}; check by hand if it is not really out. "
+                        "Its slot is read again once it is idle")
+                    self.save_debug("artifact_owner_wait")
+                    sw["owner_warned"] = now_t
+                return BLOCKED
+        sw["owner_since"] = sw["owner_warned"] = None   # a new wait starts afresh
+        sw["take_failed"] = False               # (only a failed strip below sets it)
+        now = self.artifact_row_on(owner)       # the slot may have changed while it was out
+        if now is UNREADABLE:
+            return False                        # (a read failure: not held against the owner)
+        sw["artifact_owner"] = None
+        if now is None:                         # no longer there: the grid gets another look
+            log(f"残骸本源 is no longer on fleet {owner}")
+            return True
+        stripped = self.strip_boss_artifact(owner, rows=(now,))
+        if not stripped:
+            sw["artifact_owner"] = (owner, now)
+            sw["take_failed"] = stripped is False   # (None: not readable, tried again)
+            return False
+        if owner == sw["target"]:               # its second slot is empty now: refilled at the end
+            sw["refill_target"] = True
+        else:                                   # its emptied slot is filled at the end of the swap
+            if s.get("hp") != FULL_HP:
+                sw["to_repair"].add(owner)      # (repair_fleet starts with 一键配队)
+            else:
+                sw["re_equip"].add(owner)
+        return True
+
+    def re_equip(self, fleets, check_artifact=True):
+        """一键配队 on stripped full-hp fleets (no loadout left); 残骸本源, if 一键配队 took it while
+        it lay loose, is taken off again (it belongs to the holder)."""
+        for fleet in sorted(fleets):
+            equipped = self.auto_equip(fleet)
+            ok = equipped and (not check_artifact or self.keep_artifact_off(fleet))
+            if equipped and not ok:
+                self.holder_artifact_check = True   # 残骸本源 may sit here: the holder's check swap finds it
+            if self.retry_later(self.equip_tries, fleet, ok, "一键配队", DEFERRED_EQUIP_TRIES):
+                self.deferred_equip.add(fleet)
+
+    def keep_artifact_off(self, fleet):
+        """After 一键配队 on a fleet that is not the gear holder: 残骸本源, if it lay loose and was
+        taken, comes off again (only that slot). False when that could not be made sure."""
+        if fleet == self.holder:
+            return True
+        row = self.artifact_row_on(fleet)       # (select_tab waits out fades)
+        if row is UNREADABLE:
+            log(f"Fleet {fleet}: could not check for 残骸本源 after 一键配队")
+            return False
+        if row is not None:
+            if not self.strip_boss_artifact(fleet, rows=(row,)):
+                log(f"Fleet {fleet}: 一键配队 took 残骸本源 and it could not be taken off again")
+                return False
+            self.holder_artifact_check = True   # it lies loose now: the holder gets it before attacking
+        return True
+
+    def repair_fleet(self, index, check_artifact=False):
         """一键配队 first (a fleet without a loadout cannot be repaired), then the shared
-        verified repair (修理舰队 -> 确认 -> "舰队修理中..." shown)."""
+        verified repair (修理舰队 -> 确认 -> "舰队修理中..." shown). `check_artifact`: 残骸本源 may
+        lie loose (outside a finished swap), so it is kept off this fleet; None when the repair
+        was skipped for that reason."""
         if not self.auto_equip(index):
             return False
+        if check_artifact and not self.keep_artifact_off(index):
+            self.holder_artifact_check = True   # 残骸本源 may sit here: the holder's check swap finds it
+            return None                         # no repair now (it would keep 残骸本源 for its length)
         ok = self.confirm_repair(index)
         if not ok:
             self.save_debug(f"repair_failed_{index}")
@@ -626,11 +843,14 @@ class FortressFight(ZoneExplore):
 
     def swap_gear(self, holder, target, ships):
         """Strip the gear holder and give the gear to `target` (finish_swap does the equipping
-        part; when it fails the swap is remembered and resumed on the next pass). Stripped and
-        damaged fleets are repaired afterwards unless `ships` shows them at full hp."""
+        part; when it fails the swap is remembered and resumed on the next pass). The fleet
+        handed in (it was due a swap because of its hp) and the actually stripped holder are
+        repaired afterwards unless `ships` shows them at full hp; a stripped holder at full hp
+        gets 一键配队 instead (a fleet without a loadout)."""
         log(f"Move the best gear from fleet {holder} to fleet {target}")
         not_full = lambda i: ships.get(i, {}).get("hp") != FULL_HP     # hp unknown counts as damaged
-        damaged = {holder} if not_full(holder) else set()
+        damaged = {holder} if not_full(holder) else set()   # (repaired even when another fleet turns out
+                                                            # to hold the gear: it was due a swap for its hp)
         # the fleet page is open now anyway: make sure the remembered holder really has the gear
         if not self.open_fleet_page() or not self.select_tab(holder):
             self.close_fleet_page()
@@ -647,18 +867,52 @@ class FortressFight(ZoneExplore):
             if not_full(found):
                 damaged.add(found)              # stripped below: repaired too
         # from here on the gear may be loose: the swap is remembered and resumed until it is done
-        self.swap = {"holder": holder, "target": target, "to_repair": damaged - {target},
-                     "unequipped": holder == target, "tries": 1}
+        self.swap = self.make_swap(holder, target, to_repair=damaged, re_equip={holder} - damaged)
         if holder == target:                    # the gear is already on the fleet about to attack
             log(f"Fleet {target} already carries the best gear; nothing to move")
-        return self.finish_swap()
+        return self.finish_swap(ships)
 
-    def finish_swap(self):
+    @staticmethod
+    def make_swap(holder, target, to_repair=(), re_equip=()):
+        """The record of a gear swap (holder == target: a check of the holder). Keys:
+        unequipped (the holder was stripped), equipped (一键配队 on the target done and its loadout
+        checked), tries, to_repair / re_equip (fleets for repair or
+        一键配队 when it ends), artifact_owner ((fleet, row) 残骸本源 is taken from) with
+        owner_since (start of the wait for it) and owner_warned (last warning), take_failed (the
+        last try failed at taking it off that fleet), refill_target (the target's second slot was
+        emptied), artifact_failed (the artifact step failed on the last try), errored (a pass
+        ended in an exception: abandoned at once, the gear must not stay loose)."""
+        return {"holder": holder, "target": target, "unequipped": holder == target, "tries": 0,
+                "to_repair": set(to_repair) - {target}, "re_equip": set(re_equip) - {target},
+                "artifact_owner": None, "owner_since": None, "owner_warned": None, "artifact_failed": False,
+                "take_failed": False, "refill_target": False, "equipped": False, "errored": False}
+
+    def finish_swap(self, ships):
         """A gear swap from the stripping on, in a fixed order: unequip the holder (unless done),
         一键配队 on the target, loadout check, 残骸本源, then the holder is recorded and the
         fleets in to_repair (the stripped holder when damaged, the damaged fleet the swap was
         made for) are repaired. With holder == target it is a check of the holder itself. Returns
-        False (keeping self.swap for the next pass) as soon as a step fails."""
+        True when done, BLOCKED while 残骸本源 sits on a fleet that is out (waiting is not a
+        failed try), False (keeping self.swap for the next pass) as soon as a step fails."""
+        sw = self.swap
+        try:
+            if sw["artifact_owner"] is not None:    # 残骸本源 to be taken from a fleet first
+                r = self.claim_from_owner(sw, ships)    # (BLOCKED while it is out: no page work)
+                if r is not True:
+                    if r is False:
+                        sw["tries"] += 1
+                        self.close_fleet_page()     # (the take opened it)
+                    return r
+            sw["take_failed"] = False           # (blamed on the owner only when this try fails there)
+            r = self._finish_swap(ships)
+        except Exception:
+            sw["errored"] = True                # run() restarts the pass; _run abandons the swap first
+            raise
+        if r is not BLOCKED and not r:          # (waiting for the 残骸本源 owner is not a try; the
+            sw["tries"] += 1                    # swap's own repairs wait: 一键配队 could take loose gear)
+        return r
+
+    def _finish_swap(self, ships):
         sw = self.swap
         target = sw["target"]
         sw["artifact_failed"] = False       # only the step reached on this attempt counts
@@ -667,22 +921,77 @@ class FortressFight(ZoneExplore):
                 if not self.unequip_all(sw["holder"]):
                     return False
                 sw["unequipped"] = True
-            if not self.auto_equip(target):     # opens the page and selects the target's tab
-                return False
-            score = self.loadout_score()
-            log(f"Fleet {target} loadout vs standard: {score:.2f}")
-            if score < EQUIP_LAYOUT["loadout_th"]:
-                if sw["holder"] == target:      # a check of the holder: it must really carry the gear
-                    log("Loadout differs from the standard screenshot; this fleet does not hold the gear")
+            if not sw["equipped"]:              # once: a later pass may find 残骸本源 loose in the
+                if not self.auto_equip(target): # grid, which 一键配队 could put into the second slot
                     return False
-                log("Loadout differs from the standard screenshot; check the equipment by hand")
-            if not self.ensure_boss_artifact(target):
+                score = self.loadout_score()
+                log(f"Fleet {target} loadout vs standard: {score:.2f}")
+                if score < EQUIP_LAYOUT["loadout_th"]:
+                    if sw["holder"] == target:  # a check of the holder: it must really carry the gear
+                        log("Loadout differs from the standard screenshot; this fleet does not hold the gear")
+                        return False
+                    log("Loadout differs from the standard screenshot; check the equipment by hand")
+                sw["equipped"] = True
+            ok = self.ensure_boss_artifact(target)
+            if ok is SECOND_SLOT or ok is None or ok is CHECKED:   # equipped somewhere: take it from there
+                where = (target, 1) if ok is SECOND_SLOT else self.locate_boss_artifact(target)
+                checked, ok = ok is CHECKED, None
+                if checked and (where is NOWHERE or where is UNREADABLE):
+                    # no readable fleet has it: the grid's check mark (it is on this fleet) holds
+                    log("Warning: 残骸本源 is checked for the target and on no readable fleet, but its slot "
+                        "was not recognised; taken as equipped, check the top-right slot by hand")
+                    self.save_debug("artifact_checked_unrecognised")
+                    ok = True
+                elif where is UNREADABLE:       # a tab could not be read: try again next pass
+                    return False                # (not the target's fault; an abandon leaves a check swap)
+                elif where is not NOWHERE:
+                    sw["artifact_owner"], sw["owner_since"], sw["owner_warned"] = where, None, None
+                    log(f"残骸本源 will be taken off fleet {where[0]} once it is idle")
+                    r = self.claim_from_owner(sw, ships, recheck=True)
+                    if r is not True:
+                        return r
+                    ok = self.ensure_boss_artifact(target)
+                    if ok is None or ok is CHECKED:     # it moved on to yet another fleet meanwhile:
+                        return False                    # looked up again next pass (not the target's fault)
+            if ok is not True:                  # (SECOND_SLOT after a take counts as a failure too)
                 sw["artifact_failed"] = True
                 return False
+            if sw["refill_target"]:             # 残骸本源 came from its second slot: fill that one again
+                if not self.auto_equip(target):
+                    log(f"Fleet {target}: 一键配队 for its emptied second artifact slot failed; tried again next pass")
+                    return False
+                ok = self.ensure_boss_artifact(target)
+                left_empty = False
+                for refill in range(2):
+                    if ok is not SECOND_SLOT:
+                        break
+                    # 一键配队 put it back into the second slot: off there, onto the first slot
+                    if not self.strip_boss_artifact(target, rows=(1,)):
+                        log(f"Fleet {target}: 残骸本源 could not be taken out of its second slot")
+                        sw["artifact_failed"] = True
+                        return False
+                    ok = self.ensure_boss_artifact(target)
+                    left_empty = ok is True     # (the second slot is empty now)
+                    if left_empty and refill == 0:  # with 残骸本源 in the first slot, 一键配队 may fill the second
+                        if not self.auto_equip(target):
+                            break
+                        ok = self.ensure_boss_artifact(target)
+                        left_empty = False      # (filled, unless the next round strips it again)
+                if left_empty:
+                    log(f"Warning: fleet {target}: 一键配队 keeps putting 残骸本源 into the second artifact slot; "
+                        "that slot is left empty, fill it by hand")
+                    self.save_debug("second_slot_empty")
+                sw["refill_target"] = False
+                if ok is not True:
+                    sw["artifact_failed"] = True
+                    return False
             self.holder = target
+            self.holder_artifact_check = False  # 残骸本源 just verified on the holder
+            self.no_direct_attack.discard(target)
             for fleet in sorted(sw["to_repair"]):
                 if not self.repair_fleet(fleet):
                     self.pending_repair.add(fleet)  # retried at the start of every later pass
+            self.re_equip(sw["re_equip"], check_artifact=False)     # (残骸本源 is on the holder now)
             self.swap = None
             return True
         finally:
@@ -826,9 +1135,9 @@ class FortressFight(ZoneExplore):
                          if st == "ready" and n not in self.failed_targets), None)
         cells = self.guard_cells(gray, title)
         r = FORTRESS["spot_radius"]
-        self.tried_spots = [t for t in self.tried_spots if now - t[3] <= FAILED_TARGET_TTL]
-        bright = sorted((c for c in cells if c[2] and not any(st == self.page_step and abs(c[0] - sx) < r and abs(c[1] - sy) < r
-                                                              for st, sx, sy, _ in self.tried_spots)),
+        self.tried_spots = [t for t in self.tried_spots if now - t[2] <= FAILED_TARGET_TTL]
+        bright = sorted((c for c in cells if c[2] and not any(abs(c[0] - sx) < r and abs(c[1] + self.page_off - sy) < r
+                                                              for sx, sy, _ in self.tried_spots)),
                         key=lambda c: (c[1], c[0]))
         log(f"Guards: {len(cells)} cells, {len(bright)} attackable")
         guards = [Target("guard", None, x, y) for x, y, _ in bright]
@@ -841,8 +1150,9 @@ class FortressFight(ZoneExplore):
         before and after the gesture: a measured move is a real scroll; a small change (a glow)
         or none is the end; a large unmatched change or a darker page gets the one costly
         template check for a dialog the gesture may have opened (closed, then one more gesture
-        in another column); without a dialog a darker page counts as covered and any other
-        change as the end."""
+        in another column); without a dialog any other change counts as the end (closing
+        what can be closed when the page got darker) and is returned as UNCLEAR (compare the
+        result with `is`; scroll_to_top double-checks it)."""
         from zone_explore import drag as _drag
         title = self.fortress_title or get_center("ZFortressTitle", "Single")
         if title is None:
@@ -883,6 +1193,7 @@ class FortressFight(ZoneExplore):
             moved = measured and abs(shift[1]) >= FORTRESS["min_step"]
             if measured and not moved:          # a short move (the last bit before the end): look, no step
                 log(f"Fortress page scroll {'up' if up else 'down'}: moved {abs(shift[1]):.0f} px only (step kept)")
+                self.page_off = max(0.0, self.page_off - shift[1])     # (content up: further down the page)
                 return True
             if not moved:
                 # no measured scroll. A small change (a glow) is the end; a big one or a darker
@@ -902,12 +1213,13 @@ class FortressFight(ZoneExplore):
                     log("Fortress page got dark after the scroll gesture; closing what can be closed")
                     self.save_debug("scroll_dark")
                     self.clear_fortress_dialogs()
-                    break                       # treated as the end; the next look decides
+                    return UNCLEAR              # treated as the end; the next look decides
                 # matched in place / spring-back, or a change the strip match could not place: no
                 # evidence of a scroll (an animation, a cell cleared)
                 log("Fortress page changed without a measurable scroll; treated as the end")
-                break
+                return UNCLEAR
             self.page_step = max(0, self.page_step + (1 if up else -1))
+            self.page_off = max(0.0, self.page_off - shift[1])
             log(f"Fortress page scroll {'up' if up else 'down'}: moved (step {self.page_step})")
             return True
         else:
@@ -925,10 +1237,10 @@ class FortressFight(ZoneExplore):
             time.sleep(1.0)
             at_top = self.page_at_top()
         if at_top:
-            self.page_step = 0
+            self.page_step, self.page_off = 0, 0.0
         elif self.scroll_to_top() is None:
             log("Fortress page could not be brought to the top; its upper part may be missed this pass")
-            self.page_step, self.tried_spots = 0, []    # a re-opened page: the old position means nothing
+            self.page_step, self.page_off, self.tried_spots = 0, 0.0, []    # a re-opened page: position unknown
 
     def page_at_top(self):
         """The unscrolled page: 商店's label at its place below the title (a restored scroll of
@@ -947,14 +1259,25 @@ class FortressFight(ZoneExplore):
     def scroll_to_top(self):
         """Scroll down until the page stops moving. The number of moves (0: it was at the top
         already), or None when the page is not there / cannot be scrolled."""
-        for n in range(FORTRESS["max_scrolls"] + 1):
+        unclear_seen, moves = False, 0
+        for _ in range(FORTRESS["max_scrolls"] + 1):
             moved = self.scroll_fortress(up=False)
             if moved is None:
                 return None                     # the page did not move: its position is still known
-            if not moved:
-                self.page_step = 0
-                return n
-        self.page_step, self.tried_spots = 0, []    # position unknown: the remembered spots mean nothing
+            if moved is True:
+                unclear_seen, moves = False, moves + 1
+                continue
+            if moved is UNCLEAR or unclear_seen:    # an end that needs the top layout as proof
+                if not self.page_at_top():
+                    if not unclear_seen:
+                        log("The scroll stopped on an unexplained change, not at the top; trying again")
+                        unclear_seen = True
+                        continue
+                    log("The page still does not show its top; taken as the top without proof")
+                    self.tried_spots = []       # (the remembered guard spots may not fit)
+            self.page_step, self.page_off = 0, 0.0
+            return moves
+        self.page_step, self.page_off, self.tried_spots = 0, 0.0, []    # position unknown
         return None
 
     def pick_target(self):
@@ -985,7 +1308,7 @@ class FortressFight(ZoneExplore):
             if i == last:
                 break
             r = self.scroll_fortress(up=True)
-            if not r:
+            if r is not True:                   # False / UNCLEAR: the end; None: stuck
                 return None, r is None
         return None, False
 
@@ -1086,7 +1409,7 @@ class FortressFight(ZoneExplore):
             self.failed_targets[target.name] = time.time()
         else:
             log(f"This guard opens no 袭击; skipped for {FAILED_TARGET_TTL // 60} min")
-            self.tried_spots.append((self.page_step, target.x, target.y, time.time()))
+            self.tried_spots.append((target.x, target.y + self.page_off, time.time()))
         return "no_attack"
 
     def pick_dispatch_card(self, index):
@@ -1239,6 +1562,49 @@ class FortressFight(ZoneExplore):
         log("Start the program on the zone map or on the game main screen")
         return False
 
+    @staticmethod
+    def retry_later(counter, fleet, ok, what, limit):
+        """Book an attempt of `what` on `fleet` in `counter`: True when it failed and is to be
+        tried again later, False when it is done or given up after `limit` failures."""
+        if ok:
+            counter.pop(fleet, None)
+            return False
+        counter[fleet] = counter.get(fleet, 0) + 1
+        if counter[fleet] >= limit:
+            log(f"Fleet {fleet}: giving up on the {what} after {limit} tries; check by hand")
+            counter.pop(fleet)
+            return False
+        log(f"Fleet {fleet}: {what} not done; tried again next pass")
+        return True
+
+    def run_pending_repairs(self, ships):
+        """Repair the idle fleets in pending_repair (dropping those repaired or at full hp);
+        returns the ship scan, fresh when the fleet page was used."""
+        opened = False
+        for i in sorted(self.pending_repair):
+            s = ships.get(i, {})
+            if s.get("status") == "repairing" or s.get("hp") == FULL_HP:
+                self.pending_repair.discard(i)  # nothing left to repair
+            elif s.get("idle"):
+                opened = True
+                r = self.repair_fleet(i, check_artifact=True)
+                if r is True:
+                    self.deferred_equip.discard(i)  # (the repair began with 一键配队)
+                what = "repair" if r is not None else "repair (skipped: 残骸本源 could not be kept off)"
+                if not self.retry_later(self.repair_tries, i, bool(r), what, PENDING_REPAIR_TRIES):
+                    self.pending_repair.discard(i)
+        if not opened:
+            return ships
+        self.close_fleet_page()
+        return self.scan_ships()
+
+    def owner_wait_message(self, ships):
+        """The log line while a swap waits for the fleet that holds 残骸本源."""
+        owner = self.swap["artifact_owner"][0]
+        status = ships.get(owner, {}).get("status", "unknown")
+        waited = (time.time() - (self.swap["owner_since"] or time.time())) // 60
+        return f"Fleet {owner} has 残骸本源 and is {status} ({waited:.0f} min); waiting for it to be idle"
+
     def pause(self, msg):
         """Log `msg` and wait POLL seconds before the next pass; False in a dry run (one pass)."""
         log(msg)
@@ -1266,25 +1632,68 @@ class FortressFight(ZoneExplore):
         sw, self.swap = self.swap, None
         log(f"Giving up on the gear swap to fleet {sw['target']} after {SWAP_FINISH_TRIES} passes")
         self.deferred_repair |= sw["to_repair"]
-        if sw.get("artifact_failed"):
+        if sw["holder"] == sw["target"]:        # a check swap failed: this holder only attacks after a
+            self.no_direct_attack.add(sw["target"])     # real swap (which sets 残骸本源 on the new one)
+            self.holder_artifact_check = False
+        if sw["artifact_failed"]:
+            # 残骸本源 could not be set: never attack with this fleet (two such fleets stop the run
+            # for a check by hand)
             self.artifact_bad.add(sw["target"])
+        if sw["refill_target"]:
+            log(f"Fleet {sw['target']}: its second artifact slot was emptied and not refilled yet")
+        if sw["artifact_owner"] and sw["take_failed"]:
+            # 残骸本源 could not be taken off its owner: that fleet is the problem (it counts
+            # toward the same stop, and is not attacked with)
+            log(f"残骸本源 could not be taken off fleet {sw['artifact_owner'][0]}")
+            self.artifact_bad.add(sw["artifact_owner"][0])
         found = self.find_gear_holder()
         if found is None and not self.lookup_unreadable and sw["holder"] != sw["target"]:
             # the gear is loose (or split): 一键配队 on the original holder takes what is loose;
             # the next lookup says whether that made it the holder again
             log(f"Putting the gear back on fleet {sw['holder']}: {'done' if self.auto_equip(sw['holder']) else 'failed'}")
             found = self.find_gear_holder()
+        # 一键配队 on the stripped fleets only once the gear and 残骸本源 have settled (the check
+        # swap below finished, or the next holder lookup): it could take loose items
+        self.deferred_equip |= sw["re_equip"]
         self.close_fleet_page()
         self.holder = found
-        if found is not None and sw["holder"] != sw["target"] and found not in self.artifact_bad:
-            self.swap = {"holder": found, "target": found, "to_repair": set(), "unequipped": True, "tries": 0}
+        if found is not None and found not in self.artifact_bad and (
+                sw["holder"] != sw["target"] or (sw["refill_target"] and found == sw["target"])):
+            self.swap = self.make_swap(found, found)    # a check swap (its 一键配队 also refills)
+        elif sw["refill_target"]:
+            log(f"Fleet {sw['target']}: its emptied second artifact slot is left to be refilled by hand")
 
     def run(self, monitor=False):
+        """The fight loop; an unexpected error in a pass is logged (with a debug shot), the
+        dialogs are closed and the loop starts again with its state kept."""
+        import traceback
+        errors = []                             # times of recent errors
+        while True:
+            try:
+                return self._run(monitor)
+            except Exception:
+                log("Unexpected error in a pass:\n" + traceback.format_exc())
+                errors = [t for t in errors if time.time() - t < 15 * 60] + [time.time()]
+                try:
+                    self.save_debug("pass_error")
+                except Exception:
+                    pass                        # (the screen itself may be the problem)
+                if self.dry_run or len(errors) >= 3:    # the same bug again and again: stop for a fix
+                    log("Stopping: errors keep coming" if not self.dry_run else "Dry run: stopping")
+                    raise
+                try:
+                    self.close_fleet_page()
+                    self.close_popup()
+                except Exception:
+                    pass
+                monitor = False                 # (already on the map side; _run re-enters the map)
+                time.sleep(POLL)
+
+    def _run(self, monitor=False):
         if monitor:
             self.wait_for_dice_run()
         else:
             self.enter_map_from_main()
-        calibrated = False
         while True:
             if not self.on_map():
                 if not self.close_popup() and not self.enter_map_from_main():
@@ -1292,12 +1701,31 @@ class FortressFight(ZoneExplore):
                     if not self.pause("Not on the zone map and no known page to leave; waiting"):
                         return
                     continue
-            if not calibrated and self.on_map():
-                calibrated = self.calibrate_scale()   # needs the map anchors; once per run
+            if not self.calibrated and self.on_map():
+                self.calibrated = self.calibrate_scale()   # needs the map anchors; once per run (kept on a restart)
             ships = self.scan_ships()
+            if self.swap is not None and self.swap["errored"]:
+                # the last pass broke off inside the swap with an error: the same error would
+                # likely come again, so the gear is settled the abandon way (一键配队 fallback)
+                log("The gear swap ended in an error; abandoning it")
+                try:
+                    self.abandon_swap()
+                except Exception:
+                    self.swap = None            # (abandon_swap itself failed: the holder lookup decides)
+                    self.holder = None
+                    raise
+                if self.artifact_hopeless():
+                    return
+                continue
             if self.swap is not None:           # first: an interrupted swap, before anything repairs
-                self.swap["tries"] += 1         # (一键配队 on the stripped fleet would take the loose gear back)
-                if self.finish_swap():
+                r = self.finish_swap(ships)     # (一键配队 on the stripped fleet would take the loose gear back)
+                if r is BLOCKED:
+                    # 残骸本源 is on a fleet that is out: waiting is not a failed try. No repair
+                    # meanwhile (repair_fleet starts with 一键配队, which could take loose items)
+                    if not self.pause(self.owner_wait_message(ships)):
+                        return
+                    continue
+                if r:
                     self.swap_fails = 0
                     ships = self.scan_ships()
                 elif self.swap["tries"] >= SWAP_FINISH_TRIES:
@@ -1330,22 +1758,18 @@ class FortressFight(ZoneExplore):
             if self.deferred_repair:            # (a full-hp fleet is dropped by the repair loop itself)
                 self.pending_repair |= self.deferred_repair
                 self.deferred_repair = set()
-            if self.pending_repair:
-                opened = False
-                for i in sorted(self.pending_repair):
-                    s = ships.get(i, {})
-                    if s.get("status") == "repairing" or s.get("hp") == FULL_HP:
-                        self.pending_repair.discard(i)      # nothing left to repair
-                    elif s.get("idle"):
-                        opened = True
-                        self.repair_tries[i] = self.repair_tries.get(i, 0) + 1
-                        if self.repair_fleet(i) or self.repair_tries[i] >= PENDING_REPAIR_TRIES:
-                            if self.repair_tries[i] >= PENDING_REPAIR_TRIES:
-                                log(f"Fleet {i}: giving up on the repair after {PENDING_REPAIR_TRIES} tries")
-                            self.pending_repair.discard(i)
-                if opened:
-                    self.close_fleet_page()
-                    ships = self.scan_ships()
+            repairs_now = {i for i in self.pending_repair    # (a repair starts with 一键配队)
+                           if ships.get(i, {}).get("idle") and ships.get(i, {}).get("hp") != FULL_HP}
+            self.deferred_equip -= {self.holder}
+            self.equip_tries.pop(self.holder, None)
+            ready = {i for i in self.deferred_equip - repairs_now if ships.get(i, {}).get("idle")}
+            # (fleets repaired now stay queued: a repair that fails leaves them without a loadout)
+            self.deferred_equip -= ready        # (fleets that are out wait)
+            if ready:                           # stripped full-hp fleets: 一键配队 now the gear has an owner
+                self.re_equip(ready)
+                self.close_fleet_page()
+                ships = self.scan_ships()
+            ships = self.run_pending_repairs(ships)
             if not self.on_map():
                 self.close_fleet_page()
                 ships = self.scan_ships()
@@ -1356,7 +1780,12 @@ class FortressFight(ZoneExplore):
                 if not self.pause(f"Fleet {self.holder} (best gear) is {h.get('status', 'unknown')}; waiting for it to return"):
                     return
                 continue
-            if h.get("hp") is not None and h["hp"] > HOLDER_OK_HP and self.holder not in self.artifact_bad:
+            if (h.get("hp") is not None and h["hp"] > HOLDER_OK_HP and self.holder not in self.artifact_bad
+                    and self.holder not in self.no_direct_attack):
+                if self.holder_artifact_check:  # 残骸本源 was found loose or elsewhere: a check swap
+                    self.swap = self.make_swap(self.holder, self.holder)   # sets it before the holder
+                    # attacks (the flag is cleared only when a swap has verified the artifact)
+                    continue                    # (a swap to another fleet sets it anyway and clears the flag)
                 log(f"Fleet {self.holder} still has {h['hp']}% hp: attacking again without a gear swap")
                 target = self.holder
             else:
@@ -1367,7 +1796,13 @@ class FortressFight(ZoneExplore):
                         return
                     continue
                 target = fresh[0]
-                if not self.swap_gear(self.holder, target, ships):
+                r = self.swap_gear(self.holder, target, ships)
+                if r is BLOCKED:                # the next pass's swap block does the waiting
+                    self.swap_fails = 0
+                    if not self.pause(self.owner_wait_message(ships)):
+                        return
+                    continue
+                if not r:
                     if self.swap is None:       # failed before the swap started: the holder's page/tab
                         self.swap_fails += 1    # (a started swap is resumed by the swap block)
                     if self.swap_fails >= SWAP_FINISH_TRIES:

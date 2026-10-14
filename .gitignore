@@ -16,3 +16,5 @@ yolo/runs
 yolo/datasets
 pics/mac/zone/_full_*.png
 pics/mac/zone/debug/
+# written by older fortress_fight.py versions; no longer used
+pics/mac/zone/fortress_state.json

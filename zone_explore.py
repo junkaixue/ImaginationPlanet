@@ -248,7 +248,7 @@ FACTORY_LAYOUT = {"slots": 5, "dx0": -47, "spacing": 80, "dy": 381, "free_plus_d
 # the selected tab is drawn on a bright background: a band tab_sel_dy below the title averages
 # ~115 there, the other tabs ~35
 FLEET_PAGE_LAYOUT = {"tab_dx0": -151, "tab_spacing": 76, "tab_dy": 66, "tab_sel_dy": 78, "tab_sel_half_w": 15,
-                     "tab_sel_min": 75, "tab_retries": 3, "dim_retries": 2}
+                     "tab_sel_min": 75, "tab_retries": 3, "dim_retries": 2}     # dim_retries: looks before the dialog check
 
 # Boosting a sailing fleet: click its rocket icon in the top bar (icon_dy above the status text;
 # cross-zone fleets sometimes need several clicks) -> panel with "加速" -> dialog with one row per
@@ -630,6 +630,7 @@ class ZoneExplore:
     # modal dialogs that take a tap for themselves; checked first: they sit over popups that
     # template matching still sees through the dimming
     MODAL_KEYS = ("ZBuyPrompt", "ZContinueHint", "ZEstimateLabel", "ZCancel")
+    TAB_DIM_LOOKS = FLEET_PAGE_LAYOUT["dim_retries"]    # looks at a dimmed 我的舰队 before the dialog check
     # the close hint before 袭击: on the map the fortress icon's popup carries both and closes
     # with a tap under its hint
     DIALOGS = MODAL_KEYS + ("ZCloseHint", "ZBackArrow", "ZFleetSpeed", "ZGo", "ZDispatchTitle", "ZGuardAttack")
@@ -1703,7 +1704,7 @@ class ZoneExplore:
         through the gear slots of one fleet costs no tab taps. Exactly one tab is bright on the
         page itself; none is when a dialog dims it (see read_tabs)."""
         L = FLEET_PAGE_LAYOUT
-        title, bright = self.read_tabs(L["dim_retries"])
+        title, bright = self.read_tabs(self.TAB_DIM_LOOKS)
         for tap in range(L["tab_retries"] + 1):
             if title is None:
                 log(f"我的舰队 is dimmed or gone; giving up tab {index}")
@@ -1715,7 +1716,7 @@ class ZoneExplore:
                 break
             self.burst(title.x + L["tab_dx0"] + (index - 1) * L["tab_spacing"], title.y + L["tab_dy"])
             time.sleep(1.0)
-            title, bright = self.read_tabs(L["dim_retries"])    # dim after a tap: a transient, or a dialog it opened
+            title, bright = self.read_tabs(self.TAB_DIM_LOOKS)  # dim after a tap: a transient, or a dialog it opened
         self.save_debug(f"fleet_tab_{index}")
         return False
 
