@@ -128,6 +128,10 @@ FORTRESS_KINDS = {
 # page the button is cut off by 停机坪 (full template 0.61 there). The real button scores >= 0.95
 # on every screenshot, other pages <= 0.76 (the top half alone reached 0.81 on map pages)
 ATTACK = "ZGuardAttackTop"
+# the fortress page's title counts only with the page's "<" (ZFortressBack) this far from it
+# (logical px; pages/boss/fortress_page.png, guard_clicked.png, pages/xingzhi: dy 764-767): the
+# fortress's map popup shows the same name mid-screen, and the map's own "<" also scores ~0.83
+TITLE_TO_BACK = (-208, 765, 25)     # dx, dy, tolerance
 FULL_HP = 100
 TAP_BURST = 3                # taps per burst on idempotent buttons (tabs, 一键配队): a dropped tap is harmless
 PENDING_REPAIR_TRIES = 3     # passes a failed repair is retried from pending_repair before giving up
@@ -234,7 +238,6 @@ class FortressFight(ZoneExplore):
         super().__init__(dry_run=dry_run)
         self.kind = FORTRESS_KINDS[fortress]
         self.map_key, self.title_key, self.guard_key = self.kind["map"], self.kind["title"], self.kind["guard"]
-        self.known_pages = ("ZExplore", self.title_key, "ZMyFleet")
         self.holder = None        # fleet index currently carrying the best gear
         self.pending_repair = set()   # fleets whose repair could not be started yet
         self.repair_tries = {}        # fleet -> attempts made from pending_repair
@@ -301,22 +304,24 @@ class FortressFight(ZoneExplore):
         bottom-left "<"; then the generic popup handling."""
         if self.edit_page_open():
             self.confirm_edit("close_popup")
-        if single_find(self.title_key):
+        if self.on_fortress_page():
             self.leave_fortress()
         return super().close_popup(tries)
 
     def leave_fortress(self):
-        """Fortress page -> zone map through the "<" button at the bottom left."""
-        for _ in range(3):
+        """Fortress page -> zone map through the "<" button at the bottom left. Dialogs on top
+        are closed first: the dispatch list covers the "<" that page_title needs."""
+        for _ in range(4):
             self.invalidate_shot()
             gs = self.shot()[1]
-            if not self.seen(self.title_key, gs=gs):
-                self.fortress_title = None
-                return True
             k = self.seen(*self.FORTRESS_DIALOGS, gs=gs)    # a guard popup / dialog / building panel on top
             if k is not None:
                 self.clear_fortress_dialogs(k)
-            if not self.press("ZFortressBack", "< (leave fortress)", gone=self.title_key):
+                continue
+            if self.page_title(gs) is None:
+                self.fortress_title = None
+                return True
+            if not self.press("ZFortressBack", "< (leave fortress)", appears="ZExplore"):
                 break
         self.fortress_title = None
         return self.wait_for("ZExplore", 5)
@@ -717,10 +722,47 @@ class FortressFight(ZoneExplore):
             self.close_fleet_page()
 
     # ------------------------------------------------------------------ fortress page
+    def page_title(self, gray=None):
+        """The fortress page's title (logical px), or None: the best title match (MATCH_TH)
+        with the page's "<" at TITLE_TO_BACK from it (window-independent)."""
+        if gray is None:
+            gray = self.shot()[1]
+        t, back = self.full_template(self.title_key), self.full_template("ZFortressBack")
+        if t is None or back is None:
+            return None
+        _, conf, _, loc = cv2.minMaxLoc(cv2.matchTemplate(gray, t, cv2.TM_CCOEFF_NORMED))
+        if conf < MATCH_TH:
+            return None
+        title = Point((loc[0] + t.shape[1] / 2) / self.sft, (loc[1] + t.shape[0] / 2) / self.sft)
+        dx, dy, tol = TITLE_TO_BACK
+        bh, bw = back.shape
+        cx, cy = (title.x + dx) * self.sft, (title.y + dy) * self.sft
+        r = tol * self.sft
+        x1, y1 = int(max(0, cx - bw / 2 - r)), int(max(0, cy - bh / 2 - r))
+        x2, y2 = int(min(gray.shape[1], cx + bw / 2 + r)), int(min(gray.shape[0], cy + bh / 2 + r))
+        if x2 - x1 < bw or y2 - y1 < bh:
+            return None
+        _, bconf, _, _ = cv2.minMaxLoc(cv2.matchTemplate(gray[y1:y2, x1:x2], back, cv2.TM_CCOEFF_NORMED))
+        return title if bconf >= MATCH_TH else None
+
+    def on_fortress_page(self):
+        self.invalidate_shot()
+        return self.page_title() is not None
+
+    def wait_fortress_page(self, timeout):
+        """Poll until the fortress page shows (one more look at the deadline, like wait_seen)."""
+        start = time.time()
+        while True:
+            if self.on_fortress_page():
+                return True
+            if time.time() - start >= timeout:
+                return False
+            time.sleep(0.5)
+
     def open_fortress(self):
         """Zone map -> fortress icon -> info popup -> 袭击 -> fortress page. Each step is
         retried: taps on the map are sometimes dropped by the emulator."""
-        if single_find(self.title_key):
+        if self.on_fortress_page():
             if self.fortress_title is None:     # first sight of the page this run
                 self.settle_fresh_page()
             return True
@@ -741,18 +783,21 @@ class FortressFight(ZoneExplore):
             log(f"{self.kind['name']} icon at ({icon.x:.0f},{icon.y:.0f})")
             # the icon opens an info popup (位置/坐标/距离/守卫等级) with a 袭击 button; a second
             # tap is only sent when nothing opened (the popup covers the icon with 前往 etc.)
-            opened = self.tap_until(icon.x, icon.y, self.kind["name"], TAP_BURST, (self.title_key, ATTACK, "ZGo"),
+            opened = self.tap_until(icon.x, icon.y, self.kind["name"], TAP_BURST, (ATTACK, "ZGo", self.title_key),
                                     want=None, timeout=FORTRESS["icon_timeout"])
             if opened is None:
                 log(f"Fortress icon did not respond (attempt {attempt + 1})")
                 continue
-            if opened != self.title_key:
-                log(f"Fortress popup ({opened}) -> 袭击")
-                if not self.press(ATTACK, "袭击 (fortress popup)", appears=self.title_key) \
-                        and self.seen(self.title_key, "ZGo", fresh=True) == "ZGo":
+            if opened != self.title_key or not self.on_fortress_page():   # (the popup shows the name too)
+                # 袭击 is drawn last: wait for it (or 前往) before pressing
+                k = self.wait_seen((ATTACK, "ZGo"), FORTRESS["want_grace"]) if opened != ATTACK else ATTACK
+                log(f"Fortress popup ({opened}) -> {k or 'no button'}")
+                if k == ATTACK:
+                    self.press(ATTACK, "袭击 (fortress popup)", gone=ATTACK)
+                elif k == "ZGo":
                     log("No 袭击 on the popup, using 前往")
                     self.click_button("ZGo", 2.5, force=True)
-            if self.wait_for(self.title_key, 8):      # the page may take a few seconds to load
+            if self.wait_fortress_page(8):      # the page may take a few seconds to load
                 self.fortress_title = None
                 self.settle_fresh_page()
                 return True
@@ -840,7 +885,7 @@ class FortressFight(ZoneExplore):
         spots (screen position at this scroll step) that opened nothing are skipped."""
         self.invalidate_shot()
         color, gray = self.shot()
-        title = self.anchor(self.title_key, gray) or self.fortress_title   # the header does not scroll
+        title = self.page_title(gray) or self.fortress_title   # the header does not scroll
         if title is not None:
             self.fortress_title = title
         blds = self.buildings(color, gray, title)
@@ -873,7 +918,9 @@ class FortressFight(ZoneExplore):
         what can be closed when the page got darker) and is returned as UNCLEAR (compare the
         result with `is`; scroll_to_top double-checks it)."""
         from zone_explore import drag as _drag
-        title = self.fortress_title or get_center(self.title_key, "Single")
+        if self.fortress_title is None:
+            self.invalidate_shot()
+        title = self.fortress_title or self.page_title()
         if title is None:
             return None                         # not on the fortress page (None, not "end")
         self.fortress_title = title             # the header does not scroll
@@ -966,7 +1013,7 @@ class FortressFight(ZoneExplore):
         a hundred px still shows the label, lower)."""
         self.invalidate_shot()
         color, gray = self.shot()
-        title = self.anchor(self.title_key, gray)
+        title = self.page_title(gray)
         if title is None:
             return False
         self.fortress_title = title
@@ -1080,7 +1127,7 @@ class FortressFight(ZoneExplore):
     def blank_spot(self):
         """On the fortress page: the description text under the title (the map's plain_spot
         needs the map anchors, which the fortress page does not show)."""
-        title = self.anchor(self.title_key) or self.fortress_title   # the header may be dimmed by the popup
+        title = self.page_title() or self.fortress_title   # the header may be dimmed by the popup
         if title is not None:
             return Point(title.x, title.y + FORTRESS["blank_dy"])
         return super().blank_spot()
@@ -1268,7 +1315,9 @@ class FortressFight(ZoneExplore):
 
 
     def on_known_page(self):
-        return any(single_find(k) for k in self.known_pages)
+        self.invalidate_shot()
+        gs = self.shot()[1]
+        return self.seen("ZExplore", "ZMyFleet", gs=gs) is not None or self.page_title(gs) is not None
 
     def enter_map_from_main(self):
         """Started on the game main screen (dice board): go to 星际探险 first."""
