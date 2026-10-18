@@ -81,13 +81,15 @@
 
 ## 要塞 boss 战（fortress_fight.py，开发中）
 
+`-f xz|zx` 选打哪个要塞：xz 星炽要塞（默认），zx 铸械要塞。两个要塞页面布局、建筑、按钮一样，只有地图图标、标题、守卫格子三个模板不同（xingzhi_map / xingzhi_title / xingzhi_guard，截图在 `pages/xingzhi/`）；星炽守卫亮的灰度 31-33、暗的 17-19，阈值 24。
+
 `fortress_fight.py -m`：和 zone_explore 的监控模式一样，先停在骰子界面等游戏自带的自动投掷结束（出现“更多骰子”弹窗，或“长按自动”闲置 3 分钟），点“星际探险”进地图，再开始打要塞。
 
 `./myenv/bin/python fortress_fight.py --dry`。复用 zone_explore 的锚点、截图、弹窗处理，不缩放不拖动。
 - 规则：只有最好的一套装备能打；每次换一条满血空闲船，把装备从上一条船卸下（编辑舰队四个标签逐个点掉下方已配置项，右下角 lv.6 盾牌不动），新船“一键配队”（会把残骸本源一起配上，不再单独检查），旧船先“一键配队”再“修理舰队”（没装备的船不能修）。
-- 要塞页比屏幕高，要向下滚动才能看到底部：可见部分没有可打目标就往上拖一屏再找（最多 6 次，前后帧没变化就是到底），都没有再滚回顶部。守卫格子用模板找，亮度均值 ≥ 75 的才能打（暗的 46 到 65）；没有亮守卫时看商店/委托站/指挥所是否变亮。点守卫 → 袭击 → 派遣列表按序号点第 N 张卡（也是战力最大的那张）→ 预估一律袭击。
+- 要塞页比屏幕高，要向下滚动才能看到底部：可见部分没有可打目标就往上拖一屏再找（最多 6 次，前后帧没变化就是到底），都没有再滚回顶部。守卫格子用模板找，铸械要塞亮度均值 ≥ 75 的才能打（亮的 85 到 98，暗的 37 到 56）；没有亮守卫时看商店/委托站/指挥所是否变亮。点守卫 → 袭击（只认按钮上面 70%：没滚动时指挥所下面的袭击被停机坪挡住一半）→ 派遣列表按序号点第 N 张卡（也是战力最大的那张）→ 预估一律袭击。
 - 哪条船带着装备：我的舰队各标签 OCR 战力，最大的那条。
-- 页面截图在 `pages/boss/`，模板：fortress_map / fortress_title / guard_bright / guard_attack / shop_label / depot_label / command_label / auto_equip / edit_fleet_title / edit_artifact_title / plus_slot。“确认”按钮复用 repair_ok 模板。
+- 页面截图在 `pages/boss/`，模板：fortress_map / fortress_title / guard_bright（星炽要塞换成 xingzhi_map / xingzhi_title / xingzhi_guard）/ guard_attack_top / shop_label / depot_label / command_label / auto_equip / edit_fleet_title / edit_artifact_title / plus_slot。“确认”按钮复用 repair_ok 模板。
 - 卸装备顺序：编辑舰队（飞行器最左点 2 下、主题皮肤 2 下、骰子皮肤 1 下、棋子最左 2 下再第二个 8 下）确认 → 猫护法（神器左边那格进，最左猫点 3 下）确认 → 右列两个神器格（第一行高级=残骸本源，第二行顶级 lv.14，各自页面点确认按钮上方的预览件）确认 → 底排编辑装备（令牌/烙印/战旗/密契四个标签各点预览件）确认。编辑类页面只按确认，从不点取消（取消会撤销全部卸载）。还没验证：建筑可打时的样子、点地图要塞图标是否直接进要塞页、滚动手势。
 
 ## 模板采集

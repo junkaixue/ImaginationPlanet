@@ -1,6 +1,6 @@
 """
-Fortress fight (铸械要塞) - attack the fortress guards with the one fleet that carries the best
-equipment, moving that equipment to a fresh full-hp fleet before every attack.
+Fortress fight (星炽要塞 or 铸械要塞, -f xz|zx) - attack the fortress guards with the one fleet
+that carries the best equipment, moving that equipment to a fresh full-hp fleet before every attack.
 
 Cycle (user rules):
     1. The fleet holding the best gear = the one with the highest 战力 on the 我的舰队 tabs.
@@ -12,7 +12,7 @@ Cycle (user rules):
        artifact slot; not checked).
     5. Back on the old holder's tab: 一键配队 (a fleet without a loadout cannot be repaired),
        then 修理舰队, confirm.
-    6. Map -> 铸械要塞 -> on the screen in front: a ready building first (bright: the guards
+    6. Map -> the fortress icon -> on the screen in front: a ready building first (bright: the guards
        around it are cleared and it has recovered; a broken one wears a 已损坏 badge, a guarded
        one is dim), otherwise the first bright guard (dim ones are not attackable yet); the
        page is only scrolled when the screen offers nothing (the scroll gesture must stay
@@ -24,6 +24,7 @@ Cycle (user rules):
 Only one fleet fights at a time (there is one set of best gear). No zoom or map dragging.
 
 Usage:
+    python fortress_fight.py -f zx      # 铸械要塞 instead of 星炽要塞 (default -f xz)
     python fortress_fight.py --dry      # does the gear swap and repair for real, cancels at the attack
     python fortress_fight.py            # full loop (started on the zone map)
     python fortress_fight.py -m         # monitor: wait on the dice board until the dice run out
@@ -86,8 +87,6 @@ DISPATCH_CARDS = {"dx": -15, "dy0": 105, "spacing": 125}
 # ---- fortress page
 FORTRESS = {
     "guard_th": 0.8,          # template match for a guard cell (dim ones match too)
-    "bright_min": 75,         # mean grey of the cell: attackable guards ~86-104, dim ones ~46-65
-    "building_bright_min": 75,
     "grid_top_dy": 200,       # guard grid lies below the title by at least this (logical px)
     "scroll_x_dxs": (-150, -100),   # scroll gesture columns relative to the title (guard columns, not 指挥所);
                               # the second is tried when a gesture in the first opened a dialog
@@ -113,6 +112,22 @@ FORTRESS = {
     "tap_settle": 1.0,        # a popup draws its parts over a few frames: look once more after this
     "building_tap_dy": 35,    # tap point above a building's label
 }
+# the fortresses: their own map icon, page title and guard cell templates; the page layout,
+# buildings and buttons are the same. bright_min: mean grey of an attackable guard cell (铸械
+# 85-98 vs dim 37-56, pages/boss/fortress_page.png; 星炽 31-33 vs dim 17-19,
+# pages/xingzhi/command_attack_cut.png). building_bright_min: mean grey above a ready building's
+# label (铸械 ~118 vs guarded ~50); not measured on 星炽 yet (no ready building captured; its
+# raided 指挥所 measures ~93, the dim 商店/委托站 ~40), so 铸械's value is used
+FORTRESS_KINDS = {
+    "xz": {"name": "星炽要塞", "map": "ZXingzhiMap", "title": "ZXingzhiTitle", "guard": "ZXingzhiGuard",
+           "bright_min": 24, "building_bright_min": 75},
+    "zx": {"name": "铸械要塞", "map": "ZFortressMap", "title": "ZFortressTitle", "guard": "ZGuardBright",
+           "bright_min": 75, "building_bright_min": 75},
+}
+# 袭击 under a target, matched by the top 70% of its template: under 指挥所 on the unscrolled
+# page the button is cut off by 停机坪 (full template 0.61 there). The real button scores >= 0.95
+# on every screenshot, other pages <= 0.76 (the top half alone reached 0.81 on map pages)
+ATTACK = "ZGuardAttackTop"
 FULL_HP = 100
 TAP_BURST = 3                # taps per burst on idempotent buttons (tabs, 一键配队): a dropped tap is harmless
 PENDING_REPAIR_TRIES = 3     # passes a failed repair is retried from pending_repair before giving up
@@ -215,8 +230,11 @@ def read_yellow_number(rgb):
 class FortressFight(ZoneExplore):
     TAB_DIM_LOOKS = 3                   # the fleet panel here is often still fading when a tab is read
 
-    def __init__(self, dry_run=False):
+    def __init__(self, dry_run=False, fortress="xz"):
         super().__init__(dry_run=dry_run)
+        self.kind = FORTRESS_KINDS[fortress]
+        self.map_key, self.title_key, self.guard_key = self.kind["map"], self.kind["title"], self.kind["guard"]
+        self.known_pages = ("ZExplore", self.title_key, "ZMyFleet")
         self.holder = None        # fleet index currently carrying the best gear
         self.pending_repair = set()   # fleets whose repair could not be started yet
         self.repair_tries = {}        # fleet -> attempts made from pending_repair
@@ -235,7 +253,7 @@ class FortressFight(ZoneExplore):
         self.page_off = 0.0           # how far the content is scrolled from the top (measured px)
         self.page_step = 0            # up-scrolls from the top of the fortress page (screens are 220 px apart)
         self.fortress_title = None    # title position on the open fortress page (the header does not scroll)
-        log(f"FortressFight ready (code={_code_version()})")
+        log(f"FortressFight ready: {self.kind['name']} (code={_code_version()})")
 
     # ------------------------------------------------------------------ fleet page
     EDIT_PAGES = ("ZEditFleetTitle", "ZEditCatTitle", "ZEditGearTitle", "ZEditArtifactTitle")
@@ -283,7 +301,7 @@ class FortressFight(ZoneExplore):
         bottom-left "<"; then the generic popup handling."""
         if self.edit_page_open():
             self.confirm_edit("close_popup")
-        if single_find("ZFortressTitle"):
+        if single_find(self.title_key):
             self.leave_fortress()
         return super().close_popup(tries)
 
@@ -292,13 +310,13 @@ class FortressFight(ZoneExplore):
         for _ in range(3):
             self.invalidate_shot()
             gs = self.shot()[1]
-            if not self.seen("ZFortressTitle", gs=gs):
+            if not self.seen(self.title_key, gs=gs):
                 self.fortress_title = None
                 return True
             k = self.seen(*self.FORTRESS_DIALOGS, gs=gs)    # a guard popup / dialog / building panel on top
             if k is not None:
                 self.clear_fortress_dialogs(k)
-            if not self.press("ZFortressBack", "< (leave fortress)", gone="ZFortressTitle"):
+            if not self.press("ZFortressBack", "< (leave fortress)", gone=self.title_key):
                 break
         self.fortress_title = None
         return self.wait_for("ZExplore", 5)
@@ -702,7 +720,7 @@ class FortressFight(ZoneExplore):
     def open_fortress(self):
         """Zone map -> fortress icon -> info popup -> 袭击 -> fortress page. Each step is
         retried: taps on the map are sometimes dropped by the emulator."""
-        if single_find("ZFortressTitle"):
+        if single_find(self.title_key):
             if self.fortress_title is None:     # first sight of the page this run
                 self.settle_fresh_page()
             return True
@@ -715,26 +733,26 @@ class FortressFight(ZoneExplore):
                 self.close_popup()          # a leftover popup from the previous attempt hides the icon
             self.invalidate_shot()
             # the program is started in the central zone with the fortress on screen; no zone logic
-            icon = get_center("ZFortressMap", "Single")
+            icon = get_center(self.map_key, "Single")
             if icon is None:
-                log(f"铸械要塞 icon not on screen (attempt {attempt + 1})")
+                log(f"{self.kind['name']} icon not on screen (attempt {attempt + 1})")
                 self.save_debug("no_fortress_icon")
                 continue
-            log(f"铸械要塞 icon at ({icon.x:.0f},{icon.y:.0f})")
+            log(f"{self.kind['name']} icon at ({icon.x:.0f},{icon.y:.0f})")
             # the icon opens an info popup (位置/坐标/距离/守卫等级) with a 袭击 button; a second
             # tap is only sent when nothing opened (the popup covers the icon with 前往 etc.)
-            opened = self.tap_until(icon.x, icon.y, "铸械要塞", TAP_BURST, ("ZFortressTitle", "ZGuardAttack", "ZGo"),
+            opened = self.tap_until(icon.x, icon.y, self.kind["name"], TAP_BURST, (self.title_key, ATTACK, "ZGo"),
                                     want=None, timeout=FORTRESS["icon_timeout"])
             if opened is None:
                 log(f"Fortress icon did not respond (attempt {attempt + 1})")
                 continue
-            if opened != "ZFortressTitle":
+            if opened != self.title_key:
                 log(f"Fortress popup ({opened}) -> 袭击")
-                if not self.press("ZGuardAttack", "袭击 (fortress popup)", appears="ZFortressTitle") \
-                        and self.seen("ZFortressTitle", "ZGo", fresh=True) == "ZGo":
+                if not self.press(ATTACK, "袭击 (fortress popup)", appears=self.title_key) \
+                        and self.seen(self.title_key, "ZGo", fresh=True) == "ZGo":
                     log("No 袭击 on the popup, using 前往")
                     self.click_button("ZGo", 2.5, force=True)
-            if self.wait_for("ZFortressTitle", 8):      # the page may take a few seconds to load
+            if self.wait_for(self.title_key, 8):      # the page may take a few seconds to load
                 self.fortress_title = None
                 self.settle_fresh_page()
                 return True
@@ -745,7 +763,7 @@ class FortressFight(ZoneExplore):
 
     def guard_cells(self, gray, title):
         """[(x, y, bright)] of every guard cell on the fortress page (logical px)."""
-        t = self.full_template("ZGuardBright")
+        t = self.full_template(self.guard_key)
         h = int(FORTRESS["cell_half"] * self.sft)
         out = []
         for cx, cy, conf in match_all(gray, t, FORTRESS["guard_th"]):
@@ -753,7 +771,7 @@ class FortressFight(ZoneExplore):
             if title is not None and y < title.y + FORTRESS["grid_top_dy"]:
                 continue
             cell = gray[cy - h:cy + h, cx - h:cx + h]
-            out.append((x, y, float(cell.mean()) >= FORTRESS["bright_min"]))
+            out.append((x, y, float(cell.mean()) >= self.kind["bright_min"]))
         return out
 
     # building name labels on the fortress page (商店/委托站/指挥所 on the first screen, 资源库/
@@ -811,7 +829,7 @@ class FortressFight(ZoneExplore):
             if cy - top < 0:
                 continue
             patch = gray[cy - top:cy - bottom, max(0, cx - half):cx + half]      # the building above its label
-            bright = float(patch.mean()) >= FORTRESS["building_bright_min"]
+            bright = float(patch.mean()) >= self.kind["building_bright_min"]
             state = "broken" if self.badge_above(color, cx, cy) else "ready" if bright else "dim"
             found.append((name, cx / self.sft, cy / self.sft - FORTRESS["building_tap_dy"], state))
         return sorted(found, key=lambda b: (b[2], b[1]))
@@ -822,7 +840,7 @@ class FortressFight(ZoneExplore):
         spots (screen position at this scroll step) that opened nothing are skipped."""
         self.invalidate_shot()
         color, gray = self.shot()
-        title = self.anchor("ZFortressTitle", gray) or self.fortress_title   # the header does not scroll
+        title = self.anchor(self.title_key, gray) or self.fortress_title   # the header does not scroll
         if title is not None:
             self.fortress_title = title
         blds = self.buildings(color, gray, title)
@@ -855,7 +873,7 @@ class FortressFight(ZoneExplore):
         what can be closed when the page got darker) and is returned as UNCLEAR (compare the
         result with `is`; scroll_to_top double-checks it)."""
         from zone_explore import drag as _drag
-        title = self.fortress_title or get_center("ZFortressTitle", "Single")
+        title = self.fortress_title or get_center(self.title_key, "Single")
         if title is None:
             return None                         # not on the fortress page (None, not "end")
         self.fortress_title = title             # the header does not scroll
@@ -948,7 +966,7 @@ class FortressFight(ZoneExplore):
         a hundred px still shows the label, lower)."""
         self.invalidate_shot()
         color, gray = self.shot()
-        title = self.anchor("ZFortressTitle", gray)
+        title = self.anchor(self.title_key, gray)
         if title is None:
             return False
         self.fortress_title = title
@@ -1020,7 +1038,7 @@ class FortressFight(ZoneExplore):
             return building
         return guards[0] if guards else None
 
-    def tap_until(self, x, y, what, taps, keys, want="ZGuardAttack", timeout=None):
+    def tap_until(self, x, y, what, taps, keys, want=ATTACK, timeout=None):
         """Tap (x, y) until one of `keys` shows (precedence in their order), at most `taps`
         times: the emulator drops taps now and then, but a tap must not be repeated while a
         slow popup is still drawing (it would land on the popup). After a tap the keys are
@@ -1050,7 +1068,7 @@ class FortressFight(ZoneExplore):
 
     # what a tap on the fortress page may leave on top (the fleet panel is a map thing); the
     # guard popup's 袭击 ahead of the close hint here
-    FORTRESS_DIALOGS = ZoneExplore.MODAL_KEYS + ("ZGuardAttack",) + tuple(
+    FORTRESS_DIALOGS = ZoneExplore.MODAL_KEYS + (ATTACK,) + tuple(
         k for k in ZoneExplore.DIALOGS if k not in ZoneExplore.MODAL_KEYS + ("ZGuardAttack", "ZFleetSpeed"))
 
     def clear_fortress_dialogs(self, on_top=None, passes=3):
@@ -1062,7 +1080,7 @@ class FortressFight(ZoneExplore):
     def blank_spot(self):
         """On the fortress page: the description text under the title (the map's plain_spot
         needs the map anchors, which the fortress page does not show)."""
-        title = self.anchor("ZFortressTitle") or self.fortress_title   # the header may be dimmed by the popup
+        title = self.anchor(self.title_key) or self.fortress_title   # the header may be dimmed by the popup
         if title is not None:
             return Point(title.x, title.y + FORTRESS["blank_dy"])
         return super().blank_spot()
@@ -1078,8 +1096,8 @@ class FortressFight(ZoneExplore):
         r = FORTRESS["spot_radius"]
         for tap in range(FAILED_TARGET_MISSES):
             on_top = self.tap_until(target.x, target.y, target.label, 1, self.FORTRESS_DIALOGS)
-            if on_top == "ZGuardAttack":
-                if self.press("ZGuardAttack", f"袭击 ({target.label})", gone="ZGuardAttack"):
+            if on_top == ATTACK:
+                if self.press(ATTACK, f"袭击 ({target.label})", gone=ATTACK):
                     return "raided"
                 if self.seen("ZBuyPrompt", fresh=True):
                     return "buy"
@@ -1248,10 +1266,9 @@ class FortressFight(ZoneExplore):
                 log("Unknown page, waiting")
             time.sleep(MONITOR_POLL)
 
-    KNOWN_PAGES = ("ZExplore", "ZFortressTitle", "ZMyFleet")
 
     def on_known_page(self):
-        return any(single_find(k) for k in self.KNOWN_PAGES)
+        return any(single_find(k) for k in self.known_pages)
 
     def enter_map_from_main(self):
         """Started on the game main screen (dice board): go to 星际探险 first."""
@@ -1479,6 +1496,8 @@ class FortressFight(ZoneExplore):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry", action="store_true", help="Detect and log only")
+    parser.add_argument("-f", "--fortress", choices=sorted(FORTRESS_KINDS), default="xz",
+                        help="Which fortress to fight: xz (星炽要塞, default) or zx (铸械要塞)")
     parser.add_argument("--delay", type=int, default=3)
     parser.add_argument("--debug-shots", action="store_true", help="Save OCR crops to pics/<platform>/zone/debug/")
     parser.add_argument("-m", "--monitor", action="store_true",
@@ -1488,4 +1507,4 @@ if __name__ == "__main__":
         DEBUG_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "debug")
         os.makedirs(DEBUG_DIR, exist_ok=True)
     time.sleep(args.delay)
-    FortressFight(dry_run=args.dry).run(monitor=args.monitor)
+    FortressFight(dry_run=args.dry, fortress=args.fortress).run(monitor=args.monitor)

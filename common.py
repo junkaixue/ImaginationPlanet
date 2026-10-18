@@ -270,12 +270,16 @@ single_find_map = {
     "ZSuperBoost": get_image_path("zone/super_boost.png"),          # "超级型舰队加速器" row label
     "ZLargeBoost": get_image_path("zone/large_boost.png"),          # "大型舰队加速器" row label
     "ZUseButton": get_image_path("zone/use_button.png"),            # "使用"
-    # Fortress (铸械要塞) boss fight and the equipment pages
+    # Fortress (铸械要塞 / 星炽要塞) boss fight and the equipment pages
     "ZFortressMap": get_image_path("zone/fortress_map.png"),          # 铸械要塞 icon on the map
     "ZFortressTitle": get_image_path("zone/fortress_title.png"),      # "深寒铸械要塞" page title
     "ZFortressBack": get_image_path("zone/fortress_back.png"),        # "<" bottom-left of the fortress page
     "ZGuardBright": get_image_path("zone/guard_bright.png"),          # guard rocket cell
     "ZGuardAttack": get_image_path("zone/guard_attack.png"),          # "袭击" under a selected guard
+    "ZGuardAttackTop": get_image_path("zone/guard_attack_top.png"),   # its top half (button cut off by 停机坪)
+    "ZXingzhiMap": get_image_path("zone/xingzhi_map.png"),            # 星炽要塞 icon on the map
+    "ZXingzhiTitle": get_image_path("zone/xingzhi_title.png"),        # "星炽" of the "深寒星炽要塞" page title
+    "ZXingzhiGuard": get_image_path("zone/xingzhi_guard.png"),        # 星炽要塞 guard cell
     "ZShopLabel": get_image_path("zone/shop_label.png"),              # 商店
     "ZDepotLabel": get_image_path("zone/depot_label.png"),            # 委托站
     "ZCommandLabel": get_image_path("zone/command_label.png"),        # 指挥所
