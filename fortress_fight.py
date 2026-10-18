@@ -12,11 +12,11 @@ Cycle (user rules):
        artifact slot; not checked).
     5. Back on the old holder's tab: 一键配队 (a fleet without a loadout cannot be repaired),
        then 修理舰队, confirm.
-    6. Map -> the fortress icon -> on the screen in front: a ready building first (bright: the guards
-       around it are cleared and it has recovered; a broken one wears a 已损坏 badge, a guarded
-       one is dim), otherwise the first bright guard (dim ones are not attackable yet); the
-       page is only scrolled when the screen offers nothing (the scroll gesture must stay
-       above 指挥所, the area below does not drag) -> 袭击 -> 派遣舰队 list: pick the fresh
+    6. Map -> the fortress icon -> all five buildings are checked first, from the top of the page
+       down (bright = ready: the guards around it are cleared and it has recovered; a broken
+       one wears a 已损坏 badge, a guarded one is dim); only without a ready one the first
+       bright guard (dim ones are not attackable yet). The scroll gesture must stay above
+       指挥所 (the area below does not drag) -> 袭击 -> 派遣舰队 list: pick the fresh
        fleet's card (it also has the highest 战力) -> battle estimate: always attack. A target
        that shows no 袭击 when tapped is left alone for FAILED_TARGET_TTL.
     7. Wait for the fleet to come back, then repeat with the next full-hp fleet.
@@ -143,6 +143,8 @@ HOLDER_OK_HP = 90            # the gear holder attacks again by itself above thi
 DEBUG_DIR = None             # --debug-shots: save the OCR crops here
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
 POLL = 30
+BUILDINGS_FRESH = 60         # seconds a walk that saw all five buildings without a ready one is trusted
+                             # (retries within one attack_with look for guards from the screen in front)
 FAILED_TARGET_TTL = 15 * 60  # seconds a building is skipped after FAILED_TARGET_MISSES taps showed no 袭击
 FAILED_TARGET_MISSES = 2     # taps on a building in one go that showed no 袭击: the first may be dropped
 
@@ -255,6 +257,7 @@ class FortressFight(ZoneExplore):
         self.tried_spots = []         # (x, page y, time) of guards that opened no 袭击
         self.page_off = 0.0           # how far the content is scrolled from the top (measured px)
         self.page_step = 0            # up-scrolls from the top of the fortress page (screens are 220 px apart)
+        self.buildings_checked_at = 0.0   # time pick_target last saw all five buildings, none ready
         self.fortress_title = None    # title position on the open fortress page (the header does not scroll)
         log(f"FortressFight ready: {self.kind['name']} (code={_code_version()})")
 
@@ -1047,43 +1050,75 @@ class FortressFight(ZoneExplore):
         return None
 
     def pick_target(self):
-        """What to attack on the screen in front: a ready building, otherwise the first bright
-        guard; the page is scrolled only when the screen offers nothing: down to the end from
-        here, then from the top when the page had been scrolled. The page is left where the
-        search ended."""
-        above = self.page_step                  # screens above the starting point
-        t, stuck = self.scan_down()
-        if t is not None or stuck or not above:
-            if stuck:
-                log("Fortress page could not be scrolled; giving up this pass")
-            return t
-        if self.scroll_to_top() is None:
+        """A ready building anywhere on the page first (all five: 商店/委托站/指挥所 on the first
+        screen, 资源库/军事基地 further down), only then a bright guard. The page is walked from
+        the top down until every label was seen (then a bright guard on that screen, or on the
+        first screen that showed one, or further down) or the page ends. Every target comes
+        from a reading of the screen it is tapped on. When all five were seen without a ready
+        one less than BUILDINGS_FRESH ago (a retry within one attack), guards are looked for
+        from the screen in front instead. The page is left where the search ended."""
+        if time.time() - self.buildings_checked_at < BUILDINGS_FRESH:
+            return self.guard_search()
+        if not self.page_at_top() and self.scroll_to_top() is None:
+            log("Fortress page could not be brought to the top; giving up this pass")
             return None
-        t, _ = self.scan_down(screens=above)
-        return t
-
-    def scan_down(self, screens=None):
-        """Look at the screen in front, then scroll up the content and look again, until a
-        target shows, the page ends, `screens` screens were looked at or the scroll fails.
-        Returns (target or None, stuck): stuck when the page could not be scrolled."""
-        last = FORTRESS["max_scrolls"] if screens is None else min(screens, FORTRESS["max_scrolls"] + 1) - 1
+        names = {n for _, n in self.BUILDING_LABELS}
+        labels, guard_step = set(), None
+        last = FORTRESS["max_scrolls"]
         for i in range(last + 1):
-            t = self.screen_target()
-            if t is not None:
-                return t, False
+            building, guards, seen = self.visible_targets()
+            if building is not None:
+                return building
+            labels |= seen
+            if labels >= names:
+                self.buildings_checked_at = time.time()
+                if guards:
+                    return guards[0]
+                if guard_step is not None:
+                    break                       # back to the first screen that showed guards
+            elif guards and guard_step is None:
+                guard_step = self.page_step
             if i == last:
                 break
             r = self.scroll_fortress(up=True)
-            if r is not True:                   # False / UNCLEAR: the end; None: stuck
-                return None, r is None
-        return None, False
-
-    def screen_target(self):
-        """A ready building on the screen in front, else its first bright guard, else None."""
-        building, guards, _ = self.visible_targets()
-        if building is not None:
-            return building
+            if r is None:
+                log("Fortress page could not be scrolled; giving up this pass")
+                return None
+            if r is not True:                   # False / UNCLEAR: the end of the page
+                break
+        if not labels >= names:
+            log(f"Buildings not found on the page: {', '.join(sorted(names - labels))}")
+        if guard_step is None:
+            return None
+        for _ in range(FORTRESS["max_scrolls"]):
+            if self.page_step <= guard_step or self.scroll_fortress(up=False) is not True:
+                break
+        _, guards, _ = self.visible_targets()   # (read again: the last scroll may have moved it)
         return guards[0] if guards else None
+
+    def guard_search(self):
+        """A bright guard (or a ready building after all): the screen in front, then down to
+        the end, then from the top down to where the search began."""
+        above = self.page_step
+        for screens, start_top in ((FORTRESS["max_scrolls"] + 1, False), (above, True)):
+            if start_top:
+                if not screens or self.scroll_to_top() is None:
+                    return None
+            for i in range(screens):
+                building, guards, _ = self.visible_targets()
+                if building is not None:
+                    return building
+                if guards:
+                    return guards[0]
+                if i == screens - 1:
+                    break
+                r = self.scroll_fortress(up=True)
+                if r is None:
+                    log("Fortress page could not be scrolled; giving up this pass")
+                    return None
+                if r is not True:
+                    break
+        return None
 
     def tap_until(self, x, y, what, taps, keys, want=ATTACK, timeout=None):
         """Tap (x, y) until one of `keys` shows (precedence in their order), at most `taps`
@@ -1190,6 +1225,7 @@ class FortressFight(ZoneExplore):
         """Select an attackable target on the fortress page and send fleet `index`. The action
         is spent at the final 袭击 of the estimate dialog: when the purchase prompt pops up there
         (or anywhere earlier), the actions are bought and the whole selection is redone."""
+        self.buildings_checked_at = 0.0         # every attack looks at all five buildings first
         if not self.open_fortress():
             log("Could not open the fortress page")
             return False
@@ -1205,11 +1241,11 @@ class FortressFight(ZoneExplore):
                 self.leave_fortress()                   # back to the map with the "<" button
                 return True
             if result in ("retry", "no_attack"):
-                # the page may have been left or re-opened: locate a target afresh, on the screen
-                # in front first (a target that opened no 袭击 is already on the skip lists)
+                # the page may have been left or re-opened: locate a target afresh (a target
+                # that opened no 袭击 is already on the skip lists)
                 if not self.open_fortress():
                     break
-                target = self.pick_target()     # the screen in front first
+                target = self.pick_target()
                 if target is None:
                     break
                 continue
