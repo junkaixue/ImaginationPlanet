@@ -234,6 +234,7 @@ single_find_map = {
     "ZAttackPage": get_image_path("zone/attack_page.png"),
     "ZAllyExchange": get_image_path("zone/ally_exchange.png"),
     "ZDispatchTitle": get_image_path("zone/dispatch_title.png"),
+    **{f"ZFleetNo{n}": get_image_path(f"zone/fleet_no_{n}.png") for n in range(1, 6)},   # the N of "舰队N" on a 派遣舰队 card
     "ZFleetDetail": get_image_path("zone/fleet_detail.png"),
     "ZEnergy": get_image_path("zone/energy.png"),
     "ZEstimateLabel": get_image_path("zone/estimate_label.png"),
@@ -276,7 +277,7 @@ single_find_map = {
     "ZFortressBack": get_image_path("zone/fortress_back.png"),        # "<" bottom-left of the fortress page
     "ZGuardBright": get_image_path("zone/guard_bright.png"),          # guard rocket cell
     "ZGuardAttack": get_image_path("zone/guard_attack.png"),          # "袭击" under a selected guard
-    "ZGuardAttackTop": get_image_path("zone/guard_attack_top.png"),   # its top half (button cut off by 停机坪)
+    "ZGuardAttackTop": get_image_path("zone/guard_attack_top.png"),   # its top 70% (button cut off by 停机坪)
     "ZXingzhiMap": get_image_path("zone/xingzhi_map.png"),            # 星炽要塞 icon on the map
     "ZXingzhiTitle": get_image_path("zone/xingzhi_title.png"),        # "星炽" of the "深寒星炽要塞" page title
     "ZXingzhiGuard": get_image_path("zone/xingzhi_guard.png"),        # 星炽要塞 guard cell
