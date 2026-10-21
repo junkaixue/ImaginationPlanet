@@ -27,8 +27,9 @@ Ordered mode (-oxz / -ozx ORDER, e.g. 41032: five fleet digits from 0, big ship 
 middle, two small): no gear swaps; each idle fleet below full energy is repaired (修理舰队 only),
 each idle full one attacks, biggest first, while the others may still be out. A guard's rank
 label (I / II bars) caps who fights it: big II/I/none, middle I/none, small
-unlabelled only; a ship takes the highest level it may (from the top of the page; the five
-buildings are not attacked, their labels only bound the walk). No two fleets fight the same target:
+unlabelled only; on the first screen from the top that shows a guard it may fight, a ship
+takes the highest level there (the five buildings are not attacked or looked for). No two
+fleets fight the same target:
 a target is claimed for its fleet before the final 袭击 until that fleet is back (BUSY_MIN).
 
 Usage:
@@ -106,6 +107,7 @@ FORTRESS = {
     "max_scrolls": 10,
     "blank_dy": 45,           # the description line under the title: tapping it closes popups
     "cell_half": 10,          # guard brightness: half size of the sampled square (logical px)
+    "white_level": 200,       # guard brightness: a near-white pixel (see FORTRESS_KINDS white_share)
     "building_patch": (45, 5, 20),   # building brightness: from 45 to 5 px above the label, +-20 wide
     "dim_ratio": 0.7,         # the content area this much darker after a drag: a dialog may be on top
     "move_diff": 12,          # mean frame change above this without a strip match is a real move; a glow is ~5
@@ -123,16 +125,19 @@ FORTRESS = {
     "building_tap_dy": 35,    # tap point above a building's label
 }
 # the fortresses: their own map icon, page title and guard cell templates; the page layout,
-# buildings and buttons are the same. bright_min: mean grey of an attackable guard cell (铸械
-# 85-98 vs dim 37-56, pages/boss/fortress_page.png; 星炽 31-33 vs dim 17-19,
-# pages/xingzhi/command_attack_cut.png). building_bright_min: mean grey above a ready building's
+# buildings and buttons are the same. white_share: an attackable guard's rocket is drawn white,
+# so the share of near-white pixels in its sampled square tells it from a dim one: bright cells
+# >= 0.10, dim ones 0 on every undimmed page shot (铸械 fortress_page/_bottom/building_ready,
+# 星炽 pages/xingzhi/fortress_page.png); 0.07 leaves room for a thin white overlay on a dim cell.
+# (The mean grey used before differs between fortresses: 星炽 bright ~80 vs dim 36-69, and 铸械
+# cells of 74-76 sat on its threshold.) building_bright_min: mean grey above a ready building's
 # label (铸械 ~118 vs guarded ~50); not measured on 星炽 yet (no ready building captured; its
 # raided 指挥所 measures ~93, the dim 商店/委托站 ~40), so 铸械's value is used
 FORTRESS_KINDS = {
     "xz": {"name": "星炽要塞", "map": "ZXingzhiMap", "title": "ZXingzhiTitle", "guard": "ZXingzhiGuard",
-           "bright_min": 24, "building_bright_min": 75},
+           "white_share": 0.07, "building_bright_min": 75},
     "zx": {"name": "铸械要塞", "map": "ZFortressMap", "title": "ZFortressTitle", "guard": "ZGuardBright",
-           "bright_min": 75, "building_bright_min": 75},
+           "white_share": 0.07, "building_bright_min": 75},
 }
 # 袭击 under a target, matched by the top 70% of its template: under 指挥所 on the unscrolled
 # page the button is cut off by 停机坪 (full template 0.61 there). The real button scores >= 0.95
@@ -867,7 +872,8 @@ class FortressFight(ZoneExplore):
             if title is not None and y < title.y + FORTRESS["grid_top_dy"]:
                 continue
             cell = gray[cy - h:cy + h, cx - h:cx + h]
-            bright = float(cell.mean()) >= self.kind["bright_min"]
+            bright = (np.count_nonzero(cell > FORTRESS["white_level"])
+                      >= self.kind["white_share"] * max(1, cell.size))
             out.append((x, y, bright, self.guard_level(gray, cx, cy) if bright else 0))
         return out
 
@@ -1150,21 +1156,18 @@ class FortressFight(ZoneExplore):
         from a reading of the screen it is tapped on. When all five were seen without a ready
         one less than BUILDINGS_FRESH ago (a retry within one attack), guards are looked for
         from the screen in front instead. The page is left where the search ended.
-        Ordered mode: `rank` caps the guard level and the highest level seen on the walk wins
-        (the first screen that showed it); buildings are not attacked there (their labels only
-        bound the walk), and the walk ends early on a guard of level `rank`."""
+        Ordered mode: no building and no walk; from the top of the page, the first screen that
+        shows a guard of level up to `rank`, the highest of them on that screen (guard_search)."""
         self.search_gave_up = False
-        buildings = not self.order
+        if self.order:                          # no building to look for: from the top down
+            if not self.to_top():
+                return None
+            return self.guard_search(rank)
         if time.time() - self.buildings_checked_at < BUILDINGS_FRESH:
             return self.guard_search(rank)
-        if self.page_at_top():
-            self.page_step, self.page_off, self.page_known = 0, 0.0, True   # (the count may have drifted)
-        elif self.scroll_to_top() is None:
-            log("Fortress page could not be brought to the top; giving up this pass")
-            self.search_gave_up = True
+        if not self.to_top():
             return None
         names = {n for _, n in self.BUILDING_LABELS}
-        best = 0 if rank is None else rank     # the level nothing further down can beat
         labels, guard_step, step_level = set(), None, -1
         last = FORTRESS["max_scrolls"]
         for i in range(last + 1):
@@ -1182,8 +1185,6 @@ class FortressFight(ZoneExplore):
                     return g
                 if guard_step is not None:
                     break                       # back to the first screen that showed the best guard
-            elif level == best and not buildings:
-                return g                        # (no building to look for: nothing better comes)
             if i == last:
                 break
             r = self.scroll_fortress(up=True)
@@ -1193,7 +1194,7 @@ class FortressFight(ZoneExplore):
                 return None
             if r is not True:                   # False / UNCLEAR: the end of the page
                 break
-        if buildings and not labels >= names:
+        if not labels >= names:
             log(f"Buildings not found on the page: {', '.join(sorted(names - labels))}")
         if guard_step is None:
             return None
@@ -1202,6 +1203,17 @@ class FortressFight(ZoneExplore):
                 break
         _, guards, _ = self.visible_targets()   # (read again: the last scroll may have moved it)
         return self.choose(guards, rank)
+
+    def to_top(self):
+        """The page at its proven top (the bookkeeping reset), or False (search_gave_up)."""
+        if self.page_at_top():                  # (the step count may have drifted)
+            self.page_step, self.page_off, self.page_known = 0, 0.0, True
+            return True
+        if self.scroll_to_top() is None:
+            log("Fortress page could not be brought to the top; giving up this pass")
+            self.search_gave_up = True
+            return False
+        return True
 
     def guard_search(self, rank=None):
         """A bright guard (or a ready building after all): the screen in front, then down to
@@ -1221,6 +1233,8 @@ class FortressFight(ZoneExplore):
                 g = self.choose(guards, rank)
                 if g is not None:
                     return g
+                if self.search_gave_up:         # (the page position is not proven: no guard anywhere)
+                    return None
                 if i == screens - 1:
                     break
                 r = self.scroll_fortress(up=True)
