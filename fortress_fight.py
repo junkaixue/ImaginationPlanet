@@ -184,7 +184,10 @@ BUSY_MAX = 2 * 60 * 60
 BUSY_DY = 50                 # (cells are ~33 apart: the guards right above and below are left out too)
 BUSY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fortress_busy.json")
 NO_TARGET_WAIT = 3 * 60      # seconds a rank waits after its search found nothing (ordered mode)
-FLEET_FAIL_WAIT = 3 * 60     # seconds a fleet whose attack or repair failed is left out (ordered mode)
+FLEET_FAIL_WAIT = 60         # seconds a fleet whose attack or repair failed is left out (ordered mode;
+                             # the fortress page likewise when it would not open or got lost) ...
+FLEET_FAIL_STREAK = 3        # ... and from this many failures in a row on
+FLEET_FAIL_LONG_WAIT = 3 * 60    # this long, until a success clears the count
 # the fleet number of each 派遣舰队 card ("舰队N", ZFleetNo<N>), relative to the title + the card
 # spacing: its own template scores 1.0 there, the other numbers <= 0.82 (dispatch_list_fortress.png)
 DISPATCH_NO = {"dx": -160, "dy": 75, "search": 15, "th": 0.9}
@@ -284,6 +287,8 @@ class FortressFight(ZoneExplore):
         self.order = dict(zip(order, SHIP_RANKS)) if order else None
         self.no_target_until = {}     # rank -> time before which its search is not repeated
         self.fleet_wait = {}          # fleet -> time before which a failed attack / repair is not retried
+        self.fails = {}               # (fleet, "attack"/"repair") or "page" -> failures in a row (see failed)
+        self.page_wait = 0.0          # time before which the fortress page is not tried again
         self.busy = self.load_busy() if order else {}   # fleet -> the target it was sent to (see BUSY_MIN)
         self.page_known = False       # page_off is measured from a proven page top
         self.attacking = None         # the fleet attack_with is sending (its own old claim does not count)
@@ -1521,16 +1526,29 @@ class FortressFight(ZoneExplore):
         log("Attack not launched")
         return False
 
+    def failed(self, key, what):
+        """Book a failure of `key` ((fleet, "attack"), (fleet, "repair") or "page"): the time
+        before which it is not tried again, FLEET_FAIL_WAIT, FLEET_FAIL_LONG_WAIT from the
+        FLEET_FAIL_STREAK-th failure in a row on (cleared by succeeded)."""
+        n = self.fails.get(key, 0) + 1
+        self.fails[key] = n
+        wait = FLEET_FAIL_LONG_WAIT if n >= FLEET_FAIL_STREAK else FLEET_FAIL_WAIT
+        log(f"{what} (failure {n} in a row); tried again in {wait // 60} min")
+        return time.time() + wait
+
+    def succeeded(self, key):
+        self.fails.pop(key, None)
+
     def attack_fleets(self, fleets):
         """Ordered mode: one visit to the fortress page sends every fleet of `fleets` (idle at
         full energy on the last ship scan, biggest first). A rank that found nothing skips
         itself and the smaller ranks for NO_TARGET_WAIT; a fleet that failed waits
-        FLEET_FAIL_WAIT. Returns the number launched."""
-        if not self.open_fortress():
-            log("Could not open the fortress page")
-            for f in fleets:                    # (the next pass tries again; others are not starved)
-                self.fleet_wait[f] = time.time() + FLEET_FAIL_WAIT
+        a while (failed); a fortress page that does not open or gets lost holds all of them
+        back likewise (page_wait). Returns the number launched."""
+        if not self.open_fortress():            # (the page, not the fleets)
+            self.page_wait = self.failed("page", "Could not open the fortress page")
             return 0
+        self.succeeded("page")
         launched = 0
         for fleet in fleets:
             rank = self.order[fleet]
@@ -1538,11 +1556,12 @@ class FortressFight(ZoneExplore):
                 continue
             self.clear_fortress_dialogs()       # (what the last send may have left on top)
             if not self.open_fortress():        # returns at once when the page is in front
-                log("Fortress page lost; the remaining fleets go next pass")
+                self.page_wait = self.failed("page", "Fortress page lost; the remaining fleets go later")
                 break
             r = self.send_fleet(fleet, rank)
             if r:
                 launched += 1
+                self.succeeded((fleet, "attack"))
                 if self.dry_run:
                     break
             elif r is None:                     # nothing for this rank, so nothing for the smaller ones
@@ -1550,12 +1569,11 @@ class FortressFight(ZoneExplore):
                     if lower <= rank:
                         self.no_target_until[lower] = time.time() + NO_TARGET_WAIT
                 log(f"Ranks up to {'I' * rank or 'none'}: nothing to attack; looked for again in {NO_TARGET_WAIT // 60} min")
-            elif self.search_gave_up:           # the page, not the fleet: the rest go next pass
-                log("Fortress page problem; the remaining fleets go next pass")
+            elif self.search_gave_up:           # the page, not the fleet
+                self.page_wait = self.failed("page", "Fortress page problem; the remaining fleets go later")
                 break
             else:
-                log(f"Fleet {fleet}: attack not launched; tried again in {FLEET_FAIL_WAIT // 60} min")
-                self.fleet_wait[fleet] = time.time() + FLEET_FAIL_WAIT
+                self.fleet_wait[fleet] = self.failed((fleet, "attack"), f"Fleet {fleet}: attack not launched")
         self.leave_fortress()
         return launched
 
@@ -1806,13 +1824,18 @@ class FortressFight(ZoneExplore):
                        and ships[f]["hp"] != FULL_HP]
             if damaged and self.open_fleet_page():
                 for f in damaged:
-                    if not self.confirm_repair(f):
+                    if self.confirm_repair(f):
+                        self.succeeded((f, "repair"))
+                    else:
                         self.save_debug(f"repair_failed_{f}")
-                        log(f"Fleet {f}: repair failed; tried again in {FLEET_FAIL_WAIT // 60} min")
-                        self.fleet_wait[f] = time.time() + FLEET_FAIL_WAIT
+                        self.fleet_wait[f] = self.failed((f, "repair"), f"Fleet {f}: repair failed")
                 self.close_fleet_page()
                 ships = self.scan_ships()
             now = time.time()
+            if now < self.page_wait:
+                if not self.pause("Fortress page failed lately; waiting before the next visit"):
+                    return
+                continue
             ready = [f for f, rank in self.order.items() if f not in waiting and ships.get(f, {}).get("idle")
                      and ships[f]["hp"] == FULL_HP and now >= self.no_target_until.get(rank, 0)]
             if not ready:
