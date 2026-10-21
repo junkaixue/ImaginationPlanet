@@ -26,8 +26,9 @@ Only one fleet fights at a time (there is one set of best gear). No zoom or map 
 Ordered mode (-oxz / -ozx ORDER, e.g. 41032: five fleet digits from 0, big ship first, then two
 middle, two small): no gear swaps; each idle fleet below full energy is repaired (修理舰队 only),
 each idle full one attacks, biggest first, while the others may still be out. A guard's rank
-label (I / II bars) caps who fights it: big II/I/none and the buildings, middle I/none, small
-unlabelled only; a ship takes the highest level it may. No two fleets fight the same target:
+label (I / II bars) caps who fights it: big II/I/none, middle I/none, small
+unlabelled only; a ship takes the highest level it may (from the top of the page; the five
+buildings are not attacked, their labels only bound the walk). No two fleets fight the same target:
 a target is claimed for its fleet before the final 袭击 until that fleet is back (BUSY_MIN).
 
 Usage:
@@ -164,9 +165,9 @@ FAILED_TARGET_MISSES = 2     # taps on a building in one go that showed no 袭�
 GUARD_LABEL = {"box": (-15, -15, -5, -7), "bar_reach": 2, "contrast": 25}
 # -oxz/-ozx ORDER: five fleets (0-based digits) by size, one big, two middle, two small. A ship
 # fights guards up to its rank (big: II, I and none; middle: I and none; small: none only), the
-# highest it may; only the big one attacks buildings. No gear swaps, several fleets out at once
+# highest it may; the five buildings are never attacked. No gear swaps, several fleets out at once
 SHIP_RANKS = (2, 1, 1, 0, 0)
-BIG = max(SHIP_RANKS)
+RANK_NAMES = {2: "big", 1: "middle", 0: "small"}
 # ordered mode: a target a fleet was sent to stays that fleet's until the ship bar shows the fleet
 # idle again (at least BUSY_MIN after the send: the bar may lag), BUSY_MAX at most. Guards are
 # remembered by page position (x exact: the page scrolls vertically only; y with the measured
@@ -303,7 +304,7 @@ class FortressFight(ZoneExplore):
         self.page_step = 0            # up-scrolls from the top of the fortress page (screens are 220 px apart)
         self.buildings_checked_at = 0.0   # time pick_target last saw all five buildings, none ready
         self.fortress_title = None    # title position on the open fortress page (the header does not scroll)
-        mode = (" ordered: " + ", ".join(f"fleet {f} {'big' if r == BIG else 'middle' if r else 'small'}"
+        mode = (" ordered: " + ", ".join(f"fleet {f} {RANK_NAMES[r]}"
                                          for f, r in self.order.items())) if self.order else ""
         log(f"FortressFight ready: {self.kind['name']}{mode} (code={_code_version()})")
 
@@ -952,7 +953,7 @@ class FortressFight(ZoneExplore):
         """(ready building or None, bright guards top to bottom, names of the building labels
         on screen); one capture for all. Buildings whose taps showed no 袭击 recently and guard
         spots (screen position at this scroll step) that opened nothing are skipped, and so are
-        the guards other fleets were sent to (self.busy; only the big ship attacks buildings)."""
+        the guards other fleets were sent to (self.busy; this mode attacks no building)."""
         self.invalidate_shot()
         color, gray = self.shot()
         title = self.page_title(gray) or self.fortress_title   # the header does not scroll
@@ -963,10 +964,14 @@ class FortressFight(ZoneExplore):
         for name, until in list(self.failed_targets.items()):
             if now > until:
                 del self.failed_targets[name]
-        log("Buildings: " + (", ".join(f"{n} {st}{' (skipped)' if n in self.failed_targets else ''}" for n, _, _, st in blds)
-                             or "none on screen"))
-        building = next((Target("building", n, x, y) for n, x, y, st in blds
-                         if st == "ready" and n not in self.failed_targets), None)
+        if self.order:                          # (no building is attacked: the labels only)
+            log("Building labels: " + (", ".join(n for n, _, _, _ in blds) or "none on screen"))
+            building = None
+        else:
+            log("Buildings: " + (", ".join(f"{n} {st}{' (skipped)' if n in self.failed_targets else ''}" for n, _, _, st in blds)
+                                 or "none on screen"))
+            building = next((Target("building", n, x, y) for n, x, y, st in blds
+                             if st == "ready" and n not in self.failed_targets), None)
         self.screen_labels = {n: (x, y) for n, x, y, _ in blds}
         cells = self.guard_cells(gray, title)
         r = FORTRESS["spot_radius"]
@@ -1137,7 +1142,7 @@ class FortressFight(ZoneExplore):
         ok = [g for g in guards if g.level <= rank]
         return max(ok, key=lambda g: (g.level, -g.y, -g.x)) if ok else None
 
-    def pick_target(self, rank=None, buildings=True):
+    def pick_target(self, rank=None):
         """A ready building anywhere on the page first (all five: 商店/委托站/指挥所 on the first
         screen, 资源库/军事基地 further down), only then a bright guard. The page is walked from
         the top down until every label was seen (then a bright guard on that screen, or on the
@@ -1146,11 +1151,12 @@ class FortressFight(ZoneExplore):
         one less than BUILDINGS_FRESH ago (a retry within one attack), guards are looked for
         from the screen in front instead. The page is left where the search ended.
         Ordered mode: `rank` caps the guard level and the highest level seen on the walk wins
-        (the first screen that showed it); without `buildings` they are not attacked, and the
-        walk ends early on a guard of level `rank`."""
+        (the first screen that showed it); buildings are not attacked there (their labels only
+        bound the walk), and the walk ends early on a guard of level `rank`."""
         self.search_gave_up = False
+        buildings = not self.order
         if time.time() - self.buildings_checked_at < BUILDINGS_FRESH:
-            return self.guard_search(rank, buildings)
+            return self.guard_search(rank)
         if self.page_at_top():
             self.page_step, self.page_off, self.page_known = 0, 0.0, True   # (the count may have drifted)
         elif self.scroll_to_top() is None:
@@ -1163,7 +1169,7 @@ class FortressFight(ZoneExplore):
         last = FORTRESS["max_scrolls"]
         for i in range(last + 1):
             building, guards, seen = self.visible_targets()
-            if building is not None and buildings:
+            if building is not None:
                 return building
             labels |= seen
             g = self.choose(guards, rank)
@@ -1197,7 +1203,7 @@ class FortressFight(ZoneExplore):
         _, guards, _ = self.visible_targets()   # (read again: the last scroll may have moved it)
         return self.choose(guards, rank)
 
-    def guard_search(self, rank=None, buildings=True):
+    def guard_search(self, rank=None):
         """A bright guard (or a ready building after all): the screen in front, then down to
         the end, then from the top down to where the search began."""
         above = self.page_step
@@ -1210,7 +1216,7 @@ class FortressFight(ZoneExplore):
                     return None
             for i in range(screens):
                 building, guards, _ = self.visible_targets()
-                if building is not None and buildings:
+                if building is not None:
                     return building
                 g = self.choose(guards, rank)
                 if g is not None:
@@ -1363,13 +1369,11 @@ class FortressFight(ZoneExplore):
         (saved before the final 袭击, so that no send goes unrecorded). The guard is kept by
         its offset from every building label on the screen it was read on (exact) and by its
         page position (dx from the title, dy with the measured scroll); False without a proven
-        page position. Buildings need no claim: only the big ship attacks them."""
+        page position (this mode attacks no building)."""
         title = self.fortress_title
-        if target.kind == "guard" and (title is None or not self.page_known):
+        if title is None or not self.page_known:
             return False
         self.sent_at[fleet] = time.time()
-        if target.kind != "guard":
-            return True
         self.busy[fleet] = {"fortress": self.kind["name"], "since": time.time(),
                             "dx": target.x - title.x, "dy": target.y + self.page_off - title.y,
                             "labels": {n: [target.x - lx, target.y - ly] for n, (lx, ly) in self.screen_labels.items()}}
@@ -1441,18 +1445,19 @@ class FortressFight(ZoneExplore):
                    2, f"fleet card {index}", force=True)
         return True
 
-    def attack_with(self, index, rank=None, buildings=True):
+    def attack_with(self, index, rank=None):
         """Select an attackable target on the fortress page and send fleet `index`. The action
         is spent at the final 袭击 of the estimate dialog: when the purchase prompt pops up there
         (or anywhere earlier), the actions are bought and the whole selection is redone.
-        `rank` / `buildings`: what the fleet may attack (see pick_target). Returns True when
+        `rank`: the highest guard level the fleet may attack (see pick_target). Returns True when
         launched, None when the search found nothing it may attack, else False."""
-        self.buildings_checked_at = 0.0         # every attack looks at all five buildings first
+        self.buildings_checked_at = 0.0         # every attack walks the page afresh (the buildings first,
+                                                # in the swap mode)
         self.attacking = index
         if not self.open_fortress():
             log("Could not open the fortress page")
             return False
-        target = self.pick_target(rank, buildings)
+        target = self.pick_target(rank)
         if target is None:
             log("Nothing attackable on the fortress page" + ("" if rank is None else f" for fleet {index}"))
             self.leave_fortress()
@@ -1468,7 +1473,7 @@ class FortressFight(ZoneExplore):
                 # that opened no 袭击 is already on the skip lists)
                 if not self.open_fortress():
                     break
-                target = self.pick_target(rank, buildings)
+                target = self.pick_target(rank)
                 if target is None:
                     break
                 continue
@@ -1484,7 +1489,7 @@ class FortressFight(ZoneExplore):
             self.clear_fortress_dialogs()
             if not self.open_fortress():                # returns at once when the page is in front
                 break
-            target = self.pick_target(rank, buildings)
+            target = self.pick_target(rank)
             if target is None:
                 break
             log("Actions bought -> selecting again")
@@ -1749,7 +1754,7 @@ class FortressFight(ZoneExplore):
                 continue
             fleet = ready[0]
             rank = self.order[fleet]
-            r = self.attack_with(fleet, rank, buildings=rank == BIG)
+            r = self.attack_with(fleet, rank)
             if self.dry_run:
                 return
             if r is None:                       # nothing for this rank, so nothing for the smaller ones
