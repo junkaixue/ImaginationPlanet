@@ -10,8 +10,11 @@ window-scale calibration (zone_explore.calibrate_scale) corrects what REF_WIDTH 
     device = AdbDevice("127.0.0.1:16384")    # MuMu's adb port; a cloud phone: "100.x.y.z:5555"
     click.use_device(device)                 # before ZoneExplore is created
 """
+import atexit
 import io
+import os
 import re
+import struct
 import subprocess
 import time
 
@@ -32,18 +35,34 @@ RETRY_WAITS = (2, 5, 10, 30, 60)    # seconds between attempts while the device 
 SLOW_SWIPE_SPEED = 300      # device px/s of a drag without motionevent: `input swipe` lets go at
                             # full speed, slowly enough that the page should not fling on
 PNG_MAGIC = b"\x89PNG"
+# (folder on the device, the same folder here): when this runs on the phone itself (in the cloud
+# phone's Linux) a screenshot is written there raw and read as a file, 0.23 s where the PNG
+# through adb takes 0.4-0.6 s (the device spends most of that on packing the PNG)
+SHARED_DIRS = (("/data/local/tmp/ip/tmp", "/ip/tmp"),)
+RAW_SHOT = f"shot.{os.getpid()}.raw"       # (this process's own: two scripts do not share one)
 # The floating panel app (cloudphone/app) draws a bubble (and at times a panel) over the game. A tap
-# on it would land on it. Before every touch the app's windows are read afresh; a touch on one is
-# sent in the same shell right after a HIDE broadcast (the app steps aside for HIDE_MS and lets
-# touches through; each touch there renews it). A panel the user has open is waited for first.
+# on it would land on it, and what lies under it is not seen. So its windows are aside from a look
+# at the screen on (hide_for_look), for as long as the script works. A touch while they are not
+# known to be aside (the app restarted, a HIDE that did not go out) reads them afresh; one on a
+# window is sent in the same shell right after a HIDE broadcast (the app steps aside and lets
+# touches through). A panel the user has open is waited for first.
 OVERLAY_PKG = "com.ip.panel"
 # the app's whole window blocks only (a block runs to the next "Window #"; ~27 lines on Android 13)
 OVERLAY_WINDOWS = "dumpsys window windows | awk '/^ *Window #/ {p = /com[.]ip[.]panel/} p'; true"
 BROADCAST = f"am broadcast --receiver-foreground -p {OVERLAY_PKG} -a"
 HIDE_MS = 3000
+LOOK_HIDE_MS = 10000        # the panel app's windows stay aside this long from a look at the screen on
+                            # (the app's own limit; renewed while the script works, ended by
+                            # show_overlay() when it goes idle): under the bubble, wherever the user
+                            # left it, a button is not seen
+LOOK_HIDE_RENEW = 3.0       # seconds of that left when it is sent again
+BURST_PIECE = 6.0           # seconds of taps sent as one shell command: within one HIDE and far from
+                            # ADB_TIMEOUT also where an `input` takes half a second to start
 HELLO_EVERY = 60            # seconds between HELLOs: "this script steps around the bubble" (the app
                             # keeps it 3 min; a restarted app hears it within a minute)
-OVERLAY_MARGIN = 12         # device px around an overlay window that count as on it
+OVERLAY_MARGIN = 130        # device px around an overlay window that count as at it: what a tap opens
+                            # shows around the tap (a guard's 袭击 button 55 px below its cell), and
+                            # under the bubble the script would not see it
 PANEL_MIN_W = 200           # device px: a window this wide is the panel (the bubble is ~100)
 PANEL_WAIT = 12             # seconds a touch under an open panel waits for the user to close it
 TAP_HOLD_MS = 80            # a tap is held this long: the game misses some `input tap`s, whose down
@@ -60,6 +79,8 @@ class AdbDevice:
         self.serial = serial
         self.ref_sft = REF_SFT
         self._connect(must=True)
+        self.shared = self._shared_dir()    # (on the device, here), or None: screenshots as PNG by adb
+        self.raw_failures = 0
         shot = self._capture()
         self.size = (shot.shape[1], shot.shape[0])
         self.k = min(self.size) / REF_WIDTH      # device px per reference physical px
@@ -79,10 +100,12 @@ class AdbDevice:
         self.lift = "CANCEL" if b"CANCEL" in usage else "UP"
         self.hello_at = None            # monotonic time of the last HELLO to the panel app
         self.hidden_until = 0.0         # monotonic: our last HIDE keeps the app's windows aside until then
+        self.windows_read_at = 0.0      # monotonic: the last look at the app's windows before a touch
         listed = self._call(["shell", "pm", "list", "packages", OVERLAY_PKG]) or b""   # (retried)
         self.panel_app = f"package:{OVERLAY_PKG}".encode() in listed   # no app: no window checks
         log(f"adb device {serial}: screen {self.size[0]}x{self.size[1]}, scale {self.k:.3f}, "
             f"round trip {t_shell:.2f} s, input start {self.input_start:.2f} s, "
+            f"screenshots {'raw by a shared folder' if self.shared else 'as PNG by adb'}, "
             f"drag by {'motionevent' if self.motion else 'slow swipe (may overshoot: check the scrolls)'}")
 
     # ------------------------------------------------------------------ adb calls
@@ -154,8 +177,75 @@ class AdbDevice:
             self._call(["shell", cancel], tries=1)
         raise AdbLost(f"may not have been delivered: {cmd.split(';')[-1].strip()[:60]}")
 
+    def _shared_dir(self):
+        """The SHARED_DIRS pair that really is one folder: a file the device writes shows here."""
+        token = f"{os.getpid()}.{time.time():.3f}"
+        for dev, here in SHARED_DIRS:
+            if not os.path.isdir(here):
+                continue
+            probe = f".probe.{os.getpid()}"
+            if self._call(["shell", f"echo {token} > {dev}/{probe}"], tries=1) is None:
+                continue
+            try:
+                with open(f"{here}/{probe}") as f:
+                    same = f.read().strip() == token
+                os.remove(f"{here}/{probe}")
+            except OSError:
+                same = False
+            if same:
+                self._drop_old_shots(here)
+                atexit.register(lambda path=f"{here}/{RAW_SHOT}": os.path.exists(path) and os.remove(path))
+                return dev, here
+            self._call(["shell", f"rm -f {dev}/{probe}"], tries=1)      # (not our folder: nothing is left there)
+        return None
+
+    @staticmethod
+    def _drop_old_shots(here):
+        """Raw screenshots (3.7 MB each) of scripts that were killed: their process is gone."""
+        for name in os.listdir(here):
+            m = re.fullmatch(r"shot\.(\d+)\.raw", name)
+            if m and int(m.group(1)) != os.getpid():
+                try:
+                    os.kill(int(m.group(1)), 0)
+                except ProcessLookupError:
+                    try:
+                        os.remove(f"{here}/{name}")
+                    except OSError:
+                        pass
+                except OSError:
+                    pass                    # (alive, another user's)
+
+    def _capture_raw(self):
+        """The screen as screencap writes it raw into the shared folder (a header of 3 or 4
+        32-bit numbers, then RGBA), or None when that did not give a picture taken now."""
+        dev, here = self.shared
+        path = f"{here}/{RAW_SHOT}"
+        try:
+            if os.path.exists(path):        # (so that what is read below was written by this call)
+                os.remove(path)
+            if self._call(["shell", f"screencap {dev}/{RAW_SHOT}"], tries=1, timeout=SHOT_TIMEOUT) is None:
+                raise ValueError("screencap failed")
+            with open(path, "rb") as f:
+                data = f.read()
+            w, h, fmt = struct.unpack_from("<III", data)
+            head = len(data) - w * h * 4
+            if fmt != 1 or head not in (12, 16) or not w or not h:      # (1: RGBA_8888)
+                raise ValueError(f"{len(data)} bytes for {w}x{h}, format {fmt}")
+            self.raw_failures = 0
+            return np.frombuffer(data, np.uint8, offset=head).reshape(h, w, 4)[:, :, :3].copy()
+        except (OSError, ValueError, struct.error) as e:
+            self.raw_failures += 1
+            if self.raw_failures >= 3:
+                log(f"adb: raw screenshots do not work ({e}): as PNG from here on")
+                self.shared = None
+            return None
+
     def _capture(self):
         """Full-resolution RGB array of the device screen."""
+        if self.shared:
+            shot = self._capture_raw()
+            if shot is not None:
+                return shot
         attempt = 0
         while True:
             out = self._call(["exec-out", "screencap", "-p"], timeout=SHOT_TIMEOUT)
@@ -172,9 +262,42 @@ class AdbDevice:
                 self._reconnect(attempt, f"adb screenshot unreadable ({e})")
 
     # ------------------------------------------------------------------ screen
+    def hide_for_look(self):
+        """Before a look at the screen: the panel app's windows out of the picture, for
+        LOOK_HIDE_MS (sent again when LOOK_HIDE_RENEW s of that are left: every 7 s while the
+        script works, 0.2 s each). A panel the user has open gets PANEL_WAIT s first, as before
+        a touch."""
+        if not self.panel_app or time.monotonic() < self.hidden_until - LOOK_HIDE_RENEW:
+            return
+        windows = self.overlay_windows()
+        panel = lambda ws: ws is not None and any(r[2] - r[0] >= PANEL_MIN_W for r, _ in ws)
+        if panel(windows):
+            log("The panel is open and the script goes on: waiting for it to be closed")
+            end = time.monotonic() + PANEL_WAIT
+            while time.monotonic() < end and panel(windows):
+                time.sleep(1)
+                new = self.overlay_windows()
+                if new is not None:
+                    windows = new
+        drawn = time.monotonic() >= self.hidden_until and (windows is None or bool(windows))
+        sent = self._call(["shell", f"{BROADCAST} com.ip.panel.HIDE --ei ms {LOOK_HIDE_MS} >/dev/null 2>&1"],
+                          tries=1)
+        if sent is None:
+            return                          # (not hidden as far as is known: asked again at the next look)
+        if drawn:                           # (touchable or not, it was in the picture: gone from the
+            time.sleep(0.25)                # next frame on)
+        self.hidden_until = time.monotonic() + LOOK_HIDE_MS / 1000.0
+
+    def show_overlay(self):
+        """The script goes idle (it waits, it ends): the panel app's bubble shows again."""
+        if self.panel_app and time.monotonic() < self.hidden_until:
+            self._call(["shell", f"{BROADCAST} com.ip.panel.HIDE --ei ms 1 >/dev/null 2>&1"], tries=1)
+            self.hidden_until = 0.0
+
     def screenshot(self, *args, region=None, **kwargs):
         """Stand-in for pyautogui.screenshot: the device screen at the reference size.
         `region` (left, top, width, height) crops it, in reference physical px."""
+        self.hide_for_look()
         shot = self._capture()
         hello = self.hello_due() if self.panel_app else ""
         if hello:
@@ -219,14 +342,19 @@ class AdbDevice:
         self.hello_at = time.monotonic()
         return f"{BROADCAST} com.ip.panel.HELLO >/dev/null 2>&1; "
 
-    def before_touch(self, dx, dy):
+    def before_touch(self, dx, dy, hide_ms=HIDE_MS):
         """Shell commands to run right before a touch at device (dx, dy): a HELLO now and then
         (the app keeps its bubble touchable during a run only for scripts that step around it),
-        and a HIDE when the touch would land on one of the app's windows. A panel the user has
-        opened over the spot is given PANEL_WAIT s to be closed before it is hidden."""
+        and a HIDE (for `hide_ms`) when the touch would land on one of the app's windows. A
+        panel the user has opened over the spot is given PANEL_WAIT s to be closed before it
+        is hidden."""
         if not self.panel_app:
             return ""
         pre = self.hello_due()
+        now = time.monotonic()
+        if now < self.hidden_until - 2.0 and now - self.windows_read_at < 10.0:
+            return pre                      # (aside for the script's work, and seen so lately)
+        self.windows_read_at = now
         m = OVERLAY_MARGIN
         on = lambda r: r[0] - m <= dx <= r[2] + m and r[1] - m <= dy <= r[3] + m
         panel = lambda ws: ws is not None and any(r[2] - r[0] >= PANEL_MIN_W for r, _ in ws)
@@ -249,8 +377,8 @@ class AdbDevice:
         # a touchable one (a panel app just restarted, too) always; a hidden one renewed when less
         # than a second of its hide is left
         if any(hits) or (hits and time.monotonic() > self.hidden_until - 1.0):
-            pre += f"{BROADCAST} com.ip.panel.HIDE --ei ms {HIDE_MS} >/dev/null 2>&1; sleep 0.3; "
-            self.hidden_until = time.monotonic() + HIDE_MS / 1000.0
+            pre += f"{BROADCAST} com.ip.panel.HIDE --ei ms {hide_ms} >/dev/null 2>&1; sleep 0.3; "
+            self.hidden_until = time.monotonic() + hide_ms / 1000.0
         return pre
 
     def tap(self, x, y):
@@ -260,6 +388,39 @@ class AdbDevice:
         pre = self.before_touch(dx, dy)
         self._input(pre + f"input swipe {dx} {dy} {dx} {dy} {TAP_HOLD_MS}",
                     cancel=f"input motionevent {self.lift} {dx} {dy}" if self.motion else None)
+
+    def clear_view(self):
+        """Hide the panel app's windows for HIDE_MS when one is showing: something the script
+        waits for may lie under the bubble. True when a HIDE went out (worth one more look)."""
+        if not self.panel_app or time.monotonic() < self.hidden_until - 1.0:
+            return False
+        if not self.overlay_windows():      # (none drawn, or the read failed: nothing to move aside)
+            return False
+        if self._call(["shell", f"{BROADCAST} com.ip.panel.HIDE --ei ms {HIDE_MS} >/dev/null 2>&1; sleep 0.3"],
+                      tries=1) is None:
+            return False
+        self.hidden_until = time.monotonic() + HIDE_MS / 1000.0
+        return True
+
+    def taps(self, x, y, times, gap=0.1):
+        """`times` taps at one spot, `gap` s apart: a burst on a target where a tap too many does
+        no harm. Sent in pieces of BURST_PIECE s, one shell command each: no round trip and no
+        look at the panel app's windows between the taps of one (0.12 s a tap where single ones
+        take 0.35 s), and the app's windows are aside for all of it."""
+        dx, dy = self.to_device(x, y)
+        one = f"input swipe {dx} {dy} {dx} {dy} {TAP_HOLD_MS}"
+        each = self.input_start + TAP_HOLD_MS / 1000.0 + gap + 0.05     # (measured on this device)
+        piece = max(1, int(BURST_PIECE / each))     # taps of one shell command
+        for done in range(0, times, piece):
+            n = min(piece, times - done)
+            pre = self.before_touch(dx, dy, hide_ms=LOOK_HIDE_MS)
+            # aside for all of the piece, whatever is left of an earlier hide (before_touch looks
+            # at the windows only now and then while they are hidden)
+            if self.panel_app and time.monotonic() + n * each + 1.0 > self.hidden_until:
+                pre += f"{BROADCAST} com.ip.panel.HIDE --ei ms {LOOK_HIDE_MS} >/dev/null 2>&1; sleep 0.3; "
+                self.hidden_until = time.monotonic() + LOOK_HIDE_MS / 1000.0
+            self._input(pre + f"; sleep {gap:.2f}; ".join([one] * n),
+                        cancel=f"input motionevent {self.lift} {dx} {dy}" if self.motion else None)
 
     def drag(self, x1, y1, x2, y2, duration=0.7, steps=14, hold=0.3, press=0.1):
         """Press at (x1, y1), move to (x2, y2) in about `duration` s and release; like

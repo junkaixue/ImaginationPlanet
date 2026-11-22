@@ -43,7 +43,7 @@ import numpy as np
 
 from desktop import pyautogui
 
-from click import click_at, drag
+from click import click_at, current_device, drag
 from common import (get_scaling_factor, single_find, get_center, get_all, find_all_with_path,
                     screen_shot, single_find_map, simple_single_find, single_find_with_path,
                     get_center_with_path)
@@ -207,6 +207,17 @@ SURVEY_TTL = 10 * 60                  # seconds a zone's memorized spots stay va
 # the central zone is surveyed for everything.
 OUTER_KINDS = FACTORY_KINDS | {"ZYellowBox", "ZYellowBoss", "ZBox"}
 SHOT_TTL = 0.3                        # seconds a screenshot is reused by the detectors of one stop
+PRESS_WAIT = 5.5                      # seconds press() looks for the effect of its tap before it taps again:
+                                      # the game's time to answer, so in seconds and not paced (as six
+                                      # looks it was 6 s on the Mac and 4 s on the phone at pace 0.6)
+PACE = 1.0                            # every fixed wait for the game (after a tap, between two looks) is
+                                      # multiplied by this: 1 on the Mac's emulator, less on a device that
+                                      # answers faster (the cloud phone, see fortress_fight --pace)
+
+
+def pause(seconds):
+    """A fixed wait for the game, at the device's pace (PACE)."""
+    time.sleep(seconds * PACE)
 DEBUG_SHOT_DIR = None                 # set by --debug-shots: every survey stop saves what the scanner saw
 MIN_IDLE_FOR_OTHER_ZONES = 2          # outer zones are only surveyed with at least this many idle ships
 
@@ -435,7 +446,7 @@ class ZoneExplore:
         prev = self.shot()[1]
         start = time.time()
         while time.time() - start < timeout:
-            time.sleep(0.25)
+            pause(0.25)
             self.invalidate_shot()
             cur = self.shot()[1]
             if self.frame_diff(prev, cur) < 1.5:
@@ -535,7 +546,7 @@ class ZoneExplore:
         for attempt in range(tries):
             if done():
                 return True                     # already satisfied: nothing to click
-            time.sleep(settle)
+            pause(settle)
             self.invalidate_shot()
             if but != "ZBuyOk" and but != "ZBuyCancel" and single_find("ZBuyPrompt"):
                 log(f"{what}: the action purchase prompt is on top, not clicking")
@@ -547,10 +558,13 @@ class ZoneExplore:
                 log(f"{what}: button not found (attempt {attempt + 1})")
                 continue
             self.click(c.x, c.y + dy, 1.5, what, force=True)
-            for _ in range(6):
+            end = time.time() + PRESS_WAIT
+            while True:
                 if (gone and not single_find(gone)) or (appears and single_find(appears)):
                     return True
-                time.sleep(0.5)
+                if time.time() >= end:
+                    break
+                pause(0.5)
             log(f"{what}: no effect yet (attempt {attempt + 1})")
         self.save_debug(f"press_{but}")
         return False
@@ -566,7 +580,7 @@ class ZoneExplore:
             log(f"[DRY] would click {what} at ({x:.0f},{y:.0f})")
             return
         self.raw_click(x, y)
-        time.sleep(delay)
+        pause(delay)
 
     def click_button(self, but, delay=1.5, retries=4, force=False):
         """Click a template button; returns True if it was found and clicked."""
@@ -575,7 +589,7 @@ class ZoneExplore:
             if c is not None:
                 self.click(c.x, c.y, delay, but, force=force)
                 return True
-            time.sleep(0.5)
+            pause(0.5)
         return False
 
     def wait_for(self, but, timeout=10):
@@ -704,7 +718,7 @@ class ZoneExplore:
             elif done is None:
                 return True
             else:
-                time.sleep(idle)
+                pause(idle)
         return done() if done is not None else self.seen(*keys, fresh=True) is None
 
     def close_popup(self, tries=6):
@@ -716,9 +730,17 @@ class ZoneExplore:
         start = time.time()
         while True:
             k = self.seen(*keys, fresh=True)
-            if k is not None or time.time() - start >= timeout:
+            if k is not None:
                 return k
-            time.sleep(0.5)
+            if time.time() - start >= timeout:
+                # (the panel app's bubble may lie on it, wherever the user dragged it: aside, one look)
+                device = current_device()
+                if device is not None and hasattr(device, "clear_view") and device.clear_view():
+                    k = self.seen(*keys, fresh=True)
+                    if k is not None:
+                        log(f"{k} was under the panel app's bubble")
+                return k
+            pause(0.5)
 
     def zoom75_selected(self):
         """True when the 75% label sits on the purple (selected) pill. Returns None if the
@@ -746,7 +768,7 @@ class ZoneExplore:
         c = self.ui("zoom50")
         log("Zoom is not 75% -> clicking 75%")
         self.raw_click(c.x + ZOOM_LAYOUT["dx75"], c.y)
-        time.sleep(2)
+        pause(2)
         return bool(self.zoom75_selected())
 
     # ------------------------------------------------------------------ ships
@@ -975,12 +997,12 @@ class ZoneExplore:
             rex, rey = self.to_real(ex, ey)
             drag(rsx, rsy, rex, rey)
             self.invalidate_shot()
-            time.sleep(DRAG_LAYOUT["settle"])
+            pause(DRAG_LAYOUT["settle"])
             self.wait_still()
             after = self.grab_region(mregion)
             shift = self.measure_shift(before, after, dx, dy)
             if shift is None:
-                time.sleep(1.0)          # maybe still animating (rubber band at the edge); look again
+                pause(1.0)          # maybe still animating (rubber band at the edge); look again
                 self.invalidate_shot()
                 after = self.grab_region(mregion)
                 shift = self.measure_shift(before, after, dx, dy)
@@ -1278,7 +1300,7 @@ class ZoneExplore:
                 return "map"
             if f("ZFactoryPage"):
                 return "factory"
-            time.sleep(0.5)
+            pause(0.5)
         return "unknown"
 
     def read_estimate(self):
@@ -1337,7 +1359,7 @@ class ZoneExplore:
                 self.last_shift = shift
                 log(f"Map view moved after dispatch by ({shift[0]:.0f},{shift[1]:.0f}), offsets corrected")
         if ok:
-            time.sleep(2)
+            pause(2)
             idle_after = set(self.idle_ships(self.scan_ships()))
             gone = sorted(idle_before - idle_after)
             self.last_dispatched = gone[0] if gone else None
@@ -1398,7 +1420,7 @@ class ZoneExplore:
         1 min -> one quantum; 1-3 min -> super boosters, up to 3; over 3 min -> large boosters,
         up to 5. After every booster our countdown is re-read and boosting stops as soon as we
         arrive first."""
-        time.sleep(3)
+        pause(3)
         self.click(cand.x, cand.y, 2, "target again (rival check)")
         if not self.wait_for("ZGo", 6):
             log("Target popup did not open for the rival check")
@@ -1451,7 +1473,7 @@ class ZoneExplore:
                 break
             if single_find("ZDispatchTitle") or single_find("ZFleetDetail"):
                 if picked:
-                    time.sleep(1)
+                    pause(1)
                     continue
                 picked = self.pick_idle_fleet()
                 if not picked:
@@ -1478,7 +1500,7 @@ class ZoneExplore:
             if self.on_map():
                 ok = picked
                 break
-            time.sleep(1)
+            pause(1)
         self.close_popup()
         log(f"Dispatch {'ok' if ok else 'failed'}")
         return ok
@@ -1561,11 +1583,11 @@ class ZoneExplore:
                     self.click_button("ZGo", 2)
                     continue
                 if single_find("ZFactoryPage"):
-                    time.sleep(1)
+                    pause(1)
                     if step >= 3:
                         break   # the click did nothing
                     continue
-                time.sleep(1)
+                pause(1)
             if not single_find("ZFactoryPage"):
                 self.close_popup()
                 return False
@@ -1582,7 +1604,7 @@ class ZoneExplore:
         y = base.y + SHIP_LAYOUT["status_dy"] + BOOST_LAYOUT["icon_dy"]
         for _ in range(BOOST_LAYOUT["max_clicks"]):
             self.raw_click(x, y)
-            time.sleep(1.5)
+            pause(1.5)
             if single_find("ZFleetSpeed"):
                 return True
         return single_find("ZFleetSpeed")
@@ -1595,7 +1617,7 @@ class ZoneExplore:
         if base is not None:
             self.raw_click(base.x + SHIP_LAYOUT["status_dx0"] + (index - 1) * SHIP_LAYOUT["spacing"],
                            base.y + SHIP_LAYOUT["status_dy"] + BOOST_LAYOUT["icon_dy"])
-            time.sleep(1.5)
+            pause(1.5)
         if single_find("ZFleetSpeed"):
             region = self.map_region()
             if region:
@@ -1651,9 +1673,13 @@ class ZoneExplore:
         """Tap the same spot several times quickly. For idempotent targets (tabs, removal slots,
         a button that opens a page) a dropped tap is then harmless."""
         rx, ry = self.to_real(x, y)
-        for _ in range(times):
-            click_at(rx, ry)
-            time.sleep(gap)
+        device = current_device()
+        if device is not None and hasattr(device, "taps"):
+            device.taps(rx, ry, times, gap)         # (a few shell commands: no round trip per tap)
+        else:
+            for _ in range(times):
+                click_at(rx, ry)
+                pause(gap)
         self.invalidate_shot()
         return times
 
@@ -1671,7 +1697,7 @@ class ZoneExplore:
             return True
         for attempt in range(retries):
             tap()
-            time.sleep(settle)
+            pause(settle)
             if shown():
                 return True
             log(f"  {what} not shown after tap {attempt + 1}")
@@ -1708,7 +1734,7 @@ class ZoneExplore:
             if title is not None and max(bright.values()) >= L["tab_sel_min"]:
                 return title, bright
             if i < looks - 1:
-                time.sleep(1.0)
+                time.sleep(1.0)                 # (a fade is the game's time: not paced)
         if title is None:
             log("我的舰队 title not found")
             return None, None
@@ -1719,7 +1745,7 @@ class ZoneExplore:
         if k is None:
             return None, None
         self.dismiss(k, gray)
-        time.sleep(1.0)                         # the overlay fades
+        time.sleep(1.0)                    # the overlay fades (the game's time: not paced)
         title, bright, _ = look()
         if title is None or max(bright.values()) < L["tab_sel_min"]:
             return None, None
@@ -1742,7 +1768,7 @@ class ZoneExplore:
                 log(f"  fleet tab {index} not shown after {tap} taps")
                 break
             self.burst(title.x + L["tab_dx0"] + (index - 1) * L["tab_spacing"], title.y + L["tab_dy"])
-            time.sleep(1.0)
+            pause(1.0)
             title, bright = self.read_tabs(self.TAB_DIM_LOOKS)  # dim after a tap: a transient, or a dialog it opened
         self.save_debug(f"fleet_tab_{index}")
         return False
@@ -1762,8 +1788,7 @@ class ZoneExplore:
                 log(f"Fleet {index}: 修理舰队 did not open its prompt (attempt {attempt + 1})")
                 continue
             self.press("ZRepairOk", "确认 (repair)", gone="ZRepairPrompt", tries=2)
-            time.sleep(1.5)
-            if single_find("ZFleetRepairing"):
+            if self.wait_for("ZFleetRepairing", 3):     # (looked for until it shows: no fixed wait)
                 log(f"Fleet {index} repair confirmed")
                 return True
             log(f"Fleet {index}: repair not running after confirming (attempt {attempt + 1})")
@@ -1804,7 +1829,7 @@ class ZoneExplore:
                 log(f"[DRY] would dispatch to {cands[0]} (min score {min_score})")
                 return True
             self.dispatch(cands[0], allow_buy=allow_buy)
-            time.sleep(2)
+            pause(2)
         return True
 
     def sweep(self, on_screen=None):
@@ -1980,7 +2005,7 @@ class ZoneExplore:
             log("Map did not appear after choosing the zone")
             self.close_popup()
             return False
-        time.sleep(1)
+        pause(1)
         self.ensure_zoom()
         seen = self.read_zone()
         learned = self.title_learned(name)
@@ -2283,7 +2308,7 @@ class ZoneExplore:
                 sent += 1
             self.spots.remove(spot)
             self.forget_spot(spot)
-            time.sleep(2)
+            pause(2)
         log(f"Dispatched {sent} fleet(s) this round")
         return True
 
@@ -2377,7 +2402,7 @@ class ZoneExplore:
                         log("[DRY] would close the popup and click 星际探险")
                         return
                     self.enter_zone_explore()
-                    time.sleep(3)
+                    pause(3)
                     continue
                 if single_find("ZAutoThrowing"):
                     idle_since = None
@@ -2392,7 +2417,7 @@ class ZoneExplore:
                             return
                         self.enter_zone_explore()
                         idle_since = None
-                        time.sleep(3)
+                        pause(3)
                         continue
                 else:
                     log("Unknown page, waiting")
@@ -2427,10 +2452,10 @@ class ZoneExplore:
             return
         log(f"zoom 75% selected before: {self.zoom75_selected()}")
         self.raw_click(c.x, c.y)
-        time.sleep(2)
+        pause(2)
         log(f"after clicking 50%: zoom 75% selected = {self.zoom75_selected()}  (expect False)")
         self.raw_click(c.x + ZOOM_LAYOUT["dx75"], c.y)
-        time.sleep(2)
+        pause(2)
         log(f"after clicking 75%: zoom 75% selected = {self.zoom75_selected()}  (expect True)")
 
     def drag_test(self):

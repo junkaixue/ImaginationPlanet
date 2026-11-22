@@ -105,17 +105,46 @@ debugging on in the phone's 开发者选项.
   needs recapturing; all checked ones score ≥ 0.98.
 - Each map zoom level keeps its own view; after a new login the 75% map opens on our base, and
   `bring_fortress_into_view` searches from there by colour (暗焰要塞 has the same outline).
-- The panel bubble stays draggable and tappable (small, half transparent and green while a
-  script runs; top right by default). The scripts tap by position, so `AdbDevice.before_touch`
-  reads the app's windows afresh before every touch (`dumpsys window`, ~0.06 s on the phone) and,
-  for a touch on one, prefixes the input command with a `com.ip.panel.HIDE` broadcast (3 s,
-  renewed per touch; the panel closes). An open panel over the spot is waited for up to 12 s.
+- The panel bubble (small, half transparent and green while a script runs; top right by default,
+  draggable anywhere) is out of the script's way by time, not by place: before every look at the
+  screen `AdbDevice.hide_for_look` sends `com.ip.panel.HIDE` (10 s, the app's limit; renewed
+  with 3 s left), and when the script goes idle (`FortressFight.nap`) `show_overlay` brings the
+  bubble back. Under the bubble a button is not seen: a guard's 袭击 button was, and the script
+  logged "opened nothing" 129 times in a night. While hidden, taps read the app's windows only
+  every 10 s; a bubble that shows all the same (the app restarted) is hidden in the tap's own
+  shell as before. An open panel is waited for up to 12 s.
   Scripts send `com.ip.panel.HELLO` every minute (touches and screenshots; the app keeps it 3 min);
   while a script that has not runs, the bubble is touch-through, so older script code never taps
-  into it. A bubble parked over a template hides it from screenshots: keep it off the UI the
-  scripts read. The top-right default was checked on the saved pages: no template fortress_fight
-  reads is there, but zone_explore's resource scan reads the whole map (boxes do show up there),
-  so a port of it needs a HIDE before its scan shots. Without the panel app installed (MuMu) AdbDevice skips the window checks.
+  into it. A script that waits by its own sleeps (zone_explore's loop) has to call
+  `show_overlay` there too when it is ported. Without the panel app installed (MuMu) AdbDevice
+  skips all of this.
+- Speed on the phone: screenshots are raw files through the folder both sides see (`/ip/tmp`,
+  `shot.<pid>.raw`, one per process, removed before every capture and at exit; 0.23 s, PNG by adb
+  0.4-0.6 s), a `burst` goes out in pieces of 6 s, one shell command each (within one HIDE and
+  far from the adb timeout), and `fortress_fight --pace` (0.6 by default when the script runs on
+  the phone) scales the fixed waits after taps and the poll while waiting. `pause()` is for
+  those only. What is the game's own time stays in seconds (`time.sleep`, or a window with a
+  deadline): a fade or a page that draws late before a single look, and how long a tap's effect
+  is looked for before the tap is repeated (`PRESS_WAIT`, `CONFIRM_WAIT`; counted in looks they
+  shrink with the pace and with faster screenshots). The fade after buying actions broke at 0.6
+  this way. A burst in one shell command has its taps 0.1 s apart, so it is no safer than one
+  tap against a page that is still settling: fine where the effect is checked and retried (tabs)
+  or where many taps are spare (removal slots), not for a button whose effect nobody looks at.
+  一键配队 was one: its three taps fell into a settling page once in 12 swaps, the fleet went out
+  without the gear and came back with 0% (never in 204 swaps with single taps). Its taps, and
+  those on an artifact's preview, are 0.35 s apart again (`UNCHECKED_TAP_GAP`), and a target
+  whose loadout does not match the standard after 一键配队 gets it once more, then is not sent
+  out: the swap stays in hand (holder stripped again, equipped again on the next pass; given up
+  after 3 passes with the gear put back). To judge a pace, compare per swap: "page did not
+  open", "no effect yet", "not shown after tap", "Attack not launched; next pass", and above all
+  the loadout score after a swap (0.94 = all gear moved; below 0.9 the swap failed).
+- Swap mode attacks the topmost bright guard up to `--max-level` (default 1: no II guards; a II
+  one sent the gear fleet back at 0% into a 45 min repair with the gear on it, and the script
+  could only wait). When only guards above the limit are left, the log says so ("Only guards
+  above the limit are left") and the fortress is visited again every 3 min (`NO_TARGET_WAIT`),
+  not at every poll. A run buys at most 10 packs of actions (`MAX_PACKS_PER_RUN`); after that it
+  attacks only as actions regrow ("Action purchase prompt -> cancel" in the log, one attack in
+  45 min): looks stuck, is the limit.
 - After a phone reboot the supervisor is gone: 浮窗 → 启动服务 starts it through the app's own
   adb client (LocalAdb.java); it resumes the script that was running (state.json).
 - Debug shots accumulate in `/ip/app/pics/mac/zone/debug`; clear with `cp.sh sh "rm app/pics/mac/zone/debug/*"`.

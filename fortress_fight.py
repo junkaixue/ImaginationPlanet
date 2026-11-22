@@ -59,7 +59,9 @@ from desktop import pyautogui
 from common import single_find, get_center, get_all, single_find_map
 from log_helper import log
 from adb_device import AdbLost
-from zone_explore import (ZoneExplore, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH, DRAG_LAYOUT,
+from click import current_device
+import zone_explore
+from zone_explore import (ZoneExplore, pause, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH, DRAG_LAYOUT,
                           MONITOR_POLL, RUN_IDLE_SECONDS, CONTINUE_TAP_DY, _code_version)
 
 # ---- 我的舰队 page, logical px relative to the "我的舰队" title center (ZMyFleet)
@@ -163,6 +165,11 @@ ATTACK = "ZGuardAttackTop"
 TITLE_TO_BACK = (-208, 765, 25)     # dx, dy, tolerance
 FULL_HP = 100
 TAP_BURST = 3                # taps per burst on idempotent buttons (tabs, 一键配队): a dropped tap is harmless
+UNCHECKED_TAP_GAP = 0.35     # seconds between the three taps of a burst whose effect nobody looks at right
+                             # away (一键配队, an artifact's preview). A burst from one shell command has
+                             # them 0.1 s apart: on 一键配队 all three once fell into a page that was still
+                             # settling, the loadout did not go on and the fleet went out without the gear
+                             # (back with 0% hp). At this gap, the one single taps had, one comes late enough
 PENDING_REPAIR_TRIES = 3     # passes a failed repair is retried from pending_repair before giving up
 DEFERRED_EQUIP_TRIES = 3     # passes a stripped fleet's deferred 一键配队 is retried before giving up
 SWAP_FINISH_TRIES = 3        # passes an unfinished gear swap is resumed before it is abandoned
@@ -172,6 +179,15 @@ HOLDER_OK_HP = 90            # the gear holder attacks again by itself above thi
 DEBUG_DIR = None             # --debug-shots: save the OCR crops here
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
 POLL = 30
+SWAP_MAX_LEVEL = 1           # swap mode: the highest guard level the gear fleet is sent against (--max-level).
+                             # A II guard sent it back with 0% hp into a 45 min repair, the gear on it
+PHONE_PACE = 0.6             # --pace when the script runs on the phone itself (the cloud phone): it draws
+                             # a page sooner than the Mac's emulator, so the fixed waits are cut to this
+
+
+def poll():
+    """Seconds between two looks while nothing is to be done, at the device's pace."""
+    return max(10.0, POLL * zone_explore.PACE)
 BUILDINGS_FRESH = 60         # seconds a walk that saw all five buildings without a ready one is trusted
                              # (retries within one attack_with look for guards from the screen in front)
 FAILED_TARGET_TTL = 15 * 60  # seconds a building is skipped after FAILED_TARGET_MISSES taps showed no 袭击
@@ -226,7 +242,10 @@ def phone_account():
     return name
 
 
-NO_TARGET_WAIT = 3 * 60      # seconds a rank waits after its search found nothing (ordered mode)
+NO_TARGET_WAIT = 3 * 60      # seconds a rank waits after its search found nothing (ordered mode); the swap
+                             # mode, when only guards above --max-level are left
+CONFIRM_WAIT = 8.0           # seconds an edit page gets to close after 确认 before it is pressed again
+                             # (the game's time: in seconds and not paced)
 FLEET_FAIL_WAIT = 60         # seconds a fleet whose attack or repair failed is left out (ordered mode;
                              # the fortress page likewise when it would not open or got lost) ...
 FLEET_FAIL_STREAK = 3        # ... and from this many failures in a row on
@@ -324,7 +343,7 @@ def read_yellow_number(rgb):
 class FortressFight(ZoneExplore):
     TAB_DIM_LOOKS = 3                   # the fleet panel here is often still fading when a tab is read
 
-    def __init__(self, dry_run=False, fortress="xz", order=None):
+    def __init__(self, dry_run=False, fortress="xz", order=None, max_level=SWAP_MAX_LEVEL):
         super().__init__(dry_run=dry_run)
         # the standard loadout screenshot: the default one, or this phone's account's own (swap
         # mode does not run without it, see run)
@@ -337,7 +356,10 @@ class FortressFight(ZoneExplore):
         self._loadout_warned = False
         # ordered mode (-oxz/-ozx): fleet -> rank (SHIP_RANKS), biggest first
         self.order = dict(zip(order, SHIP_RANKS)) if order else None
+        self.max_level = max_level      # swap mode: guards above it are left alone (0 none, 1 I, 2 II)
         self.no_target_until = {}     # rank -> time before which its search is not repeated
+        self.left_out = 0             # swap mode: bright guards above max_level seen in the search under way
+        self.above_limit_until = 0.0  # swap mode: only such guards were left; no pass before this time
         self.fleet_wait = {}          # fleet -> time before which a failed attack / repair is not retried
         self.fail_streak = {}         # (fleet, "attack"/"repair") or "page" -> failures in a row (see failed)
         self.page_wait = 0.0          # time before which the fortress page is not tried again
@@ -453,10 +475,13 @@ class FortressFight(ZoneExplore):
                 self.save_debug("no_confirm")
                 return False
             self.click(ok.x, ok.y, 2, f"确认 ({what})", force=True)
-            for _ in range(8):
+            end = time.time() + CONFIRM_WAIT
+            while True:
                 if not single_find(page):
                     return True
-                time.sleep(0.5)
+                if time.time() >= end:
+                    break
+                pause(0.5)
             log(f"{page} still open after 确认 (attempt {attempt + 1})")
         self.save_debug("confirm_stuck")
         return False
@@ -655,7 +680,7 @@ class FortressFight(ZoneExplore):
             for dx, dy, times in clicks:
                 n += self.burst(et.x + dx, et.y + dy, times)
             log(f"  {name}: {n} removal tap(s)")
-            time.sleep(0.5)
+            pause(0.5)
         ok = self.confirm_edit("编辑舰队")
         log("Gear removed and confirmed" if ok else "编辑舰队 could not be confirmed")
         if ok:
@@ -684,7 +709,7 @@ class FortressFight(ZoneExplore):
                 all_ok = False
                 continue
             px, py = ARTIFACT_SLOTS["preview_from_confirm"]
-            self.burst(ok.x + px, ok.y + py, 3)
+            self.burst(ok.x + px, ok.y + py, 3, UNCHECKED_TAP_GAP)
             if not self.confirm_edit(f"artifact row {row + 1}"):
                 all_ok = False
         return all_ok
@@ -735,9 +760,9 @@ class FortressFight(ZoneExplore):
             start = time.time()
             while time.time() - start < wait:
                 if opened():
-                    time.sleep(0.5)          # let the page settle before its anchors are read
+                    pause(0.5)          # let the page settle before its anchors are read
                     return True
-                time.sleep(0.5)
+                pause(0.5)
             self.save_debug(f"slot_{what}_try{attempt + 1}")
             # ZMyFleet last: it is also visible under a dialog; an edit page replaces it
             k = self.seen(*self.EDIT_PAGES, *self.FLEET_DIALOGS, "ZMyFleet", fresh=True)
@@ -781,7 +806,7 @@ class FortressFight(ZoneExplore):
             if not self.select_edit_tab(gt, f"gear {tab_dx:+}", tab_dx, GEAR_LAYOUT["tab_dy"]):
                 log(f"  gear tab {tab_dx:+} underline not seen; tapping its preview anyway")
             px, py = GEAR_LAYOUT["preview"]
-            self.burst(gt.x + px, gt.y + py, 3)
+            self.burst(gt.x + px, gt.y + py, 3, UNCHECKED_TAP_GAP)
         ok = self.confirm_edit("编辑装备")
         log("Bottom artifacts cleared" if ok else "编辑装备 could not be confirmed")
         return ok
@@ -793,8 +818,8 @@ class FortressFight(ZoneExplore):
         if b is None:
             log("一键配队 not found")
             return False
-        self.burst(b.x, b.y, TAP_BURST)             # idempotent: repeated taps re-apply the same loadout
-        time.sleep(2)
+        self.burst(b.x, b.y, TAP_BURST, UNCHECKED_TAP_GAP)  # idempotent: repeated taps re-apply the same loadout
+        time.sleep(2)                               # (the loadout goes on in the game's own time: not paced)
         if self.wait_for("ZRepairOk", 3):           # a confirmation dialog, if any
             self.click_button("ZRepairOk", 2, force=True)
         return True
@@ -851,7 +876,9 @@ class FortressFight(ZoneExplore):
         """The record of a gear swap (holder == target: a check of the holder). Keys:
         unequipped (the holder was stripped), equipped (一键配队 on the target done and its loadout
         checked), tries, to_repair / re_equip (fleets for repair or 一键配队 when it ends),
-        errored (a pass ended in an exception: abandoned at once, the gear must not stay loose)."""
+        errored (a pass ended in an exception: abandoned at once, the gear must not stay loose);
+        strip_again, set while the target's loadout did not match: the next pass strips the
+        holder once more before it equips the target again."""
         return {"holder": holder, "target": target, "unequipped": holder == target, "tries": 0,
                 "to_repair": set(to_repair) - {target}, "re_equip": set(re_equip) - {target},
                 "equipped": False, "errored": False}
@@ -878,7 +905,9 @@ class FortressFight(ZoneExplore):
         sw = self.swap
         target = sw["target"]
         try:
-            if not sw["unequipped"]:            # (again) strip the holder; a partial strip is completed
+            # (again) strip the holder; a partial strip is completed, and so is one that left
+            # something on it (the target's loadout did not match: strip_again)
+            if not sw["unequipped"] or sw.pop("strip_again", False):
                 if not self.unequip_all(sw["holder"]):
                     return False
                 sw["unequipped"] = True
@@ -887,11 +916,23 @@ class FortressFight(ZoneExplore):
                     return False
                 score = self.loadout_score()
                 log(f"Fleet {target} loadout vs standard: {score:.2f}")
+                if score < EQUIP_LAYOUT["loadout_th"] and sw["holder"] != target:
+                    log("Loadout differs from the standard screenshot: 一键配队 once more")   # (it may not have taken)
+                    if not self.auto_equip(target):
+                        return False
+                    score = self.loadout_score()
+                    log(f"Fleet {target} loadout vs standard: {score:.2f}")
                 if score < EQUIP_LAYOUT["loadout_th"]:
                     if sw["holder"] == target:  # a check of the holder: it must really carry the gear
                         log("Loadout differs from the standard screenshot; this fleet does not hold the gear")
                         return False
-                    log("Loadout differs from the standard screenshot; check the equipment by hand")
+                    # the fleet is not sent out like this (without the gear it comes back with 0% hp)
+                    # and nothing is repaired yet (一键配队 for a repair would take gear that is loose):
+                    # the swap stays in hand, the next pass strips the holder once more and equips again
+                    log("Loadout differs from the standard screenshot: the gear is not on this fleet, "
+                        "the swap is not finished (check the equipment by hand if this repeats)")
+                    sw["strip_again"] = True
+                    return False
                 sw["equipped"] = True
             self.holder = target
             self.no_direct_attack.discard(target)
@@ -940,7 +981,7 @@ class FortressFight(ZoneExplore):
                 return True
             if time.time() - start >= timeout:
                 return False
-            time.sleep(0.5)
+            pause(0.5)
 
     def open_fortress(self):
         """Zone map -> fortress icon -> info popup -> 袭击 -> fortress page. Each step is
@@ -1039,7 +1080,7 @@ class FortressFight(ZoneExplore):
 
     def guard_cells(self, gray, title):
         """[(x, y, bright, level)] of every guard cell on the fortress page (logical px); the
-        level (guard_level) is read on bright cells in ordered mode only (else 0)."""
+        level (guard_level) is read on bright cells."""
         t = self.full_template(self.guard_key)
         h = int(FORTRESS["cell_half"] * self.sft)
         out = []
@@ -1050,7 +1091,7 @@ class FortressFight(ZoneExplore):
             cell = gray[cy - h:cy + h, cx - h:cx + h]
             bright = (np.count_nonzero(cell > FORTRESS["white_level"])
                       >= self.kind["white_share"] * max(1, cell.size))
-            out.append((x, y, bright, self.guard_level(gray, cx, cy) if bright and self.order else 0))
+            out.append((x, y, bright, self.guard_level(gray, cx, cy) if bright else 0))
         return out
 
     def guard_level(self, gray, cx, cy):
@@ -1169,6 +1210,9 @@ class FortressFight(ZoneExplore):
                         key=lambda c: (c[1], c[0]))
         levels = [sum(1 for c in bright if c[3] == lv) for lv in (2, 1, 0)]
         log(f"Guards: {len(cells)} cells, {len(bright)} attackable (II {levels[0]}, I {levels[1]}, none {levels[2]})")
+        if not self.order:                      # (swap mode: the gear fleet's own limit; ordered mode ranks ships)
+            self.left_out = max(self.left_out, sum(1 for c in bright if c[3] > self.max_level))
+            bright = [c for c in bright if c[3] <= self.max_level]
         guards = [Target("guard", None, x, y, lv) for x, y, _, lv in bright]
         return building, guards, {n for n, _, _, _ in blds}
 
@@ -1213,7 +1257,7 @@ class FortressFight(ZoneExplore):
             rx1, ry1 = self.to_real(title.x + x_dx, y1)
             _drag(rx0, ry0, rx1, ry1, press=FORTRESS["press"])
             self.invalidate_shot()
-            time.sleep(0.6)
+            pause(0.6)
             self.wait_still()
             after = self.grab_region(region)
             diff = self.frame_diff(before, after)
@@ -1265,7 +1309,7 @@ class FortressFight(ZoneExplore):
         self.wait_still()                       # the page may still be loading
         at_top = self.page_at_top()
         if not at_top:                          # the labels draw after the header: look once more
-            time.sleep(1.0)
+            time.sleep(1.0)                     # (the game's time: not paced)
             at_top = self.page_at_top()
         if at_top:
             self.page_step, self.page_off, self.page_known = 0, 0.0, True
@@ -1434,12 +1478,12 @@ class FortressFight(ZoneExplore):
             deadline = time.time() + timeout
             k = self.wait_seen(keys, timeout)
             if k is None:                       # a very slow popup: look once more before re-tapping
-                time.sleep(FORTRESS["tap_settle"])
+                time.sleep(FORTRESS["tap_settle"])      # (the game's time: not paced)
                 k = self.seen(*keys, fresh=True)
             if k is not None and want is not None and k != want and k not in self.MODAL_KEYS:
                 until = max(deadline, time.time() + FORTRESS["want_grace"])
                 while time.time() < until:
-                    time.sleep(0.5)
+                    pause(0.5)
                     if self.seen(want, fresh=True):
                         k = want
                         break
@@ -1656,9 +1700,14 @@ class FortressFight(ZoneExplore):
         self.buildings_checked_at = 0.0         # every attack walks the page afresh (the buildings first,
                                                 # in the swap mode)
         self.attacking = index
+        self.left_out = 0
         target = self.pick_target(rank)
         if target is None:
             log("Nothing attackable on the fortress page" + ("" if rank is None else f" for fleet {index}"))
+            if rank is None and self.left_out and not self.search_gave_up:
+                log(f"Only guards above the limit are left ({self.left_out} seen, --max-level {self.max_level}): "
+                    f"looked for again in {NO_TARGET_WAIT // 60} min")
+                self.above_limit_until = time.time() + NO_TARGET_WAIT
             return False if self.search_gave_up else None
         for _ in range(5):
             log(f"Attack {target.label} at ({target.x:.0f},{target.y:.0f}) with fleet {index}")
@@ -1681,10 +1730,16 @@ class FortressFight(ZoneExplore):
             if not self.handle_buy_prompt(True):
                 log("Could not buy actions" if not self.dry_run else "[DRY] stopped at the purchase prompt")
                 break
-            time.sleep(1.5)
-            # the estimate dialog or the guard popup may still be up under the dimmed title:
-            # clear them, then make sure the fortress page is really in front
-            self.clear_fortress_dialogs()
+            # the receipt's overlay fades, and the estimate dialog or the guard popup that asked
+            # for the actions shows again under it: cleared until two looks in a row find
+            # nothing on top (the fade is the game's own time: not paced)
+            clear, end = 0, time.time() + 10
+            while clear < 2 and time.time() < end:
+                time.sleep(0.7)
+                k = self.seen(*self.FORTRESS_DIALOGS, fresh=True)
+                clear = clear + 1 if k is None else 0
+                if k is not None:
+                    self.clear_fortress_dialogs(k)
             if not self.open_fortress():                # returns at once when the page is in front
                 self.search_gave_up = True
                 break
@@ -1791,12 +1846,12 @@ class FortressFight(ZoneExplore):
                     return "failed"
                 if picked is None:
                     reads += 1
-                    time.sleep(1)
+                    pause(1)
                 continue
             if k == "ZContinueHint":
                 self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
                 continue
-            time.sleep(1)
+            pause(1)
         log("Attack flow did not reach the estimate dialog")
         return "failed"
 
@@ -1815,7 +1870,7 @@ class FortressFight(ZoneExplore):
             ships = self.scan_ships()
             if ships.get(index, {}).get("idle"):
                 return True
-            if not self.nap(POLL):
+            if not self.nap(poll()):
                 return False            # (a stop: the fleet is out, nothing is half done)
         return False
 
@@ -1901,14 +1956,17 @@ class FortressFight(ZoneExplore):
         return self.scan_ships()
 
     def pause(self, msg):
-        """Log `msg` and wait POLL seconds before the next pass; False in a dry run (one pass)
+        """Log `msg` and wait poll() seconds before the next pass; False in a dry run (one pass)
         or once a stop is requested (the caller ends the run)."""
         log(msg)
-        return not self.dry_run and self.nap(POLL)
+        return not self.dry_run and self.nap(poll())
 
     def nap(self, seconds):
         """Sleep, waking every second for a stop request; False when one came. (A monotonic
         clock: the phone's time sync may step the wall clock.)"""
+        device = current_device()
+        if device is not None and hasattr(device, "show_overlay"):
+            device.show_overlay()           # (nothing is read or tapped meanwhile: the bubble is the user's)
         end = time.monotonic() + seconds
         while not self.stop_requested:
             if time.monotonic() >= end:
@@ -2035,7 +2093,7 @@ class FortressFight(ZoneExplore):
                 except Exception:
                     pass
                 monitor = False                 # (already on the map side; _run re-enters the map)
-                self.nap(POLL)
+                self.nap(poll())
 
     def start(self, monitor):
         if monitor:
@@ -2146,7 +2204,7 @@ class FortressFight(ZoneExplore):
                 else:
                     # (a stop meanwhile does not end the run here: the next pass abandons the swap,
                     # the gear put back first)
-                    if not self.pause(f"Gear swap to fleet {self.swap['target']} unfinished; resumed in {POLL} s") \
+                    if not self.pause(f"Gear swap to fleet {self.swap['target']} unfinished; resumed in {poll():.0f} s") \
                             and self.dry_run:
                         return
                     continue
@@ -2167,7 +2225,7 @@ class FortressFight(ZoneExplore):
                     log(f"Could not tell which fleet has the best gear after {self.holder_misses} looks; "
                         f"check the standard loadout screenshot ({os.path.basename(self.loadout_path)})")
                     return
-                self.pause(f"Could not tell which fleet has the best gear; looking again in {POLL} s")
+                self.pause(f"Could not tell which fleet has the best gear; looking again in {poll():.0f} s")
                 continue
             self.holder_misses = 0
             if self.deferred_repair:            # (a full-hp fleet is dropped by the repair loop itself)
@@ -2225,6 +2283,11 @@ class FortressFight(ZoneExplore):
             if self.stop_point():
                 return
             if not self.attack_with(target):
+                wait = self.above_limit_until - time.time()
+                if wait > 0:                    # (nothing within the limit: no fortress visit every poll)
+                    if self.dry_run or not self.nap(wait):
+                        return
+                    continue
                 if not self.pause("Attack not launched; next pass"):
                     return
                 continue
@@ -2240,6 +2303,12 @@ if __name__ == "__main__":
     parser.add_argument("-f", "--fortress", choices=sorted(FORTRESS_KINDS),
                         help="Which fortress to fight: xz (星炽要塞, default) or zx (铸械要塞)")
     parser.add_argument("--delay", type=int, default=3)
+    parser.add_argument("--max-level", type=int, choices=(0, 1, 2), default=SWAP_MAX_LEVEL,
+                        help="Swap mode: the highest guard level the gear fleet attacks: 0 unmarked only, "
+                             f"1 up to I, 2 also II (default {SWAP_MAX_LEVEL})")
+    parser.add_argument("--pace", type=float, default=None,
+                        help="Multiply the fixed waits for the game by this (default 1; "
+                             f"{PHONE_PACE} when the script runs on the phone itself)")
     parser.add_argument("--debug-shots", action="store_true", help="Save OCR crops to pics/<platform>/zone/debug/")
     parser.add_argument("-m", "--monitor", action="store_true",
                         help="Wait on the dice board until the dice run out, enter 星际探险, then fight")
@@ -2270,9 +2339,17 @@ if __name__ == "__main__":
     if args.adb:
         from adb_device import AdbDevice
         from click import use_device
-        use_device(AdbDevice(args.adb))     # before FortressFight: it keeps pyautogui.screenshot
+        device = AdbDevice(args.adb)
+        use_device(device)                  # before FortressFight: it keeps pyautogui.screenshot
+        if args.pace is None and device.shared:     # (on the phone itself: it answers faster)
+            args.pace = PHONE_PACE
+    if args.pace is not None:
+        if not 0.2 <= args.pace <= 3:
+            parser.error("--pace is a factor between 0.2 and 3")
+        zone_explore.PACE = args.pace
+        log(f"Pace {args.pace:g}: fixed waits for the game times that, a look every {poll():.0f} s while waiting")
     time.sleep(args.delay)
-    fight = FortressFight(dry_run=args.dry, fortress=args.fortress or "xz", order=order)
+    fight = FortressFight(dry_run=args.dry, fortress=args.fortress or "xz", order=order, max_level=args.max_level)
     fight.run(monitor=args.monitor)
     if fight.stop_requested:
         sys.exit(143)                       # (ended by a SIGTERM, as a kill would: callers tell it from a finish)
