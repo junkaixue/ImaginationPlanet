@@ -146,6 +146,7 @@ class Supervisor:
         self.updating = None        # what an update under way is doing (shown in the panel), else None
         self.code_changed = False   # an update changed the code and the running script is not on it yet
         self.unloadable = None      # the sha1 of a new supervisor.py that failed its load check
+        self.undecided = (None, 0)  # (sha1, times): load checks of that file that gave no verdict
         self.update_lock = threading.Lock()     # one update at a time
         self.restarts = []          # times of automatic restarts this hour
         self.logfile = None
@@ -605,7 +606,8 @@ class Supervisor:
                 if self.restarting:
                     return msg + "; the supervisor is restarting already"
                 self.restarting = True
-            threading.Thread(target=self.reexec, args=(panel,), daemon=True).start()
+            # (what this update changed for a running script, should the new supervisor not start)
+            threading.Thread(target=self.reexec, args=(panel, fresh or bool(changed)), daemon=True).start()
             return msg + ", restarting the supervisor"
         with self.lock:                         # (a script being stopped by hand stays stopped)
             running = self.proc is not None and self.script is not None and not self.stopping
@@ -695,25 +697,46 @@ class Supervisor:
                 changed.append(f"{name} (removed)")
         return changed
 
-    def reexec(self, panel=False):
-        """Start the new supervisor.py in this process (same pid); the running script stops and
-        the new one resumes it from state.json. A changed panel app is installed first. A new
-        file that does not load (a syntax error, a failing import, an error at its top level: it
-        would end the service) is not started, and when the exec fails this one goes on: either
-        way it takes starts again instead of answering 服务正在重启 for good."""
-        time.sleep(1)                       # (the /update answer goes out first)
-        new = f"{HOME}/supervisor.py"
+    def load_check(self, new):
+        """(ok, why) for a new supervisor.py loaded as a module in a python of its own. A file
+        that fails by itself (a syntax error, a failing import, an error at its top level) is
+        remembered in `unloadable`: no further try, no restart for it, until it changes. A check
+        that gives no verdict (out of time, killed, out of memory: the phone, not the file) is
+        made again by the next update; the third such check of the same file is the verdict, as
+        a file that hangs or dies on loading ends the same way."""
         checked = sha1(new)                 # (the file the check is about: it may be replaced meanwhile)
+        verdict = False
         try:
             r = subprocess.run([sys.executable, "-c", LOAD_CHECK, new], capture_output=True, text=True,
                                timeout=120)
-            ok, why = r.returncode == 0, (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
-            if r.returncode > 0:            # (no further try, no restart for it, until it changes)
-                self.unloadable = checked
-            elif r.returncode < 0:          # (killed, by the phone short of memory: no verdict)
+            if r.returncode == 0:
+                return True, ""
+            why = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+            if r.returncode < 0:
                 why = f"the check was killed (signal {-r.returncode})"
+            else:
+                verdict = not any(k in r.stderr for k in ("MemoryError", "Cannot allocate memory"))
         except (OSError, subprocess.TimeoutExpired) as e:
-            ok, why = False, f"the check did not run: {e}"     # (the next update tries it again)
+            why = f"the check did not run: {e}"
+        if not verdict:
+            times = self.undecided[1] + 1 if self.undecided[0] == checked else 1
+            self.undecided = (checked, times)
+            verdict = times >= 3
+            why += f" (no verdict, {times} of 3)"
+        if verdict:
+            self.unloadable = checked
+        return False, why
+
+    def reexec(self, panel=False, restart=True):
+        """Start the new supervisor.py in this process (same pid); the running script stops and
+        the new one resumes it from state.json. A changed panel app is installed first. A new
+        file that does not load (it would end the service) is not started, and when the exec
+        fails this one goes on: either way it takes starts again instead of answering
+        服务正在重启 for good. `restart`: the update changed something for a running script,
+        which then starts again on it although the supervisor stays."""
+        time.sleep(1)                       # (the /update answer goes out first)
+        new = f"{HOME}/supervisor.py"
+        ok, why = self.load_check(new)
         if not ok:
             log(f"the new supervisor.py does not load ({why}): this one goes on")
         stopped = False
@@ -729,13 +752,15 @@ class Supervisor:
         except Exception as e:
             log(f"restarting the supervisor failed ({e}): this one goes on")
         # (settled while `restarting` still keeps updates out: one that sets the mark comes after)
-        if stopped:                         # (the script was stopped for the exec)
-            resume = self.saved_running()
-        else:                               # (it runs on: restarted when the update changed the code,
-            with self.lock:                 # as an update without a new supervisor.py does; not for
-                running = (self.proc is not None and self.script is not None    # a check that only
-                           and not self.stopping)                               # failed again)
-                resume = self.script["id"] if running and self.code_changed else None
+        with self.lock:
+            running = self.proc is not None and self.script is not None and not self.stopping
+            sid = self.script["id"] if running else None
+        if stopped or not running:          # (stopped for the exec; or it ended while starts were
+            resume = self.saved_running()   # refused, or was stopped by hand: state.json tells)
+        elif restart or self.code_changed:  # (it runs on, and the update changed something for it:
+            resume = sid                    # restarted as by an update without a new supervisor.py)
+        else:
+            resume = None                   # (nothing new for it: a check that only failed again)
         if not resume:
             self.code_changed = False       # (no script runs on older code than is there)
         with self.term_lock:                # (a SIGTERM from here on stops this one by itself)

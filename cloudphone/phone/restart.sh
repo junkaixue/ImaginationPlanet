@@ -36,6 +36,7 @@ find_supervisor() {   # the pid of a running supervisor: a python whose script, 
       case "$w" in
         --check-hash-based-pycs) value=1 ;;
         --*) ;;
+        -) break ;;                                     # (the program comes from stdin: no script)
         -*)                                             # (short options, maybe several in a word)
           o=${w#-}
           while [ -n "$o" ]; do

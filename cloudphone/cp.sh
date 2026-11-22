@@ -99,11 +99,11 @@ supervisor_process() {   # 0: a supervisor runs on the phone (whatever superviso
   local out
   adb -s "$SERIAL" shell "mkdir -p $D/tmp" >/dev/null 2>&1 || return 2
   adb -s "$SERIAL" push "$HERE/phone/restart.sh" "$D/tmp/cp.restart.sh" >/dev/null 2>&1 || return 2
-  out="$(adb -s "$SERIAL" shell "sh $D/tmp/cp.restart.sh --find" 2>&1 || true)"
-  case "$out" in
-    none*) return 1 ;;
-    [0-9]*) return 0 ;;
-  esac
+  out="$(adb -s "$SERIAL" shell "sh $D/tmp/cp.restart.sh --find" 2>&1 | tr -d '\r' || true)"
+  # (the verdict is a line of its own: the phone's shell may print a warning before it)
+  if printf '%s\n' "$out" | grep -qx 'none'; then return 1; fi
+  if printf '%s\n' "$out" | grep -qxE '[0-9]+'; then return 0; fi
+  case "$out" in adb:*|error:*) return 2 ;; esac          # (what adb itself says of a lost link)
   [ "$(adb -s "$SERIAL" get-state 2>/dev/null || true)" = device ] || return 2
   echo "restart.sh --find on the phone gave no verdict: ${out:-no output}" >&2
   return 3
