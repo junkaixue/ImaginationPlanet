@@ -48,6 +48,8 @@ SPARSE = ["/*.py", "/pics/mac/zone/*", "!/pics/mac/zone/pages/", "!/pics/mac/zon
 LOGS = f"{HOME}/logs"
 STATE = f"{HOME}/state.json"
 SCRIPTS = f"{HOME}/scripts.json"
+ACCOUNT = f"{HOME}/account"         # one word: this phone's game account (cp.sh -a NAME setup); its
+                                    # list is scripts.NAME.json. No file: the default list, SCRIPTS
 SUPERVISOR_PID = f"{HOME}/supervisor.pid"
 SCRIPT_PID = f"{HOME}/script.pid"   # the running script's process group, for a supervisor started again
 PORT = 8765
@@ -150,12 +152,26 @@ class Supervisor:
 
     # ------------------------------------------------------------------ scripts
     @staticmethod
+    def scripts_file():
+        """This phone's script list: its account's own (see ACCOUNT) when there is one."""
+        try:
+            with open(ACCOUNT) as f:
+                name = f.read().strip()
+        except OSError:
+            return SCRIPTS
+        own = f"{HOME}/scripts.{name}.json"
+        if name.isalnum() and os.path.exists(own):
+            return own
+        log_once(f"account {name!r}: no scripts.{name}.json here; the default scripts.json is used")
+        return SCRIPTS
+
+    @staticmethod
     def scripts():
         """scripts.json: a list of {"group", "id", "name", "args", "restart"?}; the panel shows
         one group (kind of feature) at a time. Kept a flat list so that older supervisors and
         panels read it too. Entries without an id or args, and a second use of an id (ids are
         global: state.json, logs, /start), are skipped with a log line."""
-        with open(SCRIPTS, encoding="utf-8-sig") as f:
+        with open(Supervisor.scripts_file(), encoding="utf-8-sig") as f:
             data = json.load(f)
         if isinstance(data, dict):          # (the grouped form of 847be53)
             data = [dict(s, group=g.get("name", "")) for g in data.get("groups") or []

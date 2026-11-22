@@ -2,10 +2,11 @@
 # Set up, update, run and debug the game scripts inside an Android cloud phone, from this Mac,
 # over adb (a Tailscale address). See cloudphone/README.md.
 #
-#   cloudphone/cp.sh [-s SERIAL] COMMAND [ARGS]
+#   cloudphone/cp.sh [-a ACCOUNT] [-s SERIAL] COMMAND [ARGS]
 #
 #   all                 a fresh phone: setup + code --github + app + up
-#   setup               install proot + Alpine + Python/opencv/tesseract/adb/git (repairs, skips the rest)
+#   setup               install proot + Alpine + Python/opencv/tesseract/adb/git (repairs, skips the
+#                       rest); with -a it names the phone's account (/ip/account)
 #   code [--github]     put the code on the phone: this working tree (default, for testing
 #                       unpushed changes) or a git checkout of origin/main fetched by the phone
 #   app                 build (if the sources changed) and install the floating panel app
@@ -19,7 +20,11 @@
 #   pull PATH [OUT]     an image file of the phone (e.g. app/pics/mac/zone/debug/X.png) as JPEG
 #   sh CMD...           run a shell command inside the phone's Alpine (cwd /ip = the work folder)
 #
-# SERIAL: -s, else $CP_SERIAL, else cloudphone/.serial (one line, e.g. 100.104.162.101:5555).
+# SERIAL: -s, else with -a cloudphone/.serial.ACCOUNT, else $CP_SERIAL, else cloudphone/.serial (one
+# line, e.g. 100.104.162.101:5555).
+# ACCOUNT (-a, e.g. gs): the phone of that game account. An account is a config, picked on the
+# phone by the name in /ip/account: phone/scripts.ACCOUNT.json (the panel's list) and
+# pics/mac/zone/loadout_standard_ACCOUNT.png. No -a, no name on the phone: the default files.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(dirname "$HERE")"
@@ -31,9 +36,22 @@ SPARSE='"/*.py" "/pics/mac/zone/*" "!/pics/mac/zone/pages/" "!/pics/mac/zone/deb
 # what the scripts keep next to them (gitignored): a fresh clone puts them back
 STATE_FILES="fortress_busy.json fortress_gear.json"
 
-usage() { sed -n '2,/^# SERIAL/p' "$0" | sed 's/^# \{0,1\}//'; }
-SERIAL="${CP_SERIAL:-}"
-if [ "${1:-}" = "-s" ]; then SERIAL="$2"; shift 2; fi
+usage() { sed -n '2,/^set -euo/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
+SERIAL=""; ACCOUNT=""
+while :; do
+  case "${1:-}" in
+    -s) SERIAL="${2:?-s needs HOST:PORT}"; shift 2 ;;
+    -a) ACCOUNT="${2:?-a needs an account name}"; shift 2 ;;
+    *) break ;;
+  esac
+done
+case "$ACCOUNT" in *[!A-Za-z0-9]*) echo "an account name is letters and digits: $ACCOUNT"; exit 1 ;; esac
+if [ -z "$SERIAL" ] && [ -n "$ACCOUNT" ]; then
+  [ -f "$HERE/.serial.$ACCOUNT" ] ||
+    { echo "no phone for account $ACCOUNT: write HOST:PORT to cloudphone/.serial.$ACCOUNT (or give -s)"; exit 1; }
+  SERIAL="$(head -1 "$HERE/.serial.$ACCOUNT")"
+fi
+[ -n "$SERIAL" ] || SERIAL="${CP_SERIAL:-}"
 if [ -z "$SERIAL" ] && [ -f "$HERE/.serial" ]; then SERIAL="$(head -1 "$HERE/.serial")"; fi
 [ -n "$SERIAL" ] || { echo "no phone: give -s HOST:PORT or write it to cloudphone/.serial"; exit 1; }
 CMD="${1:-}"; shift || true
@@ -117,6 +135,19 @@ push_phone_files() {
   mark_local_code
   restart_if_changed "$before"
 }
+push_proot() {   # proot comes through this Mac when the phone has none: some phones cannot reach
+  # GitHub's raw files (setup.sh uses a proot.tgz that is there, and downloads it itself otherwise)
+  if psh "[ -x $D/root/bin/proot ]"; then return 0; fi
+  local url tmp
+  url="$(sed -n 's/^PROOT_URL=//p' "$HERE/phone/setup.sh")"
+  tmp="$(mktemp -d)"
+  if curl -fsSL -m 120 -o "$tmp/proot.tgz" "$url"; then
+    push "$tmp/proot.tgz" "$D/proot.tgz"
+  else
+    echo "this Mac could not download proot ($url): the phone tries it itself"
+  fi
+  rm -rf "$tmp"
+}
 jpeg() {   # OUT CMD: write the JPEG a phone-side command prints, fail when there is none
   adb -s "$SERIAL" exec-out "cd $D && ./run.sh $2 2>/dev/null" > "$1"
   [ -s "$1" ] || { echo "no image (is the code folder there? cp.sh code)"; exit 1; }
@@ -189,9 +220,13 @@ code_github() {
 case "$CMD" in
   all)
     connect
-    "$0" -s "$SERIAL" setup && "$0" -s "$SERIAL" code --github && "$0" -s "$SERIAL" app && "$0" -s "$SERIAL" up ;;
+    "$0" -s "$SERIAL" ${ACCOUNT:+-a "$ACCOUNT"} setup && "$0" -s "$SERIAL" code --github && "$0" -s "$SERIAL" app && "$0" -s "$SERIAL" up ;;
   setup)
-    connect; push_phone_files; psh "sh $D/setup.sh" ;;
+    connect; push_phone_files
+    # (the phone's account: the supervisor and the scripts take that account's config from now on)
+    if [ -n "$ACCOUNT" ]; then psh "echo $ACCOUNT > $D/account"; echo "this phone is account $ACCOUNT"; fi
+    push_proot
+    psh "sh $D/setup.sh" ;;
   code)
     connect
     if [ "${1:-}" = "--github" ]; then code_github; else code_local; fi ;;

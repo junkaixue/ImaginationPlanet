@@ -27,6 +27,12 @@ describes (panel, scripts, update, restart rules, commands), update it in the sa
 
 ## Find the phone
 `cloudphone/.serial` holds `HOST:5555` (git-ignored); `-s HOST:5555` or `$CP_SERIAL` override.
+There are two phones, one per game account: jx (the default, `.serial`) and gs (`-a gs`, address
+in `cloudphone/.serial.gs`). Know which one a command goes to before running it.
+An account is a config, not an option: the phone's `/ip/account` names it, the supervisor then
+lists `cloudphone/phone/scripts.NAME.json` and fortress_fight.py matches
+`pics/mac/zone/loadout_standard_NAME.png`; without a name or such a file, the default ones (jx).
+A new account-specific value goes into such a per-account file, never into a script option.
 `adb devices` / `cp.sh status` show whether it answers. If not: Tailscale on the Mac and the
 phone must be up (`/Applications/Tailscale.app/Contents/MacOS/Tailscale status`), and USB
 debugging on in the phone's 开发者选项.
@@ -36,8 +42,11 @@ debugging on in the phone's 开发者选项.
    开发者选项 → **USB 调试 on** (红手指 then opens adbd on port 5555).
 2. Install Tailscale (APK from `https://pkgs.tailscale.com/stable/`, or the phone's shell
    `curl` once adb works) and log in with the same account as the Mac (scan the QR / open the
-   login link on the Mac). Note the 100.x address → write `HOST:5555` to `cloudphone/.serial`.
-3. Then, from the Mac: `cloudphone/cp.sh all` (= setup + code --github + app + up). It is
+   login link on the Mac). Note the 100.x address → write `HOST:5555` to `cloudphone/.serial`
+   (the gs account's phone: `cloudphone/.serial.gs`).
+3. Then, from the Mac: `cloudphone/cp.sh all` (= setup + code --github + app + up; another
+   account's phone: `cp.sh -a NAME all`, which also writes `/ip/account`). proot comes through
+   the Mac when the phone has none (the gs phone cannot reach raw.githubusercontent.com). It is
    idempotent; rerun any part on failure. `setup` takes ~2 min (downloads go to the phone from
    mirrors in China; the Mac's link is not used for them).
 4. Open the game on the phone once and log in (the account can be online on one device only:

@@ -199,6 +199,7 @@ BUSY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fortress_b
 # the fleet that held the best gear last (swap mode): a run whose holder lookup finds no fleet with
 # the gear (a swap cut off by a kill, a crash) gives it 一键配队 to take the loose gear back
 GEAR_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fortress_gear.json")
+# (cloudphone/cp.sh STATE_FILES names these two: a fresh clone on the phone keeps them)
 # a cloud phone names its game account here (one word, e.g. gs). An account is
 # its config, the logic is the same: its script list (cloudphone/phone/scripts.NAME.json) and its
 # standard loadout screenshot (zone/loadout_standard_NAME.png: its best gear on the 我的舰队 grid,
@@ -216,7 +217,6 @@ def phone_account():
     except OSError:
         return None
     return name if name.isalnum() else None
-# (cloudphone/cp.sh STATE_FILES names these two: a fresh clone on the phone keeps them)
 NO_TARGET_WAIT = 3 * 60      # seconds a rank waits after its search found nothing (ordered mode)
 FLEET_FAIL_WAIT = 60         # seconds a fleet whose attack or repair failed is left out (ordered mode;
                              # the fortress page likewise when it would not open or got lost) ...
@@ -326,7 +326,7 @@ class FortressFight(ZoneExplore):
                 self.loadout_path = own
             else:
                 log(f"Account {self.account} has no {os.path.basename(own)}: the default screenshot is used")
-        self._loadout = None          # that screenshot, read once (loadout_score)
+        self._loadout = False         # that screenshot, read once (loadout_score); None: unreadable
         # ordered mode (-oxz/-ozx): fleet -> rank (SHIP_RANKS), biggest first
         self.order = dict(zip(order, SHIP_RANKS)) if order else None
         self.no_target_until = {}     # rank -> time before which its search is not repeated
@@ -569,8 +569,10 @@ class FortressFight(ZoneExplore):
             return 0.0
         self.invalidate_shot()
         gray = self.shot()[1]
-        if self._loadout is None:
+        if self._loadout is False:
             self._loadout = cv2.imread(self.loadout_path, 0)
+            if self._loadout is None:
+                log(f"The standard loadout screenshot could not be read: {self.loadout_path}")
         t = self._loadout
         if t is None:
             return 0.0

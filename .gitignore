@@ -24,4 +24,5 @@ fortress_busy.json
 cloudphone/app/.sdk/
 cloudphone/app/.build/
 cloudphone/.serial
+cloudphone/.serial.*
 fortress_gear.json

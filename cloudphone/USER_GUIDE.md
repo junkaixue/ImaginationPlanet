@@ -50,15 +50,15 @@ flowchart LR
 | 面板里的脚本列表 | `cloudphone/phone/scripts.json` | `cloudphone/phone/scripts.gs.json` |
 | 标准装备图 | `pics/mac/zone/loadout_standard.png` | `pics/mac/zone/loadout_standard_gs.png` |
 
-手机上的 `/data/local/tmp/ip/account` 文件里写着这台手机是哪个号（一个词，例如 `gs`）；没有这个文件就是默认的 jx。脚本按这个名字找自己号的图，没有那个名字的图就用默认的。脚本本身不带区分号的参数。
-
-后台服务按这个名字选脚本列表这一步还没做完：目前 gs 手机上的列表是从电脑直接放过去的，在那台手机上点「更新」会换回默认列表。
+手机上的 `/data/local/tmp/ip/account` 文件里写着这台手机是哪个号（一个词，例如 `gs`）；没有这个文件就是默认的 jx。后台服务按这个名字给面板出脚本列表，脚本按这个名字找自己号的图；没有那个名字的列表或图就用默认的。脚本本身不带区分号的参数。
 
 gs 的列表：「铸械要塞 换装」（真的出击）和「铸械要塞 换装 试跑(不出击)」（换装和修理是真的，到最后的「袭击」确认时取消）。
 
 换装模式靠「标准装备图」认出最好的装备在哪条船上，每个号的装备不一样，所以各有一张。号上最好的那套装备换了（换了棋子、神器，或者升了很多级），匹配分数掉到 0.9 以下，脚本就会说找不到带装备的船，这时要在带着整套装备的那条船上重新截这张图。
 
-再加一个号：起个名字，加 `scripts.名字.json` 和 `loadout_standard_名字.png`，在那台手机的 `account` 文件里写上名字。
+电脑上，gs 手机的地址写在 `cloudphone/.serial.gs` 里，命令加 `-a gs`，例如 `cloudphone/cp.sh -a gs status`；不加 `-a` 就是 `cloudphone/.serial` 里的 jx 手机。
+
+再加一个号：起个名字（字母和数字），加 `scripts.名字.json` 和 `loadout_standard_名字.png`，把那台手机的地址写进 `cloudphone/.serial.名字`，运行 `cloudphone/cp.sh -a 名字 all`，它会在手机上记下号名。
 
 ## 更新代码
 
@@ -86,8 +86,8 @@ GitHub 上没有新东西时，结果是「已是最新」，正在跑的脚本�
 
 1. 打开 USB 调试：设置 → 关于手机 → 连点「版本号」7 次 → 系统 → 开发者选项 → 打开「USB 调试」。红手指会随之在 5555 端口开放 adb。
 2. 安装 Tailscale：在手机浏览器里从 `https://pkgs.tailscale.com/stable/` 下载安卓安装包，用和 Mac 同一个账号登录。手机上点登录后，把出现的登录链接拿到已登录的 Mac 上打开确认。
-3. 在 Mac 上把手机的 Tailscale 地址写进 `cloudphone/.serial`，例如 `100.104.162.101:5555`。
-4. 在 Mac 上运行 `cloudphone/cp.sh all`：装好手机里的 Linux 环境、从 GitHub 下载代码、安装浮窗、启动服务，约几分钟。
+3. 在 Mac 上把手机的 Tailscale 地址写进 `cloudphone/.serial`，例如 `100.104.162.101:5555`；gs 号的手机写进 `cloudphone/.serial.gs`。
+4. 在 Mac 上运行 `cloudphone/cp.sh all`（gs 号：`cloudphone/cp.sh -a gs all`）：装好手机里的 Linux 环境、从 GitHub 下载代码、安装浮窗、启动服务，约几分钟。
 5. 在新手机上打开游戏并登录。同一个账号只能在一台设备上在线，旧手机或 MuMu 上要先退出游戏。
 
 ## 常见问题
@@ -109,7 +109,7 @@ GitHub 上没有新东西时，结果是「已是最新」，正在跑的脚本�
 
 ## 电脑上的命令
 
-日常使用不需要电脑；Mac 上的 `cloudphone/cp.sh` 用来部署、查看和调试，在仓库根目录下运行。手机地址读 `cloudphone/.serial`，也可以用 `-s 地址:5555` 指定。
+日常使用不需要电脑；Mac 上的 `cloudphone/cp.sh` 用来部署、查看和调试，在仓库根目录下运行。手机地址读 `cloudphone/.serial`，也可以用 `-s 地址:5555` 指定；`-a gs` 选 gs 号的手机（地址在 `cloudphone/.serial.gs`）。
 
 | 命令 | 作用 |
 | --- | --- |
