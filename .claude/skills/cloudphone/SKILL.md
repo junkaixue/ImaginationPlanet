@@ -137,7 +137,15 @@ debugging on in the phone's 开发者选项.
   write `/ip/local_code` ("<epoch> <commit>"), and an update whose fetched commit is older
   answers 没有更新 (`cp.sh update --force` or `code --github` go back anyway). Push before
   telling the user to tap 更新. An update shows `updating` in /status (the panel: 更新中), runs
-  one at a time. It fetches the commit, then the contents of the changed files by a checkout
+  one at a time. When git cannot reach github.com for the network (throttled from some cloud
+  phones: the TLS handshake passes, then no data; `curl https://github.com/` hangs while
+  `https://api.github.com/` answers in 0.3 s), the update goes through api.github.com by
+  itself (`update_by_api`: newest commit, its file list, only the files whose blob sha differs,
+  each checked, then moved in; `/ip/api_version` names the commit and git's HEAD of then, label
+  `+api` while HEAD is still that one), and straight there for the next 6 hours
+  (`/ip/git_blocked`, lifted when the API cannot do it); `cp.sh update --api` asks for it. 60 requests an hour without a
+  login, 50 files an update: beyond that push from the Mac (`cp.sh code`). By git it fetches
+  the commit, then the contents of the changed files by a checkout
   into a scratch index and folder under `/ip/tmp` (the clone is blob:none: this is the real
   download), then resets locally. The two downloads give up below 1 KB/s for a minute and are
   tried once more on a network error (GitHub is slow from the phone at times: one fetch takes

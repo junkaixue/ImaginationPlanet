@@ -11,7 +11,9 @@ cloudphone/cp.sh on the Mac) over http://127.0.0.1:8765 (this phone only).
                           cloudphone/phone files to /ip, start the running script again on it,
                           the supervisor itself when its code changed, and install a changed
                           panel app. Refused when the phone has newer code from the Mac
-                          (cp.sh code, not pushed yet), unless ?force=1
+                          (cp.sh code, not pushed yet), unless ?force=1. When git cannot
+                          reach github.com the files come through api.github.com; ?api=1
+                          takes that way at once
 
 One script runs at a time (one game). A script that fails (ends by itself with an error exit,
 e.g. fortress_fight's "errors keep coming") is started again after RESTART_WAIT s, at most
@@ -20,10 +22,14 @@ false in scripts.json, the default for args with --dry). The running script is r
 state.json: a supervisor started again (cp.sh restart, or after a reboot by the panel app)
 starts it again.
 """
+import calendar
 import filecmp
+import fnmatch
 import hashlib
+import http.client
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -31,6 +37,8 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.error
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -40,6 +48,15 @@ PHONE_FILES = f"{APP}/cloudphone/phone"     # the repo's copy of the files in HO
 PANEL_APK = f"{APP}/cloudphone/app/panel.apk"
 PANEL_SHA = f"{HOME}/panel.apk.sha"       # the sha1 of the panel app installed last (cp.sh app / update)
 SCRATCH = "update."                       # prefix of an update's scratch folders in HOME/tmp
+API_VERSION = f"{HOME}/api_version"       # json {"sha", "label", "files", "head"}: the commit the code is of
+                                          # after an update through api.github.com, and git's HEAD then (it
+                                          # does not move that way); it counts while HEAD is still that one
+GIT_BLOCKED = f"{HOME}/git_blocked"       # epoch seconds until which updates skip git (see API_AGAIN); a
+                                          # file: a restart of the supervisor keeps it
+API_MAX_FILES = 50                        # files one update fetches through the API (60 requests an hour
+                                          # without a login, two of them for the commit and its file list)
+API_AGAIN = 6 * 3600                      # after git could not reach github.com: updates go straight to the
+                                          # API for so long (each try by git costs a minute of waiting)
 LOCAL_CODE = f"{HOME}/local_code"         # "<epoch> <commit>": code or phone files came from the Mac (cp.sh
                                           # code / setup) and are that new; no update to an older commit
 # what of the repo the phone checks out (cp.sh code_github has the same list): the root scripts,
@@ -91,6 +108,26 @@ def sha1(path):
             return hashlib.sha1(f.read()).hexdigest()
     except OSError:
         return None
+
+
+def blob_sha(data):
+    """git's name for a file's contents, as the file list of a commit gives it."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def in_checkout(path):
+    """A path of the repo that the phone keeps: what SPARSE says to git. A leading "/" is the
+    root, a trailing "/" a folder (with all in it), "*" stays within one name, a pattern covers
+    what lies below its match, "!" takes away, and the last pattern that matches decides."""
+    keep, parts = False, path.split("/")
+    for pattern in SPARSE:
+        plain = pattern.lstrip("!").lstrip("/")
+        names = plain.rstrip("/").split("/")
+        if len(parts) < len(names) + plain.endswith("/"):
+            continue
+        if all(fnmatch.fnmatchcase(part, name) for part, name in zip(parts, names)):
+            keep = not pattern.startswith("!")
+    return keep
 
 
 LOADED = sha1(os.path.abspath(__file__))    # the code this process runs (an update re-execs when it differs)
@@ -207,24 +244,39 @@ class Supervisor:
         return script.get("restart", "--dry" not in script["args"])
 
     @staticmethod
+    def api_version():
+        """What an update through the API wrote (API_VERSION), {} when the code is git's."""
+        try:
+            with open(API_VERSION, encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    @staticmethod
     def code_version():
-        if os.path.isdir(f"{APP}/.git"):
-            git = ["git", "--no-optional-locks", "-C", APP]    # (no index.lock against an update)
-            try:
-                r = subprocess.run(git + ["log", "-1", "--format=%h %cd", "--date=format:%m-%d %H:%M"],
-                                   capture_output=True, text=True, timeout=20)
-                label = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "?"
-            except subprocess.TimeoutExpired:
-                label = "?"
-            try:
-                r = subprocess.run(git + ["status", "--porcelain", "-uno", "--no-renames"],
-                                   capture_output=True, text=True, timeout=20)
-                if r.returncode == 0:
-                    return label + (" +local" if r.stdout.strip() else "")
-            except subprocess.TimeoutExpired:
-                pass
-            return label + " +?"            # (not known: it does not pass for GitHub's code)
-        return "local copy"
+        if not os.path.isdir(f"{APP}/.git"):
+            return "local copy"
+        git = ["git", "--no-optional-locks", "-C", APP]    # (no index.lock against an update)
+        head, label = "", "?"
+        try:
+            r = subprocess.run(git + ["log", "-1", "--format=%H %h %cd", "--date=format:%m-%d %H:%M"],
+                               capture_output=True, text=True, timeout=20)
+            if r.returncode == 0 and r.stdout.strip():
+                head, _, label = r.stdout.strip().partition(" ")
+        except subprocess.TimeoutExpired:
+            pass
+        api = Supervisor.api_version()
+        if api.get("label") and head and api.get("head") == head and not os.path.exists(LOCAL_CODE):
+            return f"{api['label']} +api"   # (the files are of a newer commit than HEAD: fetched by the API)
+        try:
+            r = subprocess.run(git + ["status", "--porcelain", "-uno", "--no-renames"],
+                               capture_output=True, text=True, timeout=20)
+            if r.returncode == 0:
+                return label + (" +local" if r.stdout.strip() else "")
+        except subprocess.TimeoutExpired:
+            pass
+        return label + " +?"                # (not known: it does not pass for GitHub's code)
 
     # ------------------------------------------------------------------ game
     @staticmethod
@@ -404,10 +456,11 @@ class Supervisor:
         log(f"giving up starting {sid}")
 
     # ------------------------------------------------------------------ update
-    def update(self, force=False):
+    def update(self, force=False, api=False):
         """The code of GitHub's main. One at a time; `updating` tells the panel what it is at (the
         fetch may take minutes). Code that came from the Mac and is newer than GitHub's commit
-        (not pushed yet) is kept unless `force`: the update would put older code back."""
+        (not pushed yet) is kept unless `force`: the update would put older code back. `api`:
+        through api.github.com without a try by git."""
         if not os.path.isdir(f"{APP}/.git"):
             return "the code is a copy from the Mac (cp.sh code); run `cp.sh code --github` once"
         if not self.update_lock.acquire(blocking=False):
@@ -415,7 +468,7 @@ class Supervisor:
         try:
             if self.restarting:             # (the re-exec of the last update waits for the script: a
                 return "服务正在重启，稍后再点更新"     # new supervisor.py now would start unchecked)
-            return self.update_locked(force)
+            return self.update_locked(force, api)
         finally:
             self.updating = None
             self.update_lock.release()
@@ -561,27 +614,110 @@ class Supervisor:
                 shutil.rmtree(f"{tmp}/{name}", ignore_errors=True)
         self.clear_locks()
 
-    def update_locked(self, force):
+    def update_locked(self, force, api=False):
+        """git first; through api.github.com when git cannot reach github.com (throttled from
+        some phones: the handshake passes, then no data), when it could not lately, or when
+        asked for (`api`). Then what both ways share."""
+        began = time.monotonic()
         self.clear_leftovers()
+        self.drop_api_mark(stale_only=True)
+        if api or time.time() < self.git_blocked():
+            how = ("network", "asked for" if api else "git could not reach github.com lately")
+        else:
+            how = self.update_by_git(force)
+            self.block_git(time.time() + API_AGAIN if how[0] == "network" else 0)
+        if how[0] == "network":
+            log("update: through api.github.com (" + how[1].splitlines()[-1][:160] + ")")
+            # (the panel and cp.sh wait 2100 s for all of an update: what git used up is taken off)
+            budget = max(120, min(540, 1700 - (time.monotonic() - began)))
+            how = self.update_by_api(force, asked=api, budget=budget)
+        if how[0] != "done":
+            return how[1]
+        return self.finish_update(how[1])
+
+    @staticmethod
+    def git_blocked():
+        """Until when (epoch s) updates skip git, 0 when they do not."""
+        try:
+            with open(GIT_BLOCKED) as f:
+                return float(f.read().strip())
+        except (OSError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def block_git(until):
+        """Updates skip git until `until` (it could not reach github.com); 0 lifts that."""
+        if until:
+            with open(GIT_BLOCKED, "w") as f:
+                f.write(str(int(until)))
+        elif os.path.exists(GIT_BLOCKED):
+            os.remove(GIT_BLOCKED)
+
+    def git_head(self):
+        r = subprocess.run(["git", "--no-optional-locks", "-C", APP, "rev-parse", "HEAD"],
+                           capture_output=True, text=True, timeout=60)
+        return r.stdout.strip() if r.returncode == 0 else ""
+
+    def git_files(self):
+        """What git tracks of the checkout; OSError when git does not tell."""
+        try:
+            r = subprocess.run(["git", "--no-optional-locks", "-C", APP, "ls-files", "-z"],
+                               capture_output=True, timeout=60)
+        except subprocess.TimeoutExpired:
+            raise OSError("git ls-files 60 秒没答")
+        if r.returncode != 0:
+            raise OSError("git ls-files: " + r.stderr.decode("utf-8", "replace").strip()[:120])
+        return {path for path in r.stdout.decode("utf-8", "replace").split("\0") if path}
+
+    def drop_api_mark(self, stale_only=False):
+        """API_VERSION goes once git's HEAD says what the code is (an update by git; with
+        `stale_only`, a HEAD that moved since, by cp.sh code --github without a supervisor),
+        and with it the files the API had added that git does not track: the commit they
+        came with had them, HEAD's has not."""
+        api = self.api_version()
+        if not api:
+            return
+        try:
+            if stale_only and api.get("head") == self.git_head():
+                return
+            tracked = self.git_files()
+            for path in api.get("files", []):
+                if in_checkout(path) and path not in tracked and os.path.lexists(f"{APP}/{path}"):
+                    os.remove(f"{APP}/{path}")
+                    log(f"update: removed {path} (it came through the API and is gone from the repo)")
+            os.remove(API_VERSION)
+        except (OSError, subprocess.TimeoutExpired) as e:
+            log(f"update: the API mark stays for now: {e}")
+
+    def too_old(self, fetched_time, fetched, force):
+        """The answer when GitHub's commit is older than code that came from the Mac, else None."""
+        local = self.local_code_time()
+        if force or local is None or fetched_time is None or fetched_time >= local:
+            return None
+        log(f"update: GitHub's main ({fetched}) is older than the code from the Mac on this phone: kept")
+        return f"没有更新：GitHub 上的代码（{fetched}）比手机上从电脑推来的代码旧，还没推送？推送后再点更新"
+
+    def update_by_git(self, force):
+        """The checkout brought to GitHub's main by git: ("done", fresh), fresh when it changed
+        the code; ("answer", text) when it stops here; ("network", output) when the network
+        kept git from github.com (the update then goes through the API)."""
         ok, out = self.retried("正在从 GitHub 拉代码（可能要几分钟）",
                                lambda: self.git_step(["fetch", "-q", "--depth", "1", "origin", "main"], 300))
         if not ok:
-            return self.download_failed("拉代码", out)
+            return ("network", out) if self.network_trouble(out) else ("answer", self.download_failed("拉代码", out))
         r = subprocess.run(["git", "-C", APP, "log", "-1", "--format=%ct %h %cd", "--date=format:%m-%d %H:%M",
                             "FETCH_HEAD"], capture_output=True, text=True)
-        local = self.local_code_time()
         try:
             fetched_time, fetched = int(r.stdout.split()[0]), r.stdout.split(None, 1)[1].strip()
         except (ValueError, IndexError):
             fetched_time, fetched = None, "?"
-        if not force and local is not None and fetched_time is not None and fetched_time < local:
-            log(f"update: GitHub's main ({fetched}) is older than the code from the Mac on this phone: kept")
-            return (f"没有更新：GitHub 上的代码（{fetched}）比手机上从电脑推来的代码旧，还没推送？"
-                    "推送后再点更新")
+        answer = self.too_old(fetched_time, fetched, force)
+        if answer:
+            return "answer", answer
         r = subprocess.run(["git", "-C", APP, "rev-parse", "HEAD", "FETCH_HEAD"], capture_output=True, text=True)
         heads = r.stdout.split()
         same = r.returncode == 0 and len(heads) == 2 and heads[0] == heads[1]
-        dirty = True                        # (changes from the Mac in the checkout)
+        dirty = True                        # (changes from the Mac, or by the API, in the checkout)
         for attempt in (1, 2):              # (--no-renames: no file contents are fetched for it)
             try:
                 r = subprocess.run(["git", "--no-optional-locks", "-C", APP, "status", "--porcelain", "-uno",
@@ -593,7 +729,8 @@ class Supervisor:
         if not same:                        # (else: all is here)
             ok, out = self.retried("正在下载改动的文件", self.scratch_checkout)
             if not ok:
-                return self.download_failed("下载文件", out)
+                return (("network", out) if self.network_trouble(out)
+                        else ("answer", self.download_failed("下载文件", out)))
         fresh = not same or dirty           # (this update changes the code)
         if fresh:
             self.code_changed = True        # (until a script starts on it: also when this update fails)
@@ -601,10 +738,156 @@ class Supervisor:
         ok, out = self.git_step(["reset", "-q", "--hard", "FETCH_HEAD"], 120)
         if not ok:
             log("update failed: " + out.replace("\n", " | "))
-            return "更新失败（换代码）: " + out
+            return "answer", "更新失败（换代码）: " + out
         ok, out = self.git_step(["sparse-checkout", "set", "--no-cone"] + SPARSE, 120)
         if not ok:                          # (the code is updated; only the file list stays as it was)
             log("update: sparse-checkout set failed: " + out.replace("\n", " | "))
+        self.drop_api_mark()                # (HEAD says again what the code is)
+        return "done", fresh
+
+    # ---- through api.github.com
+    def api_repo(self):
+        """https://api.github.com/repos/OWNER/NAME of the checkout's origin, None when it is not
+        on github.com."""
+        r = subprocess.run(["git", "-C", APP, "remote", "get-url", "origin"], capture_output=True, text=True)
+        m = re.search(r"github\.com[:/]+([^/\s]+)/([^/\s]+?)(?:\.git)?/?\s*$", r.stdout)
+        return f"https://api.github.com/repos/{m.group(1)}/{m.group(2)}" if m else None
+
+    @staticmethod
+    def api_get(url, accept="application/vnd.github+json", limit=120):
+        """(body, requests left this hour) of a GET at api.github.com, the body read within
+        `limit` s; OSError with a short reason otherwise."""
+        req = urllib.request.Request(url, headers={"User-Agent": "cloudphone-updater", "Accept": accept,
+                                                   "X-GitHub-Api-Version": "2022-11-28"})
+        end = time.monotonic() + limit
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                chunks = []
+                while True:
+                    if time.monotonic() > end:
+                        raise OSError(f"下载 {limit} 秒没完")
+                    chunk = r.read(65536)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                left = r.headers.get("X-RateLimit-Remaining", "")
+                return b"".join(chunks), int(left) if left.isdigit() else None
+        except urllib.error.HTTPError as e:
+            if e.code in (403, 429) and e.headers.get("X-RateLimit-Remaining") == "0":
+                raise OSError("这个小时的请求次数用完了（不登录每小时 60 次），过一会儿再点")
+            raise OSError(f"HTTP {e.code} {e.reason}")
+        except urllib.error.URLError as e:
+            raise OSError(str(e.reason))
+        except http.client.HTTPException as e:  # (the body was cut off)
+            raise OSError(f"连接中断（{type(e).__name__}）")
+
+    def api_blob(self, repo, sha):
+        """A file's contents by git's name for them, checked against that name; one more try."""
+        for attempt in (1, 2):
+            try:
+                data, _ = self.api_get(f"{repo}/git/blobs/{sha}", accept="application/vnd.github.raw")
+                if blob_sha(data) != sha:
+                    raise OSError("下载的内容和清单上的校验值对不上")
+                return data
+            except OSError as e:
+                if attempt == 2:
+                    raise
+                log(f"update: api: {sha[:7]}: {e}; once more")
+
+    def checkout_files(self):
+        """The repo's files the phone has: what git tracks of the checkout, and what an update
+        through the API added to it."""
+        files = {path for path in self.git_files() if in_checkout(path)}
+        files.update(path for path in self.api_version().get("files", []) if in_checkout(path))
+        return files
+
+    def update_by_api(self, force, asked=False, budget=540):
+        """The update through api.github.com: the newest commit, its list of files, and the
+        contents of those that differ from the phone's (by git's names for contents). They
+        come down into a scratch folder, each checked, and only then go into the checkout; files
+        the commit has no more are removed. git's HEAD stays where it was: API_VERSION tells
+        the commit. `asked`: by cp.sh update --api, not after a failure of git. All of it ends
+        within `budget` s. ("done", fresh) or ("answer", text); when the API could not do it,
+        the next update tries git again."""
+        way = "备用线路 api.github.com" if asked else "github.com 拉不动，备用线路 api.github.com 也不行"
+
+        def failed(why):
+            self.block_git(0)
+            log(f"update: api failed: {why}")
+            return "answer", f"更新失败（{way}）: {why}"
+
+        repo = self.api_repo()
+        if repo is None:
+            return failed("手机上的仓库不是 github.com 的")
+        end = time.monotonic() + budget
+        try:
+            self.updating = ("走备用线路（api.github.com）" if asked
+                             else "github.com 拉不动，改走备用线路（api.github.com）")
+            body, _ = self.api_get(f"{repo}/commits/main")
+            head = json.loads(body)
+            sha = head["sha"]
+            fetched_time = calendar.timegm(time.strptime(head["commit"]["committer"]["date"], "%Y-%m-%dT%H:%M:%SZ"))
+            label = sha[:7] + time.strftime(" %m-%d %H:%M", time.localtime(fetched_time))    # (the phone's time)
+            answer = self.too_old(fetched_time, label, force)
+            if answer:
+                return "answer", answer
+            self.updating = "备用线路：正在比较文件"
+            body, left = self.api_get(f"{repo}/git/trees/{sha}?recursive=1")
+            tree = json.loads(body)
+            if tree.get("truncated"):
+                return failed("文件清单太长，GitHub 没给全")
+            listed = {e["path"] for e in tree["tree"]}      # (all of the commit: also what is not fetched,
+            wanted = {e["path"]: (e["sha"], e["mode"])      # a link, which stays as the phone has it)
+                      for e in tree["tree"]
+                      if e.get("type") == "blob" and e.get("mode") in ("100644", "100755") and in_checkout(e["path"])}
+            if not wanted:
+                return failed("清单里没有手机要的文件")
+            need = []
+            for path, (name, _) in sorted(wanted.items()):
+                try:
+                    with open(f"{APP}/{path}", "rb") as f:
+                        have = blob_sha(f.read())
+                except OSError:
+                    have = None
+                if have != name:
+                    need.append(path)
+            gone = sorted(path for path in self.checkout_files()
+                          if path not in listed and os.path.lexists(f"{APP}/{path}"))
+            if len(need) > API_MAX_FILES:
+                return failed(f"有 {len(need)} 个文件要下载，备用线路一次最多 {API_MAX_FILES} 个。"
+                              "等 github.com 通了再点，或用电脑推（cp.sh code）")
+            if left is not None and len(need) > left:
+                return failed(f"要下载 {len(need)} 个文件，这个小时只剩 {left} 次请求"
+                              "（不登录每小时 60 次），过一会儿再点")
+            with tempfile.TemporaryDirectory(dir=f"{HOME}/tmp", prefix=SCRATCH) as scratch:
+                for i, path in enumerate(need):
+                    if time.monotonic() > end:
+                        raise OSError(f"下载超过 {int(budget // 60)} 分钟")
+                    self.updating = f"备用线路：正在下载改动的文件（{i + 1}/{len(need)}）"
+                    with open(f"{scratch}/{i}", "wb") as f:
+                        f.write(self.api_blob(repo, wanted[path][0]))
+                    os.chmod(f"{scratch}/{i}", 0o755 if wanted[path][1] == "100755" else 0o644)
+                self.updating = "正在换上新代码"
+                fresh = bool(need or gone)
+                if fresh:
+                    self.code_changed = True    # (until a script starts on it: also when this fails)
+                for i, path in enumerate(need):
+                    os.makedirs(os.path.dirname(f"{APP}/{path}"), exist_ok=True)
+                    os.replace(f"{scratch}/{i}", f"{APP}/{path}")
+                for path in gone:
+                    os.remove(f"{APP}/{path}")
+            tmp = API_VERSION + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump({"sha": sha, "label": label, "files": sorted(wanted), "head": self.git_head()}, f)
+            os.replace(tmp, API_VERSION)
+            log(f"update: api: {label}: {len(need)} file(s) fetched, {len(gone)} removed")
+            return "done", fresh
+        except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as e:
+            return failed(str(e))
+
+    def finish_update(self, fresh):
+        """After the code is there, by git or by the API: the phone files, the panel app, the
+        supervisor itself, the running script. `fresh`: this update changed the code."""
         changed = self.copy_phone_files()
         if os.path.exists(LOCAL_CODE):      # (code and phone files are GitHub's now)
             os.remove(LOCAL_CODE)
@@ -885,7 +1168,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/stop":
                 return self.reply(200, {"result": SUP.stop()})
             if u.path == "/update":
-                return self.reply(200, {"result": SUP.update(force=q.get("force", ["0"])[0] == "1")})
+                return self.reply(200, {"result": SUP.update(force=q.get("force", ["0"])[0] == "1",
+                                                              api=q.get("api", ["0"])[0] == "1")})
         except Exception as e:      # (shown in the panel)
             return self.reply(500, {"result": f"error: {e}"})
         self.reply(404, {"error": "unknown"})

@@ -12,7 +12,7 @@
 #   app                 build (if the sources changed) and install the floating panel app
 #   up                  start the supervisor and the panel
 #   restart             restart the supervisor (after its files changed); the script resumes
-#   scripts | status | log [N] | start ID | stop | update [--force]   talk to the supervisor
+#   scripts | status | log [N] | start ID | stop | update [--force] [--api]   talk to the supervisor
 #   try ARGS...         a test run: stop the supervisor's script, run `python3 -u ARGS --adb
 #                       127.0.0.1:5555 --delay 0` in the code folder (timeout $TRY_TIMEOUT s,
 #                       default 600), then start the stopped script again
@@ -79,7 +79,8 @@ inside() {   # CMD: run in Alpine; single quotes in CMD survive the two shells
 api() {   # METHOD PATH: the supervisor, through the phone's own curl; curl's exit status. (An
   # update may fetch the commit and then the changed files for up to 600 s each, check out and
   # set the file list for 120 s each, wait 240 s for the script to stop and ~75 s for the game;
-  # a step that runs out of time takes up to 30 s more to end.)
+  # a step that runs out of time takes up to 30 s more to end. When git cannot reach github.com the
+  # files come through api.github.com in the time that is left of 1700 s, 120 s at least.)
   local rc=0
   psh "curl -sS -m 2100 -X $1 'http://127.0.0.1:8765$2'" || rc=$?
   echo
@@ -312,8 +313,19 @@ case "$CMD" in
   log) connect; api GET "/log?n=${1:-60}" ;;
   start) connect; api POST "/start?id=$1" ;;
   stop) connect; api POST /stop ;;
-  update)   # --force: also when the phone has newer code from the Mac than GitHub (it goes back)
-    connect; if [ "${1:-}" = "--force" ]; then api POST "/update?force=1"; else api POST /update; fi ;;
+  update)   # --force: also when the phone has newer code from the Mac than GitHub (it goes back);
+    # --api: through api.github.com at once (what an update does by itself when git cannot reach
+    # github.com, throttled from some phones)
+    connect
+    query=""
+    for flag in "$@"; do
+      case "$flag" in
+        --force) query="$query&force=1" ;;
+        --api) query="$query&api=1" ;;
+        *) echo "update: --force and --api are the options, not $flag"; exit 1 ;;
+      esac
+    done
+    api POST "/update${query:+?${query#&}}" ;;
   try)
     connect
     st="$(psh "curl -s -m 10 http://127.0.0.1:8765/status" || true)"
