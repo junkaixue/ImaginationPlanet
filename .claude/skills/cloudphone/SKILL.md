@@ -119,7 +119,7 @@ debugging on in the phone's 开发者选项.
   graceful stop left running). Code older than this has no stop points: restart it only while
   its log shows it waiting; `cp.sh code`/`setup` auto-restart only a supervisor whose /status
   has `stopping` (graceful), and print the manual advice otherwise. `cp.sh restart` runs the
-  phone's `restart.sh`: SIGTERM every 10 s (one landing in an update's re-exec is lost) to the
+  checkout's `phone/restart.sh` from the phone's `tmp/` (the phone's own copy stays): SIGTERM every 10 s (one landing in an update's re-exec is lost) to the
   pid in supervisor.pid if that is a supervisor still (else to a supervisor.py found by its
   command line), then `start.sh`. After 10 min it goes on
   in the background (an hour at most) and the command ends with exit 3: do not `start`/`try`
@@ -132,12 +132,23 @@ debugging on in the phone's 开发者选项.
   into a scratch index and folder under `/ip/tmp` (the clone is blob:none: this is the real
   download), then resets locally. The two downloads give up below 1 KB/s for a minute and are
   tried once more on a network error (GitHub is slow from the phone at times: one fetch takes
-  4 s, the next stalls); 更新失败（手机连 GitHub 不稳）is that: tap again later. A killed git's
-  `app/.git/index.lock` is removed (at once after a timeout, else when older than 10 min).
+  4 s, the next stalls); 更新失败（手机连 GitHub 不稳）is that: tap again later. A step out of
+  time gets SIGTERM first (git removes its locks), and the next update clears a cut-off one's
+  scratch folders and the `*.lock` files in `.git` when no git runs on the phone (only a
+  running git holds a lock; with one at work, a fetch's background maintenance included, all
+  stay, and so does one that appeared after the look). With nothing new (code, phone files,
+  panel, supervisor) the answer is 已是最新 and the script is not restarted. `cp.sh code --github` hands over to a running supervisor (`/update?force=1`): it
+  waits while that is busy (更新 under way, restarting; 15 min at most), exits 1 unless the
+  answer is "updated to", and refuses when a supervisor process runs but does not answer:
+  one writer of the checkout.
 - An update whose new supervisor.py does not load (a subprocess loads it as a module: syntax,
   imports, top level) does not re-exec: the old supervisor goes on and only restarts the script
   on its new code (log: "does not load"); a failed exec
   likewise leaves the old one taking starts again.
+- `adb install` of the panel app is refused now and then with
+  `INSTALL_FAILED_VERIFICATION_FAILURE: com.ip.panel is not allowed to be installed` (the cloud
+  phone's install check; the next try passes): `cp.sh app` and the supervisor's own install
+  try up to three times (the supervisor's within 6 min in all: its re-exec waits for it).
 - Toggling USB debugging (or anything that restarts adbd) may end the supervisor too: then
   浮窗 → 启动服务, or `cp.sh up`.
 - `run.sh` uses proot `--kill-on-exit`: whatever a command leaves behind ends with it. The

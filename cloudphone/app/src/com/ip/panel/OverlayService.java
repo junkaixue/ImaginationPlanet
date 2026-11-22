@@ -357,7 +357,7 @@ public class OverlayService extends Service {
         LinearLayout row = new LinearLayout(this);
         row.addView(button("开始", v -> startSelected()));
         row.addView(button("停止", v -> action("/stop", 300000)));
-        row.addView(button("更新", v -> action("/update", 1800000)));    // (fetch, checkout, file list, a graceful stop, the game)
+        row.addView(button("更新", v -> action("/update", 2100000)));    // (two downloads, checkout, a graceful stop, the game)
         panel.addView(row);
 
         message = text(0xFFFFD27F, 12);     // the last action's answer: stays until the next action

@@ -38,6 +38,7 @@ APP = f"{HOME}/app"
 PHONE_FILES = f"{APP}/cloudphone/phone"     # the repo's copy of the files in HOME
 PANEL_APK = f"{APP}/cloudphone/app/panel.apk"
 PANEL_SHA = f"{HOME}/panel.apk.sha"       # the sha1 of the panel app installed last (cp.sh app / update)
+SCRATCH = "update."                       # prefix of an update's scratch folders in HOME/tmp
 LOCAL_CODE = f"{HOME}/local_code"         # "<epoch> <commit>": code or phone files came from the Mac (cp.sh
                                           # code / setup) and are that new; no update to an older commit
 # what of the repo the phone checks out (cp.sh code_github has the same list): the root scripts,
@@ -140,6 +141,7 @@ class Supervisor:
                                             # handler and re-exec thread: no SIGTERM goes unseen)
         self.panel_note = None      # the outcome of the last panel app install (status)
         self.updating = None        # what an update under way is doing (shown in the panel), else None
+        self.code_changed = False   # an update changed the code and the running script is not on it yet
         self.update_lock = threading.Lock()     # one update at a time
         self.restarts = []          # times of automatic restarts this hour
         self.logfile = None
@@ -237,6 +239,7 @@ class Supervisor:
                                                  stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
                 self.gen += 1
                 self.script, self.since, self.stopping, self.last_exit = script, time.time(), False, None
+                self.code_changed = False       # (it runs on the code that is there now)
                 if manual:
                     self.restarts = []      # a start by hand gives the automatic restarts a new budget
                 with open(SCRIPT_PID, "w") as f:
@@ -367,54 +370,134 @@ class Supervisor:
         except (OSError, ValueError, IndexError):
             return None
 
-    # (what curl and git say when the network, not the request, is the trouble)
+    # (what curl and git say when the network is the trouble; a certificate problem, which names
+    # ssl too, is the phone's clock or its CA files and does not pass by itself)
     NETWORK_ERRORS = ("too slow", "timed out", "timeout", "could not resolve", "failed to connect",
-                      "couldn't connect", "connection reset", "connection refused", "recv failure",
-                      "send failure", "empty reply", "early eof", "rpc failed", "hung up", "ssl", "tls")
+                      "couldn't connect", "connection", "recv failure", "send failure", "empty reply",
+                      "early eof", "rpc failed", "hung up", "unexpected disconnect", "ssl", "tls", "http/2")
 
     def git_step(self, args, timeout, env=None):
         """One git command of an update in the checkout: (ok, output). A download that stalls
         ends after a minute (lowSpeed) instead of holding the update. One that outlasts
-        `timeout` is killed; the index lock it then leaves is removed (updates are the only
-        writers of this checkout, one at a time), not for a scratch index (`env`)."""
+        `timeout` gets SIGTERM, on which git removes its lock files itself; SIGKILL only when
+        that does not end it. Both go to its whole group (its transport helper holds the output
+        pipe too)."""
         git = ["git", "-C", APP, "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60"]
+        proc = subprocess.Popen(git + args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env,
+                                start_new_session=True)
         try:
-            r = subprocess.run(git + args, capture_output=True, text=True, timeout=timeout, env=env)
-            return r.returncode == 0, (r.stdout + r.stderr).strip() or f"git {args[0]}: exit {r.returncode}"
+            out, _ = proc.communicate(timeout=timeout)
+            return proc.returncode == 0, out.strip() or f"git {args[0]}: exit {proc.returncode}"
         except subprocess.TimeoutExpired:
-            lock = f"{APP}/.git/index.lock"
-            if env is None and os.path.exists(lock):
-                os.remove(lock)
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(proc.pid, sig)
+                except (ProcessLookupError, PermissionError):
+                    pass
+                try:
+                    proc.communicate(timeout=15)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            if sig == signal.SIGKILL:
+                self.clear_locks()          # (it could not remove its own: the next try needs them gone)
             return False, f"git {args[0]}: {timeout // 60} 分钟没做完"
 
-    def download(self, what, args, env=None):
-        """A git step that downloads, tried once more when the network failed it (GitHub is slow
-        from the phone at times): (ok, output)."""
+    def network_trouble(self, out):
+        """The output of a failed download step tells of the network (or it ran out of time).
+        git's error lines (fatal:, error:) decide, all lines when there is none: one about a
+        certificate rules the network out (the lines after it only follow from it), a warning
+        or hint that names one does not."""
+        if "分钟没做完" in out:
+            return True
+        lines = out.lower().splitlines()
+        errors = [line for line in lines if line.lstrip().startswith(("fatal:", "error:"))] or lines
+        return (not any("certificate" in line for line in errors)
+                and any(k in line for line in errors for k in self.NETWORK_ERRORS))
+
+    def retried(self, what, step):
+        """A download step `step() -> (ok, output)`, tried once more when the network failed it
+        (GitHub is slow from the phone at times); `what` is shown in the panel meanwhile."""
         for attempt in (1, 2):
             self.updating = what + ("，第 2 次尝试" if attempt == 2 else "")
-            ok, out = self.git_step(args, 300, env)
+            ok, out = step()
             if ok:
                 return True, out
-            log(f"update: git {args[0]} try {attempt} failed: " + out.replace("\n", " | "))
+            log(f"update: {what}: try {attempt} failed: " + out.replace("\n", " | "))
             if not self.network_trouble(out):
                 break                       # (a second try would fail the same way)
         return False, out
-
-    def network_trouble(self, out):
-        """The output of a failed download step tells of the network (or it ran out of time)."""
-        return "分钟没做完" in out or any(k in out.lower() for k in self.NETWORK_ERRORS)
 
     def download_failed(self, step, out):
         if self.network_trouble(out):
             return "更新失败（手机连 GitHub 不稳，稍后再点）: " + out
         return f"更新失败（{step}）: " + out
 
+    def scratch_checkout(self):
+        """The contents of the files that changed, downloaded by a checkout of FETCH_HEAD into a
+        scratch index and folder (the checkout itself holds no contents it does not need:
+        blob:none). Cut off or failed, nothing of the real checkout is half done, and the reset
+        after it needs no network. A scratch of its own for every try."""
+        with tempfile.TemporaryDirectory(dir=f"{HOME}/tmp", prefix=SCRATCH) as scratch:
+            os.mkdir(f"{scratch}/tree")
+            env = dict(os.environ, GIT_DIR=f"{APP}/.git", GIT_INDEX_FILE=f"{scratch}/index",
+                       GIT_WORK_TREE=f"{scratch}/tree")
+            return self.git_step(["read-tree", "--reset", "-u", "FETCH_HEAD"], 300, env)
+
+    @staticmethod
+    def git_at_work():
+        """A git runs on this phone that may hold a lock: any git (cp.sh code --github by hand,
+        the maintenance a fetch leaves running in the background) but the lock-free ones of
+        code_version (--no-optional-locks; the panel asks for the status every few seconds)."""
+        try:
+            pids = [p for p in os.listdir("/proc") if p.isdigit()]
+        except OSError:
+            return False
+        for pid in pids:
+            try:
+                with open(f"/proc/{pid}/cmdline", "rb") as f:
+                    argv = f.read().decode("utf-8", "replace").split("\0")
+            except OSError:
+                continue                    # (gone meanwhile)
+            name = os.path.basename(argv[0])
+            if (name == "git" or name.startswith("git-")) and "--no-optional-locks" not in argv:
+                return True
+        return False
+
+    def clear_locks(self):
+        """The lock files a killed git left in the checkout's .git (index.lock, shallow.lock, a
+        ref's, the config's, ...). Only a running git holds a lock: with none at work every lock
+        there is stale and goes, whatever its age; with one at work all stay. (A git that starts
+        meanwhile fails on a stale lock, it does not take it over; a lock that appears after the
+        look here is that git's and stays.)"""
+        seen = time.time()
+        locks = [os.path.join(root, name) for root, _, names in os.walk(f"{APP}/.git")
+                 for name in names if name.endswith(".lock")]
+        if not locks or self.git_at_work():
+            return
+        for lock in locks:
+            try:
+                if os.path.getmtime(lock) >= seen:
+                    continue                # (taken after the look, by a git that started since)
+                os.remove(lock)
+                log(f"update: removed a stale {os.path.relpath(lock, APP)}")
+            except OSError:
+                pass                        # (gone meanwhile)
+
+    def clear_leftovers(self):
+        """What an update that was cut off left (the supervisor killed, the phone rebooted): its
+        scratch folders and git's locks."""
+        tmp = f"{HOME}/tmp"
+        os.makedirs(tmp, exist_ok=True)
+        for name in os.listdir(tmp):
+            if name.startswith(SCRATCH):
+                shutil.rmtree(f"{tmp}/{name}", ignore_errors=True)
+        self.clear_locks()
+
     def update_locked(self, force):
-        lock = f"{APP}/.git/index.lock"     # (left by a git that was killed, with an earlier supervisor)
-        if os.path.exists(lock) and time.time() - os.path.getmtime(lock) > 600:
-            log("update: removing a stale index.lock")
-            os.remove(lock)
-        ok, out = self.download("正在从 GitHub 拉代码（可能要几分钟）", ["fetch", "-q", "--depth", "1", "origin", "main"])
+        self.clear_leftovers()
+        ok, out = self.retried("正在从 GitHub 拉代码（可能要几分钟）",
+                               lambda: self.git_step(["fetch", "-q", "--depth", "1", "origin", "main"], 300))
         if not ok:
             return self.download_failed("拉代码", out)
         r = subprocess.run(["git", "-C", APP, "log", "-1", "--format=%ct %h %cd", "--date=format:%m-%d %H:%M",
@@ -428,17 +511,18 @@ class Supervisor:
             log(f"update: GitHub's main ({fetched}) is older than the code from the Mac on this phone: kept")
             return (f"没有更新：GitHub 上的代码（{fetched}）比手机上从电脑推来的代码旧，还没推送？"
                     "推送后再点更新")
-        # The checkout holds no file contents it does not need (blob:none): those of the changed
-        # files come down now, by a checkout into a scratch index and folder. Cut off or failed,
-        # nothing of the real checkout is half done; the reset below then needs no network.
-        os.makedirs(f"{HOME}/tmp", exist_ok=True)
-        with tempfile.TemporaryDirectory(dir=f"{HOME}/tmp", prefix="update.") as scratch:
-            os.mkdir(f"{scratch}/tree")
-            env = dict(os.environ, GIT_DIR=f"{APP}/.git", GIT_INDEX_FILE=f"{scratch}/index",
-                       GIT_WORK_TREE=f"{scratch}/tree")
-            ok, out = self.download("正在下载改动的文件", ["read-tree", "--reset", "-u", "FETCH_HEAD"], env)
-        if not ok:
-            return self.download_failed("下载文件", out)
+        r = subprocess.run(["git", "-C", APP, "rev-parse", "HEAD", "FETCH_HEAD"], capture_output=True, text=True)
+        heads = r.stdout.split()
+        same = r.returncode == 0 and len(heads) == 2 and heads[0] == heads[1]
+        r = subprocess.run(["git", "--no-optional-locks", "-C", APP, "status", "--porcelain", "-uno"],
+                           capture_output=True, text=True)
+        dirty = r.returncode != 0 or bool(r.stdout.strip())     # (changes from the Mac in the checkout)
+        if not same:                        # (else: all is here)
+            ok, out = self.retried("正在下载改动的文件", self.scratch_checkout)
+            if not ok:
+                return self.download_failed("下载文件", out)
+        if not same or dirty:
+            self.code_changed = True        # (until a script starts on it: also when this update fails)
         self.updating = "正在换上新代码"
         ok, out = self.git_step(["reset", "-q", "--hard", "FETCH_HEAD"], 120)
         if not ok:
@@ -452,6 +536,9 @@ class Supervisor:
             os.remove(LOCAL_CODE)
         panel = os.path.exists(PANEL_APK) and sha1(PANEL_APK) != self.read(PANEL_SHA)
         own = sha1(f"{HOME}/supervisor.py") != LOADED   # (also after cp.sh code copied it)
+        if not (self.code_changed or changed or panel or own):
+            log(f"update: nothing new ({self.code_version()})")
+            return f"已是最新: {self.code_version()}"      # (the script goes on: no restart for nothing)
         msg = f"updated to {self.code_version()}" + (", installing the new panel app" if panel else "")
         log(msg + (f"; phone files changed: {', '.join(changed)}" if changed else ""))
         if own:
@@ -467,6 +554,8 @@ class Supervisor:
         if running:
             result = self.start(sid)
             msg += ", restarted" if result == "ok" else f"; {result}"
+        else:
+            self.code_changed = False           # (nothing runs on the old code)
         if panel:                               # (after the answer: the install restarts the panel)
             threading.Thread(target=lambda: (time.sleep(2), self.install_panel()), daemon=True).start()
         return msg
@@ -479,19 +568,40 @@ class Supervisor:
         except OSError:
             return None
 
+    @staticmethod
+    def adb_install(deadline, *flags):
+        """`adb install` of the checkout's panel app. The cloud phone's install check refuses
+        one now and then (INSTALL_FAILED_VERIFICATION_FAILURE) and passes it on the next try.
+        One try may take 300 s; all of an install end by `deadline` (monotonic): a re-exec of
+        the supervisor waits for it."""
+        for attempt in (1, 2, 3):
+            left = deadline - time.monotonic()
+            if left < 5:
+                raise RuntimeError("panel app install: out of time")
+            try:
+                return adb("install", *flags, PANEL_APK, timeout=min(300, left))
+            except subprocess.TimeoutExpired:
+                raise RuntimeError("adb install: no answer")
+            except RuntimeError as e:
+                if "VERIFICATION_FAILURE" not in str(e) or attempt == 3:
+                    raise
+                log(f"panel app: refused by the phone's install check (try {attempt}); again in 10 s")
+                time.sleep(10)
+
     def install_panel(self):
         """Install the checkout's panel app through the phone's own adb (runtime permissions
         granted: no dialog over the game), then start it without opening its panel. One signed
         with another machine's key is installed afresh."""
         try:
             connect_adb()
+            deadline = time.monotonic() + 360
             try:
-                adb("install", "-r", "-g", PANEL_APK, timeout=300)
+                self.adb_install(deadline, "-r", "-g")
             except RuntimeError as e:
                 if "UPDATE_INCOMPATIBLE" not in str(e):
                     raise
                 adb("uninstall", "com.ip.panel")
-                adb("install", "-g", PANEL_APK, timeout=300)
+                self.adb_install(time.monotonic() + 360, "-g")     # (its own time: no panel is worse)
             with open(PANEL_SHA, "w") as f:
                 f.write(sha1(PANEL_APK))
             adb("shell", "appops", "set", "com.ip.panel", "SYSTEM_ALERT_WINDOW", "allow")

@@ -51,14 +51,34 @@ inside() {   # CMD: run in Alpine; single quotes in CMD survive the two shells
 }
 api() {   # METHOD PATH: the supervisor, through the phone's own curl; curl's exit status. (An
   # update may fetch the commit and then the changed files for up to 600 s each, check out and
-  # set the file list for 120 s each, wait 240 s for the script to stop and ~75 s for the game.)
+  # set the file list for 120 s each, wait 240 s for the script to stop and ~75 s for the game;
+  # a step that runs out of time takes up to 30 s more to end.)
   local rc=0
-  psh "curl -sS -m 1800 -X $1 'http://127.0.0.1:8765$2'" || rc=$?
+  psh "curl -sS -m 2100 -X $1 'http://127.0.0.1:8765$2'" || rc=$?
   echo
   return $rc
 }
-push() { local out; out="$(adb -s "$SERIAL" push "$1" "$2" 2>&1)" || { echo "adb push $1 failed: $out"; exit 1; }; }
+push() { local out; out="$(adb -s "$SERIAL" push "$1" "$2" 2>&1)" || { echo "adb push $1 failed: $out" >&2; exit 1; }; }
 sup_sum() { psh "md5sum $D/supervisor.py 2>/dev/null | cut -d' ' -f1"; }
+restart_sh() {   # ARGS: this checkout's phone/restart.sh, run from the phone's tmp/ (cp.sh and it
+  # match, and the phone's own copy stays)
+  psh "mkdir -p $D/tmp"
+  push "$HERE/phone/restart.sh" "$D/tmp/cp.restart.sh"
+  psh "sh $D/tmp/cp.restart.sh $*"
+}
+supervisor_process() {   # a supervisor runs on the phone, whatever supervisor.pid says
+  restart_sh --find >/dev/null
+}
+install_apk() {   # [-r]: adb install of the panel app, its output in $out; tried again when the
+  # cloud phone's install check refuses it (INSTALL_FAILED_VERIFICATION_FAILURE, now and then)
+  local i
+  for i in 1 2 3; do
+    if out="$(adb -s "$SERIAL" install "$@" "$HERE/app/panel.apk" 2>&1)"; then return 0; fi
+    case "$out" in *VERIFICATION_FAILURE*) ;; *) return 1 ;; esac
+    [ $i -lt 3 ] || return 1
+    echo "the phone's install check refused the app (try $i); again in 10 s"; sleep 10
+  done
+}
 restart_if_changed() {   # BEFORE: the supervisor.py checksum before new phone files came in
   [ "$(sup_sum)" != "$1" ] || return 0
   local st; st="$(psh "curl -s -m 10 http://127.0.0.1:8765/status" || true)"
@@ -123,6 +143,30 @@ code_github() {
   # panel app. --no-checkout first: a plain sparse clone fetches every root file (a 94 MB
   # installer) first.
   local before; before="$(sup_sum)"
+  # a running supervisor does it itself (/update, also over newer code from the Mac): it is the
+  # only one that changes its checkout, and it restarts what changed
+  if psh "[ -d $D/app/.git ]"; then
+    if [ -n "$(psh "curl -s -m 10 http://127.0.0.1:8765/status" || true)" ]; then
+      # (while it is busy with an update of its own or a restart, or silent between two
+      # supervisors, the request is made again: for 15 min from the first try, then no more)
+      local out end=$((SECONDS + 900))
+      while :; do
+        out="$(api POST "/update?force=1" || true)"
+        echo "${out:-no answer from the supervisor}"
+        case "$out" in
+          *'"result": "updated to'*|*'"result": "已是最新'*) return 0 ;;
+          *已经在更新了*|*服务正在重启*) [ $SECONDS -lt $end ] || { echo "the supervisor stayed busy: try again later"; exit 1; }
+            echo "(the supervisor is busy: again in 20 s)" ;;
+          "") [ $SECONDS -lt $end ] || exit 1
+            echo "(again in 20 s)" ;;
+          *) exit 1 ;;
+        esac
+        sleep 20
+      done
+    elif supervisor_process; then
+      echo "the supervisor runs but does not answer: try again (or cp.sh restart)"; exit 1
+    fi
+  fi
   inside "set -e
     if [ -d app/.git ]; then
       cd app && git fetch -q --depth 1 origin main && git reset -q --hard FETCH_HEAD
@@ -151,11 +195,13 @@ case "$CMD" in
   app)
     connect
     "$HERE/app/build.sh"
-    if ! out="$(adb -s "$SERIAL" install -r "$HERE/app/panel.apk" 2>&1)"; then
+    if ! install_apk -r; then
       case "$out" in
         *UPDATE_INCOMPATIBLE*)   # signed with another machine's debug key: install afresh
-          adb -s "$SERIAL" uninstall com.ip.panel >/dev/null
-          adb -s "$SERIAL" install "$HERE/app/panel.apk" ;;
+          adb -s "$SERIAL" uninstall com.ip.panel >/dev/null ||
+            { echo "could not uninstall the panel app that another machine signed"; exit 1; }
+          install_apk ||
+            { echo "$out"; echo "the old panel app is uninstalled and the new one did not install: run cp.sh app again"; exit 1; } ;;
         *) echo "$out"; exit 1 ;;
       esac
     fi
@@ -169,9 +215,7 @@ case "$CMD" in
     connect
     # (phone/restart.sh: SIGTERM, the wait for the script's safe point, start.sh. Exit 3: the
     # old supervisor is still ending after 10 min, the phone starts the next one itself.)
-    # (a phone set up before this file existed gets it; one that has it keeps its own)
-    psh "[ -f $D/restart.sh ]" || push "$HERE/phone/restart.sh" "$D/restart.sh"
-    psh "sh $D/restart.sh" ;;
+    restart_sh ;;
   scripts) connect; api GET /scripts ;;
   status) connect; api GET /status ;;
   log) connect; api GET "/log?n=${1:-60}" ;;
@@ -182,7 +226,7 @@ case "$CMD" in
   try)
     connect
     st="$(psh "curl -s -m 10 http://127.0.0.1:8765/status" || true)"
-    if [ -z "$st" ] && psh "pgrep -f 'supervisor[.]py' >/dev/null"; then
+    if [ -z "$st" ] && supervisor_process; then
       echo "the supervisor runs but does not answer: no test beside its script (try again, or cp.sh restart)"
       exit 1
     fi                                                    # (empty and no supervisor: nothing to stop)
