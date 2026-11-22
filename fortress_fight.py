@@ -287,7 +287,7 @@ class FortressFight(ZoneExplore):
         self.order = dict(zip(order, SHIP_RANKS)) if order else None
         self.no_target_until = {}     # rank -> time before which its search is not repeated
         self.fleet_wait = {}          # fleet -> time before which a failed attack / repair is not retried
-        self.fails = {}               # (fleet, "attack"/"repair") or "page" -> failures in a row (see failed)
+        self.fail_streak = {}         # (fleet, "attack"/"repair") or "page" -> failures in a row (see failed)
         self.page_wait = 0.0          # time before which the fortress page is not tried again
         self.busy = self.load_busy() if order else {}   # fleet -> the target it was sent to (see BUSY_MIN)
         self.page_known = False       # page_off is measured from a proven page top
@@ -1502,10 +1502,11 @@ class FortressFight(ZoneExplore):
                 # the page may have been left or re-opened: locate a target afresh (a target
                 # that opened no 袭击 is already on the skip lists)
                 if not self.open_fortress():
+                    self.search_gave_up = True  # the page, not the fleet (see attack_fleets)
                     break
                 target = self.pick_target(rank)
                 if target is None:
-                    break
+                    return False if self.search_gave_up else None
                 continue
             if result != "buy":
                 break
@@ -1518,10 +1519,11 @@ class FortressFight(ZoneExplore):
             # clear them, then make sure the fortress page is really in front
             self.clear_fortress_dialogs()
             if not self.open_fortress():                # returns at once when the page is in front
+                self.search_gave_up = True
                 break
             target = self.pick_target(rank)
             if target is None:
-                break
+                return False if self.search_gave_up else None
             log("Actions bought -> selecting again")
         log("Attack not launched")
         return False
@@ -1530,14 +1532,14 @@ class FortressFight(ZoneExplore):
         """Book a failure of `key` ((fleet, "attack"), (fleet, "repair") or "page"): the time
         before which it is not tried again, FLEET_FAIL_WAIT, FLEET_FAIL_LONG_WAIT from the
         FLEET_FAIL_STREAK-th failure in a row on (cleared by succeeded)."""
-        n = self.fails.get(key, 0) + 1
-        self.fails[key] = n
+        n = self.fail_streak.get(key, 0) + 1
+        self.fail_streak[key] = n
         wait = FLEET_FAIL_LONG_WAIT if n >= FLEET_FAIL_STREAK else FLEET_FAIL_WAIT
         log(f"{what} (failure {n} in a row); tried again in {wait // 60} min")
         return time.time() + wait
 
     def succeeded(self, key):
-        self.fails.pop(key, None)
+        self.fail_streak.pop(key, None)
 
     def attack_fleets(self, fleets):
         """Ordered mode: one visit to the fortress page sends every fleet of `fleets` (idle at
@@ -1548,7 +1550,7 @@ class FortressFight(ZoneExplore):
         if not self.open_fortress():            # (the page, not the fleets)
             self.page_wait = self.failed("page", "Could not open the fortress page")
             return 0
-        self.succeeded("page")
+        page_ok = True
         launched = 0
         for fleet in fleets:
             rank = self.order[fleet]
@@ -1556,6 +1558,7 @@ class FortressFight(ZoneExplore):
                 continue
             self.clear_fortress_dialogs()       # (what the last send may have left on top)
             if not self.open_fortress():        # returns at once when the page is in front
+                page_ok = False
                 self.page_wait = self.failed("page", "Fortress page lost; the remaining fleets go later")
                 break
             r = self.send_fleet(fleet, rank)
@@ -1570,11 +1573,14 @@ class FortressFight(ZoneExplore):
                         self.no_target_until[lower] = time.time() + NO_TARGET_WAIT
                 log(f"Ranks up to {'I' * rank or 'none'}: nothing to attack; looked for again in {NO_TARGET_WAIT // 60} min")
             elif self.search_gave_up:           # the page, not the fleet
+                page_ok = False
                 self.page_wait = self.failed("page", "Fortress page problem; the remaining fleets go later")
                 break
             else:
                 self.fleet_wait[fleet] = self.failed((fleet, "attack"), f"Fleet {fleet}: attack not launched")
         self.leave_fortress()
+        if page_ok:                             # (a lost page keeps its streak growing)
+            self.succeeded("page")
         return launched
 
     def raid_once(self, index, target):
