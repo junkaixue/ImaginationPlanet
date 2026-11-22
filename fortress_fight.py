@@ -420,11 +420,18 @@ class FortressFight(ZoneExplore):
             log("队伍 button not found (base icon and button template both missing): is the map page open?")
             self.save_debug("no_team_button")
             return False
-        log(f"Opening 队伍 at ({team.x:.0f},{team.y:.0f})")
-        self.click(team.x, team.y, 2, "队伍", force=True)
-        if self.wait_for("ZMyFleet", 8):
-            self.wait_still()                   # the panel slides in: taps during the animation are lost
-            return True
+        for attempt in range(2):
+            log(f"Opening 队伍 at ({team.x:.0f},{team.y:.0f})")
+            self.click(team.x, team.y, 2, "队伍", force=True)
+            if self.wait_for("ZMyFleet", 8):
+                self.wait_still()               # the panel slides in: taps during the animation are lost
+                return True
+            # nothing opened and the map is clear: the tap was missed (now and then on the cloud
+            # phone, the first tap of a run); a second one. Not when something else opened.
+            if attempt == 0 and self.on_map():
+                log("我的舰队 did not appear after clicking 队伍; clicking it again")
+                continue
+            break
         log("我的舰队 did not appear after clicking 队伍")
         self.save_debug("fleet_page_missing")
         return False
