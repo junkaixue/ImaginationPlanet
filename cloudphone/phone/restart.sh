@@ -30,13 +30,23 @@ find_supervisor() {   # the pid of a running supervisor: a python whose script, 
     set -- $(cat /proc/$q/cmdline 2>/dev/null | tr '\0' ' ')
     case "${1:-}" in python*|*/python*) ;; *) continue ;; esac
     shift
-    script=; value=
+    script=; value=; none=
     for w in "$@"; do
       if [ -n "$value" ]; then value=; continue; fi     # (what the option before it takes)
       case "$w" in
-        -c*|-m*) break ;;                               # (a command or a module: no script)
-        -X|-W|--check-hash-based-pycs) value=1 ;;
-        -*) ;;
+        --check-hash-based-pycs) value=1 ;;
+        --*) ;;
+        -*)                                             # (short options, maybe several in a word)
+          o=${w#-}
+          while [ -n "$o" ]; do
+            case "$o" in
+              [cm]*) none=1; break ;;                   # (a command or a module: no script)
+              [XW]) value=1; break ;;                   # (its value is the next word)
+              [XW]*) break ;;                           # (its value is the rest of this word)
+            esac
+            o=${o#?}
+          done
+          [ -z "$none" ] || break ;;
         *) script=$w; break ;;
       esac
     done

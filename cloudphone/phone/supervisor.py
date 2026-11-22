@@ -199,16 +199,19 @@ class Supervisor:
         if os.path.isdir(f"{APP}/.git"):
             git = ["git", "--no-optional-locks", "-C", APP]    # (no index.lock against an update)
             try:
-                label = subprocess.run(git + ["log", "-1", "--format=%h %cd", "--date=format:%m-%d %H:%M"],
-                                       capture_output=True, text=True, timeout=20).stdout.strip()
+                r = subprocess.run(git + ["log", "-1", "--format=%h %cd", "--date=format:%m-%d %H:%M"],
+                                   capture_output=True, text=True, timeout=20)
+                label = r.stdout.strip() if r.returncode == 0 and r.stdout.strip() else "?"
             except subprocess.TimeoutExpired:
                 label = "?"
             try:
-                dirty = subprocess.run(git + ["status", "--porcelain", "-uno", "--no-renames"],
-                                       capture_output=True, text=True, timeout=20).stdout.strip()
-                return label + (" +local" if dirty else "")
-            except subprocess.TimeoutExpired:   # (not known: it does not pass for GitHub's code)
-                return label + " +?"
+                r = subprocess.run(git + ["status", "--porcelain", "-uno", "--no-renames"],
+                                   capture_output=True, text=True, timeout=20)
+                if r.returncode == 0:
+                    return label + (" +local" if r.stdout.strip() else "")
+            except subprocess.TimeoutExpired:
+                pass
+            return label + " +?"            # (not known: it does not pass for GitHub's code)
         return "local copy"
 
     # ------------------------------------------------------------------ game
@@ -619,7 +622,8 @@ class Supervisor:
         one now and then (INSTALL_FAILED_VERIFICATION_FAILURE) and passes it on the next try.
         One try may take 300 s; the tries end by `deadline` (monotonic): 6 min for an install,
         and 5.5 more, counted from before the uninstall, for the one after it. A re-exec of the
-        supervisor waits for that, 11.5 min at most."""
+        supervisor waits for install_panel: these 11.5 min at most, and the few adb calls
+        around them (30 s each)."""
         for attempt in (1, 2, 3):
             left = deadline - time.monotonic()
             if left < 5:
@@ -683,12 +687,15 @@ class Supervisor:
         way it takes starts again instead of answering 服务正在重启 for good."""
         time.sleep(1)                       # (the /update answer goes out first)
         new = f"{HOME}/supervisor.py"
+        checked = sha1(new)                 # (the file the check is about: it may be replaced meanwhile)
         try:
             r = subprocess.run([sys.executable, "-c", LOAD_CHECK, new], capture_output=True, text=True,
                                timeout=120)
             ok, why = r.returncode == 0, (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
-            if not ok:                      # (no further try, no restart for it, until it changes)
-                self.unloadable = sha1(new)
+            if r.returncode > 0:            # (no further try, no restart for it, until it changes)
+                self.unloadable = checked
+            elif r.returncode < 0:          # (killed, by the phone short of memory: no verdict)
+                why = f"the check was killed (signal {-r.returncode})"
         except (OSError, subprocess.TimeoutExpired) as e:
             ok, why = False, f"the check did not run: {e}"     # (the next update tries it again)
         if not ok:
@@ -705,6 +712,16 @@ class Supervisor:
                     os.execv(sys.executable, [sys.executable, "-u", new])
         except Exception as e:
             log(f"restarting the supervisor failed ({e}): this one goes on")
+        # (settled while `restarting` still keeps updates out: one that sets the mark comes after)
+        if stopped:                         # (the script was stopped for the exec)
+            resume = self.saved_running()
+        else:                               # (it runs on: restarted when the update changed the code,
+            with self.lock:                 # as an update without a new supervisor.py does; not for
+                running = (self.proc is not None and self.script is not None    # a check that only
+                           and not self.stopping)                               # failed again)
+                resume = self.script["id"] if running and self.code_changed else None
+        if not resume:
+            self.code_changed = False       # (no script runs on older code than is there)
         with self.term_lock:                # (a SIGTERM from here on stops this one by itself)
             self.restarting = False
             leave = self.exit_instead
@@ -713,16 +730,8 @@ class Supervisor:
                 self.stop(remember=False)
             finally:
                 os._exit(0)
-        if stopped:                         # (the script was stopped for the exec)
-            resume = self.saved_running()
-        else:                               # (it still runs the old script code: restarted, as
-            with self.lock:                 # an update without a new supervisor.py does)
-                running = self.proc is not None and self.script is not None and not self.stopping
-                resume = self.script["id"] if running else None
         if resume:
             self.start_retrying(resume)
-        else:
-            self.code_changed = False       # (no script runs on the old code)
 
     # ------------------------------------------------------------------ state
     @staticmethod

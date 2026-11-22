@@ -85,17 +85,19 @@ restart_sh() {   # ARGS: this checkout's phone/restart.sh, run from the phone's 
   psh "sh $D/tmp/cp.restart.sh $*"
 }
 supervisor_process() {   # 0: a supervisor runs on the phone (whatever supervisor.pid says), 1: none
-  # does, 2: the phone did not answer (adb or the link dropped: no word on the supervisor).
-  # restart.sh --find prints the pid or "none"; nothing here ends the script.
+  # does; no word on the supervisor: 2 the phone did not answer (adb or the link dropped), 3 it
+  # did, but restart.sh --find printed neither a pid nor "none". Nothing here ends the script.
   local out
   adb -s "$SERIAL" shell "mkdir -p $D/tmp" >/dev/null 2>&1 || return 2
   adb -s "$SERIAL" push "$HERE/phone/restart.sh" "$D/tmp/cp.restart.sh" >/dev/null 2>&1 || return 2
-  out="$(adb -s "$SERIAL" shell "sh $D/tmp/cp.restart.sh --find" 2>/dev/null || true)"
+  out="$(adb -s "$SERIAL" shell "sh $D/tmp/cp.restart.sh --find" 2>&1 || true)"
   case "$out" in
     none*) return 1 ;;
     [0-9]*) return 0 ;;
-    *) return 2 ;;
   esac
+  [ "$(adb -s "$SERIAL" get-state 2>/dev/null || true)" = device ] || return 2
+  echo "restart.sh --find on the phone gave no verdict: ${out:-no output}" >&2
+  return 3
 }
 install_apk() {   # [-r]: adb install of the panel app, its output in $out; tried again when the
   # cloud phone's install check refuses it (INSTALL_FAILED_VERIFICATION_FAILURE, now and then)
@@ -214,6 +216,7 @@ code_github() {
       case $rc in
         0) echo "the supervisor runs but does not answer: try again (or cp.sh restart)"; exit 1 ;;
         2) echo "the phone does not answer adb: try again"; exit 1 ;;
+        3) echo "could not tell whether a supervisor runs: no git beside one that may"; exit 1 ;;
       esac
     fi
   fi
@@ -286,6 +289,7 @@ case "$CMD" in
         0) echo "the supervisor runs but does not answer: no test beside its script (try again, or cp.sh restart)"
            exit 1 ;;
         2) echo "the phone does not answer adb: try again"; exit 1 ;;
+        3) echo "could not tell whether a supervisor runs: no test beside one that may"; exit 1 ;;
       esac
     fi                                                    # (empty and no supervisor: nothing to stop)
     # what the supervisor means to run (state.json): also a script being restarted, or waiting
