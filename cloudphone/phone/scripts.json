@@ -1,0 +1,10 @@
+[
+  {"id": "xz_41032", "name": "星炽要塞 大中小 41032",
+   "args": ["fortress_fight.py", "-oxz", "41032"]},
+  {"id": "zx_41032", "name": "铸械要塞 大中小 41032",
+   "args": ["fortress_fight.py", "-ozx", "41032"]},
+  {"id": "xz_swap", "name": "星炽要塞 换装",
+   "args": ["fortress_fight.py", "-f", "xz"]},
+  {"id": "xz_41032_dry", "name": "星炽要塞 41032 试跑(不出击)",
+   "args": ["fortress_fight.py", "-oxz", "41032", "--dry", "--debug-shots"]}
+]
