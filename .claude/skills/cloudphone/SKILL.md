@@ -149,10 +149,11 @@ debugging on in the phone's 开发者选项.
   (code, phone files, panel, supervisor) the answer is 已是最新 and the script is not
   restarted; a new supervisor.py that failed its load check is remembered and counts as
   nothing new until it changes. A check without a verdict (out of time, killed, out of
-  memory: the phone, not the file) is made again by the next update, and the third such
-  check of the same file counts as the verdict. When the new supervisor does not start, the
-  running script is restarted only if that update changed something for it, and a script
-  that ended while starts were refused is brought back. The code
+  memory, not started: the phone, not the file) is made again by the next update; the
+  third one that ran out of time or was killed, for the same file within a day, counts as
+  the verdict. When the new supervisor does not start, the running script is started again
+  only if that update changed its code or a scripts list, and an automatic start that was
+  refused meanwhile (after a crash) is made then. The code
   label in /status ends in ` +local` for code from the Mac and ` +?` when git status failed
   or gave no answer. `cp.sh code --github` hands over to a running supervisor (`/update?force=1`): it
   waits while that is busy (更新 under way, restarting; 15 min at most), exits 1 unless the

@@ -103,7 +103,12 @@ supervisor_process() {   # 0: a supervisor runs on the phone (whatever superviso
   # (the verdict is a line of its own: the phone's shell may print a warning before it)
   if printf '%s\n' "$out" | grep -qx 'none'; then return 1; fi
   if printf '%s\n' "$out" | grep -qxE '[0-9]+'; then return 0; fi
-  case "$out" in adb:*|error:*) return 2 ;; esac          # (what adb itself says of a lost link)
+  # (no verdict. adb's own words and nothing else are a lost link, shown as they are; so is a
+  # phone that is gone by now. Else the phone ran the script, which said something else.)
+  if [ -n "$out" ] && ! printf '%s\n' "$out" | grep -qvE '^(adb|error):|^$'; then
+    echo "$out" >&2
+    return 2
+  fi
   [ "$(adb -s "$SERIAL" get-state 2>/dev/null || true)" = device ] || return 2
   echo "restart.sh --find on the phone gave no verdict: ${out:-no output}" >&2
   return 3

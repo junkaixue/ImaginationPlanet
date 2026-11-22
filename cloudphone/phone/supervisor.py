@@ -146,7 +146,9 @@ class Supervisor:
         self.updating = None        # what an update under way is doing (shown in the panel), else None
         self.code_changed = False   # an update changed the code and the running script is not on it yet
         self.unloadable = None      # the sha1 of a new supervisor.py that failed its load check
-        self.undecided = (None, 0)  # (sha1, times): load checks of that file that gave no verdict
+        self.undecided = (None, 0, 0.0)     # (sha1, times, since): load checks of that file that
+                                            # ended without a verdict (out of time, killed)
+        self.refused = None         # the id of an automatic start that `restarting` refused
         self.update_lock = threading.Lock()     # one update at a time
         self.restarts = []          # times of automatic restarts this hour
         self.logfile = None
@@ -251,9 +253,15 @@ class Supervisor:
             log(f"could not check the game: {e}")
 
     # ------------------------------------------------------------------ run / stop
-    def start(self, sid, remember=True, manual=True):
-        if self.restarting:
-            return "服务正在重启，稍后再试"
+    def start(self, sid, remember=True, manual=True, resume=False):
+        """`manual`: asked for by the user (the panel, cp.sh), else an automatic start, which
+        gives way when state.json no longer names `sid`. `resume`: only bring it back, do not
+        start it again when it runs (another automatic start got there first)."""
+        with self.term_lock:                # (with reexec's last step: the refusal is on record
+            if self.restarting:             # before `restarting` ends, or the start goes ahead)
+                if not manual:
+                    self.refused = sid      # (reexec brings it back if this supervisor stays)
+                return "服务正在重启，稍后再试"
         script = self.find(sid)
         if script is None:
             return f"no script {sid}"
@@ -261,10 +269,19 @@ class Supervisor:
         with self.start_lock:
             if not manual and self.saved_running() != sid:
                 return "stopped meanwhile"  # (an automatic start no longer wanted: nothing is stopped)
+            if resume:
+                with self.lock:
+                    if (self.proc is not None and self.proc.poll() is None and self.script is not None
+                            and self.script["id"] == sid and not self.stopping):
+                        return "ok"         # (it runs already)
             self.stop(remember=False)
             self.ensure_game()              # (outside self.lock: status and stop stay quick)
             with self.lock:
-                if self.restarting or self.stop_count != stops or (not manual and self.saved_running() != sid):
+                with self.term_lock:        # (an update began while this waited for the game: as above)
+                    refuse = self.restarting
+                    if refuse and not manual:
+                        self.refused = sid
+                if refuse or self.stop_count != stops or (not manual and self.saved_running() != sid):
                     return "stopped meanwhile"
                 os.makedirs(LOGS, exist_ok=True)
                 self.logfile = f"{LOGS}/{sid}.log"
@@ -368,12 +385,14 @@ class Supervisor:
                 return              # started or stopped by hand meanwhile
         self.start_retrying(sid)
 
-    def start_retrying(self, sid):
-        """An automatic start (restart, resume): an error (adb hanging, a broken scripts.json)
-        is logged and the start tried again later instead of being dropped."""
+    def start_retrying(self, sid, resume=True):
+        """An automatic start: an error (adb hanging, a broken scripts.json) is logged and the
+        start tried again later instead of being dropped. `resume` (after a crash, a restart of
+        the supervisor, a start that was refused): a script that runs already is left alone;
+        False to start a running one again (on what an update changed)."""
         for wait in (30, 60, 120, 300, 600):
             try:
-                res = self.start(sid, manual=False)
+                res = self.start(sid, manual=False, resume=resume)
                 if res != "ok":         # (not in this phone's list any more, stopped meanwhile, ...)
                     log(f"{sid} was not started: {res}")
                 return
@@ -606,8 +625,10 @@ class Supervisor:
                 if self.restarting:
                     return msg + "; the supervisor is restarting already"
                 self.restarting = True
-            # (what this update changed for a running script, should the new supervisor not start)
-            threading.Thread(target=self.reexec, args=(panel, fresh or bool(changed)), daemon=True).start()
+            # (what this update changed for a running script, should the new supervisor not
+            # start: its code, or a list of scripts with its arguments; not the supervisor's files)
+            for_script = fresh or any(name.startswith("scripts.") for name in changed)
+            threading.Thread(target=self.reexec, args=(panel, for_script), daemon=True).start()
             return msg + ", restarting the supervisor"
         with self.lock:                         # (a script being stopped by hand stays stopped)
             running = self.proc is not None and self.script is not None and not self.stopping
@@ -701,11 +722,12 @@ class Supervisor:
         """(ok, why) for a new supervisor.py loaded as a module in a python of its own. A file
         that fails by itself (a syntax error, a failing import, an error at its top level) is
         remembered in `unloadable`: no further try, no restart for it, until it changes. A check
-        that gives no verdict (out of time, killed, out of memory: the phone, not the file) is
-        made again by the next update; the third such check of the same file is the verdict, as
-        a file that hangs or dies on loading ends the same way."""
+        that gives no verdict (out of time, killed, out of memory, not started: the phone, not
+        the file) is made again by the next update. A file that hangs or dies on loading ends
+        the same way as the first two, so the third such check of the same file within a day
+        is the verdict."""
         checked = sha1(new)                 # (the file the check is about: it may be replaced meanwhile)
-        verdict = False
+        verdict = counted = False
         try:
             r = subprocess.run([sys.executable, "-c", LOAD_CHECK, new], capture_output=True, text=True,
                                timeout=120)
@@ -713,16 +735,23 @@ class Supervisor:
                 return True, ""
             why = (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
             if r.returncode < 0:
-                why = f"the check was killed (signal {-r.returncode})"
-            else:
-                verdict = not any(k in r.stderr for k in ("MemoryError", "Cannot allocate memory"))
-        except (OSError, subprocess.TimeoutExpired) as e:
-            why = f"the check did not run: {e}"
+                why, counted = f"the check was killed (signal {-r.returncode})", True
+            else:                           # (out of memory is the phone's trouble, in any wording)
+                verdict = not any(k in r.stderr for k in ("MemoryError", "Cannot allocate memory",
+                                                          "Out of memory", "Errno 12", "ENOMEM"))
+        except subprocess.TimeoutExpired:
+            why, counted = "the check gave no answer in 120 s", True
+        except OSError as e:                # (no python was started: nothing was learnt of the file)
+            why = f"the check did not start: {e}"
         if not verdict:
-            times = self.undecided[1] + 1 if self.undecided[0] == checked else 1
-            self.undecided = (checked, times)
-            verdict = times >= 3
-            why += f" (no verdict, {times} of 3)"
+            why += " (no verdict)"
+            if counted:                     # (what a file that hangs or dies on loading does too)
+                sha, times, since = self.undecided
+                if sha != checked or time.time() - since > 24 * 3600:
+                    times, since = 0, time.time()
+                self.undecided = (checked, times + 1, since)
+                verdict = times + 1 >= 3
+                why = why[:-1] + f", {times + 1} of 3 in a day)"
         if verdict:
             self.unloadable = checked
         return False, why
@@ -755,15 +784,22 @@ class Supervisor:
         with self.lock:
             running = self.proc is not None and self.script is not None and not self.stopping
             sid = self.script["id"] if running else None
-        if stopped or not running:          # (stopped for the exec; or it ended while starts were
-            resume = self.saved_running()   # refused, or was stopped by hand: state.json tells)
-        elif restart or self.code_changed:  # (it runs on, and the update changed something for it:
-            resume = sid                    # restarted as by an update without a new supervisor.py)
-        else:
-            resume = None                   # (nothing new for it: a check that only failed again)
-        if not resume:
-            self.code_changed = False       # (no script runs on older code than is there)
-        with self.term_lock:                # (a SIGTERM from here on stops this one by itself)
+        again = False
+        resume = None
+        if stopped:                         # (stopped for the exec)
+            resume = self.saved_running()
+        elif running:                       # (it runs on: started again when the update changed
+            again = restart or self.code_changed    # something for it, as by an update without a
+            resume = sid if again else None         # new supervisor.py; not for a check that only
+                                                    # failed once more)
+        with self.term_lock:                # (a SIGTERM from here on stops this one by itself; a
+            if not stopped and not running:     # start is refused and on record, or goes ahead)
+                # (none runs: an automatic start that was refused meanwhile, after a crash, is made
+                # now; one given up earlier, or stopped by hand, is not anybody's to bring back)
+                resume = self.refused if self.refused == self.saved_running() else None
+            self.refused = None
+            if not resume:
+                self.code_changed = False   # (no script runs on older code than is there)
             self.restarting = False
             leave = self.exit_instead
         if leave:
@@ -772,7 +808,7 @@ class Supervisor:
             finally:
                 os._exit(0)
         if resume:
-            self.start_retrying(resume)
+            self.start_retrying(resume, resume=not again)
 
     # ------------------------------------------------------------------ state
     @staticmethod
