@@ -179,8 +179,6 @@ HOLDER_OK_HP = 90            # the gear holder attacks again by itself above thi
 DEBUG_DIR = None             # --debug-shots: save the OCR crops here
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
 POLL = 30
-SWAP_MAX_LEVEL = 1           # swap mode: the highest guard level the gear fleet is sent against (--max-level).
-                             # A II guard sent it back with 0% hp into a 45 min repair, the gear on it
 PHONE_PACE = 0.6             # --pace when the script runs on the phone itself (the cloud phone): it draws
                              # a page sooner than the Mac's emulator, so the fixed waits are cut to this
 
@@ -242,8 +240,7 @@ def phone_account():
     return name
 
 
-NO_TARGET_WAIT = 3 * 60      # seconds a rank waits after its search found nothing (ordered mode); the swap
-                             # mode, when only guards above --max-level are left
+NO_TARGET_WAIT = 3 * 60      # seconds a rank waits after its search found nothing (ordered mode)
 CONFIRM_WAIT = 8.0           # seconds an edit page gets to close after 确认 before it is pressed again
                              # (the game's time: in seconds and not paced)
 FLEET_FAIL_WAIT = 60         # seconds a fleet whose attack or repair failed is left out (ordered mode;
@@ -343,7 +340,7 @@ def read_yellow_number(rgb):
 class FortressFight(ZoneExplore):
     TAB_DIM_LOOKS = 3                   # the fleet panel here is often still fading when a tab is read
 
-    def __init__(self, dry_run=False, fortress="xz", order=None, max_level=SWAP_MAX_LEVEL):
+    def __init__(self, dry_run=False, fortress="xz", order=None):
         super().__init__(dry_run=dry_run)
         # the standard loadout screenshot: the default one, or this phone's account's own (swap
         # mode does not run without it, see run)
@@ -356,10 +353,7 @@ class FortressFight(ZoneExplore):
         self._loadout_warned = False
         # ordered mode (-oxz/-ozx): fleet -> rank (SHIP_RANKS), biggest first
         self.order = dict(zip(order, SHIP_RANKS)) if order else None
-        self.max_level = max_level      # swap mode: guards above it are left alone (0 none, 1 I, 2 II)
         self.no_target_until = {}     # rank -> time before which its search is not repeated
-        self.left_out = 0             # swap mode: bright guards above max_level seen in the search under way
-        self.above_limit_until = 0.0  # swap mode: only such guards were left; no pass before this time
         self.fleet_wait = {}          # fleet -> time before which a failed attack / repair is not retried
         self.fail_streak = {}         # (fleet, "attack"/"repair") or "page" -> failures in a row (see failed)
         self.page_wait = 0.0          # time before which the fortress page is not tried again
@@ -1080,7 +1074,7 @@ class FortressFight(ZoneExplore):
 
     def guard_cells(self, gray, title):
         """[(x, y, bright, level)] of every guard cell on the fortress page (logical px); the
-        level (guard_level) is read on bright cells."""
+        level (guard_level) is read on bright cells in ordered mode only (else 0)."""
         t = self.full_template(self.guard_key)
         h = int(FORTRESS["cell_half"] * self.sft)
         out = []
@@ -1091,7 +1085,7 @@ class FortressFight(ZoneExplore):
             cell = gray[cy - h:cy + h, cx - h:cx + h]
             bright = (np.count_nonzero(cell > FORTRESS["white_level"])
                       >= self.kind["white_share"] * max(1, cell.size))
-            out.append((x, y, bright, self.guard_level(gray, cx, cy) if bright else 0))
+            out.append((x, y, bright, self.guard_level(gray, cx, cy) if bright and self.order else 0))
         return out
 
     def guard_level(self, gray, cx, cy):
@@ -1209,10 +1203,8 @@ class FortressFight(ZoneExplore):
                          and not any(self.claimed(b, c[0], c[1], title) for b in claims)),
                         key=lambda c: (c[1], c[0]))
         levels = [sum(1 for c in bright if c[3] == lv) for lv in (2, 1, 0)]
-        log(f"Guards: {len(cells)} cells, {len(bright)} attackable (II {levels[0]}, I {levels[1]}, none {levels[2]})")
-        if not self.order:                      # (swap mode: the gear fleet's own limit; ordered mode ranks ships)
-            self.left_out = max(self.left_out, sum(1 for c in bright if c[3] > self.max_level))
-            bright = [c for c in bright if c[3] <= self.max_level]
+        log(f"Guards: {len(cells)} cells, {len(bright)} attackable"     # (the swap mode reads no levels)
+            + (f" (II {levels[0]}, I {levels[1]}, none {levels[2]})" if self.order else ""))
         guards = [Target("guard", None, x, y, lv) for x, y, _, lv in bright]
         return building, guards, {n for n, _, _, _ in blds}
 
@@ -1700,14 +1692,9 @@ class FortressFight(ZoneExplore):
         self.buildings_checked_at = 0.0         # every attack walks the page afresh (the buildings first,
                                                 # in the swap mode)
         self.attacking = index
-        self.left_out = 0
         target = self.pick_target(rank)
         if target is None:
             log("Nothing attackable on the fortress page" + ("" if rank is None else f" for fleet {index}"))
-            if rank is None and self.left_out and not self.search_gave_up:
-                log(f"Only guards above the limit are left ({self.left_out} seen, --max-level {self.max_level}): "
-                    f"looked for again in {NO_TARGET_WAIT // 60} min")
-                self.above_limit_until = time.time() + NO_TARGET_WAIT
             return False if self.search_gave_up else None
         for _ in range(5):
             log(f"Attack {target.label} at ({target.x:.0f},{target.y:.0f}) with fleet {index}")
@@ -2282,12 +2269,16 @@ class FortressFight(ZoneExplore):
                 self.swap_fails = 0
             if self.stop_point():
                 return
-            if not self.attack_with(target):
-                wait = self.above_limit_until - time.time()
-                if wait > 0:                    # (nothing within the limit: no fortress visit every poll)
-                    if self.dry_run or not self.nap(wait):
-                        return
-                    continue
+            launched = self.attack_with(target)
+            if launched is None:
+                # nothing to attack: the whole page is walked for that look, so the next one comes
+                # after POLL s as it always did, whatever the pace (an attack that failed is tried
+                # again at the paced poll)
+                log("Attack not launched; next pass")
+                if self.dry_run or not self.nap(POLL):
+                    return
+                continue
+            if not launched:
                 if not self.pause("Attack not launched; next pass"):
                     return
                 continue
@@ -2303,9 +2294,6 @@ if __name__ == "__main__":
     parser.add_argument("-f", "--fortress", choices=sorted(FORTRESS_KINDS),
                         help="Which fortress to fight: xz (星炽要塞, default) or zx (铸械要塞)")
     parser.add_argument("--delay", type=int, default=3)
-    parser.add_argument("--max-level", type=int, choices=(0, 1, 2), default=SWAP_MAX_LEVEL,
-                        help="Swap mode: the highest guard level the gear fleet attacks: 0 unmarked only, "
-                             f"1 up to I, 2 also II (default {SWAP_MAX_LEVEL})")
     parser.add_argument("--pace", type=float, default=None,
                         help="Multiply the fixed waits for the game by this (default 1; "
                              f"{PHONE_PACE} when the script runs on the phone itself)")
@@ -2349,7 +2337,7 @@ if __name__ == "__main__":
         zone_explore.PACE = args.pace
         log(f"Pace {args.pace:g}: fixed waits for the game times that, a look every {poll():.0f} s while waiting")
     time.sleep(args.delay)
-    fight = FortressFight(dry_run=args.dry, fortress=args.fortress or "xz", order=order, max_level=args.max_level)
+    fight = FortressFight(dry_run=args.dry, fortress=args.fortress or "xz", order=order)
     fight.run(monitor=args.monitor)
     if fight.stop_requested:
         sys.exit(143)                       # (ended by a SIGTERM, as a kill would: callers tell it from a finish)

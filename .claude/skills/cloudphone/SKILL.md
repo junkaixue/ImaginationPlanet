@@ -138,13 +138,18 @@ debugging on in the phone's 开发者选项.
   after 3 passes with the gear put back). To judge a pace, compare per swap: "page did not
   open", "no effect yet", "not shown after tap", "Attack not launched; next pass", and above all
   the loadout score after a swap (0.94 = all gear moved; below 0.9 the swap failed).
-- Swap mode attacks the topmost bright guard up to `--max-level` (default 1: no II guards; a II
-  one sent the gear fleet back at 0% into a 45 min repair with the gear on it, and the script
-  could only wait). When only guards above the limit are left, the log says so ("Only guards
-  above the limit are left") and the fortress is visited again every 3 min (`NO_TARGET_WAIT`),
-  not at every poll. A run buys at most 10 packs of actions (`MAX_PACKS_PER_RUN`); after that it
-  attacks only as actions regrow ("Action purchase prompt -> cancel" in the log, one attack in
-  45 min): looks stuck, is the limit.
+- Swap mode attacks every bright guard, whatever its level: nothing is left out (the user's
+  rule; a level limit for it was tried and taken out again). Guard levels and ranks belong to
+  the ordered mode only: do not carry them over to the swap mode (its log shows no levels
+  either). A fleet came back with 0% twice: once with the whole gear on it, once sent out
+  without the gear (the 一键配队 case above; the loadout score of the swap before tells the two
+  apart). Both times it was under repair when the script looked next, without the script having
+  started that (about 45 min); when it is the gear holder the gear is on it and the script
+  waits ("Fleet N (best gear) is repairing; waiting"). When the page shows nothing to attack the
+  script looks again every 30 s (`POLL`, not paced: the whole page is walked for it). A run buys
+  at most 10 packs of actions (`MAX_PACKS_PER_RUN`); after that it attacks only as actions
+  regrow ("Action purchase prompt -> cancel" in the log, one attack in 45 min): looks stuck, is
+  the limit.
 - After a phone reboot the supervisor is gone: 浮窗 → 启动服务 starts it through the app's own
   adb client (LocalAdb.java); it resumes the script that was running (state.json).
 - Debug shots accumulate in `/ip/app/pics/mac/zone/debug`; clear with `cp.sh sh "rm app/pics/mac/zone/debug/*"`.
