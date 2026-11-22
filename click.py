@@ -96,3 +96,37 @@ else:  # Windows and other platforms
         pyautogui.moveTo(x2, y2, duration=duration)
         time.sleep(hold)
         pyautogui.mouseUp()
+
+
+# ---- Android over adb (adb_device.AdbDevice). use_device() is called before any game object is
+# created; from then on clicks and drags go to the device and pyautogui.screenshot returns its
+# screen at the reference size.
+_local = {"click_at": click_at, "move_to": move_to, "drag": drag}
+_device = None
+
+
+def use_device(device):
+    global _device
+    _device = device
+    pyautogui.screenshot = device.screenshot
+
+
+def current_device():
+    return _device
+
+
+def click_at(x, y):
+    if _device is not None:
+        return _device.tap(x, y)
+    return _local["click_at"](x, y)
+
+
+def move_to(x, y):
+    if _device is None:     # a touch screen has no pointer to move
+        return _local["move_to"](x, y)
+
+
+def drag(x1, y1, x2, y2, duration=0.7, steps=14, hold=0.3, press=0.1):
+    if _device is not None:
+        return _device.drag(x1, y1, x2, y2, duration=duration, steps=steps, hold=hold, press=press)
+    return _local["drag"](x1, y1, x2, y2, duration=duration, steps=steps, hold=hold, press=press)

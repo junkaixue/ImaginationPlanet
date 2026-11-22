@@ -19,7 +19,7 @@ if platform.system() == "Windows":
 else:
     import Quartz
 
-from click import click_at
+from click import click_at, current_device
 
 coor_dict = {}
 
@@ -352,6 +352,8 @@ def get_scaling_factor():
     """
     Get the display scaling factor.
     """
+    if current_device() is not None:    # adb: screenshots come at the Mac reference size
+        return current_device().ref_sft
     if platform.system() == "Windows":
         hdc = ctypes.windll.user32.GetDC(0)
         dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX

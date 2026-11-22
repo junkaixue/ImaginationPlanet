@@ -54,6 +54,7 @@ import pyautogui
 
 from common import single_find, get_center, get_all, single_find_map
 from log_helper import log
+from adb_device import AdbLost
 from zone_explore import (ZoneExplore, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH, DRAG_LAYOUT,
                           MONITOR_POLL, RUN_IDLE_SECONDS, CONTINUE_TAP_DY, _code_version)
 
@@ -748,6 +749,8 @@ class FortressFight(ZoneExplore):
         sw = self.swap
         try:
             r = self._finish_swap()
+        except AdbLost:
+            raise                               # (the device dropped out: not the swap's fault)
         except Exception:
             sw["errored"] = True                # run() restarts the pass; _run abandons the swap first
             raise
@@ -1775,6 +1778,16 @@ class FortressFight(ZoneExplore):
         while True:
             try:
                 return self._run_ordered(monitor) if self.order else self._run(monitor)
+            except AdbLost as e:
+                # the device dropped out and is back: not a bug, nothing is counted
+                log(f"adb: a tap or drag {e}; the pass starts again")
+                try:
+                    self.close_fleet_page()
+                    self.close_popup()
+                except AdbLost:
+                    pass
+                monitor = False
+                continue
             except Exception:
                 log("Unexpected error in a pass:\n" + traceback.format_exc())
                 errors = [t for t in errors if time.time() - t < 15 * 60] + [time.time()]
@@ -1971,6 +1984,10 @@ if __name__ == "__main__":
     parser.add_argument("--debug-shots", action="store_true", help="Save OCR crops to pics/<platform>/zone/debug/")
     parser.add_argument("-m", "--monitor", action="store_true",
                         help="Wait on the dice board until the dice run out, enter 星际探险, then fight")
+    parser.add_argument("--adb", metavar="SERIAL",
+                        help="Play on an Android device over adb instead of the emulator window, e.g. "
+                             "127.0.0.1:16384 (MuMu) or 100.x.y.z:5555 (a cloud phone); "
+                             "the script still runs on the Mac (pics/mac templates)")
     for kind in sorted(FORTRESS_KINDS):
         parser.add_argument(f"-o{kind}", metavar="ORDER",
                             help=f"Ordered mode on {FORTRESS_KINDS[kind]['name']}: five fleet digits from 0, "
@@ -1991,5 +2008,9 @@ if __name__ == "__main__":
     if args.debug_shots:
         DEBUG_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "debug")
         os.makedirs(DEBUG_DIR, exist_ok=True)
+    if args.adb:
+        from adb_device import AdbDevice
+        from click import use_device
+        use_device(AdbDevice(args.adb))     # before FortressFight: it keeps pyautogui.screenshot
     time.sleep(args.delay)
     FortressFight(dry_run=args.dry, fortress=args.fortress or "xz", order=order).run(monitor=args.monitor)
