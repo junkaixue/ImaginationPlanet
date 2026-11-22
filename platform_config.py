@@ -10,12 +10,12 @@ CURRENT_PLATFORM = platform.system()  # Returns 'Windows', 'Darwin' (macOS), or 
 IS_WINDOWS = CURRENT_PLATFORM == "Windows"
 IS_MAC = CURRENT_PLATFORM == "Darwin"
 
-# Set platform-specific image directory
-if IS_MAC:
-    IMAGE_DIR = "pics/mac"
-else:
-    # Default to pics (Windows and other platforms)
+# Set platform-specific image directory: the Mac set also serves a Linux host (the script inside a
+# cloud phone drives the game over adb, its screenshots scaled to the Mac templates)
+if IS_WINDOWS:
     IMAGE_DIR = "pics"
+else:
+    IMAGE_DIR = "pics/mac"
 
 def get_image_path(filename):
     """

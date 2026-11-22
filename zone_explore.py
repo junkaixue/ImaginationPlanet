@@ -34,12 +34,14 @@ import argparse
 import math
 import os
 import platform
+import re
 import time
 from collections import namedtuple
 
 import cv2
 import numpy as np
-import pyautogui
+
+from desktop import pyautogui
 
 from click import click_at, drag
 from common import (get_scaling_factor, single_find, get_center, get_all, find_all_with_path,
@@ -310,6 +312,20 @@ def _uninstall_screenshot_scaler():
         pyautogui.screenshot = _SCREENSHOT["orig"]
 
 
+OCR_LEVELS = (480, 420, 360)     # R+G+B above which a pixel is glyph (see ocr_digits)
+
+
+def hp_value(txt):
+    """The hp (0-100) an OCR reading of the hp bar stands for, or None for noise ("1 2 3 21 22").
+    1-2 digits are taken as read; three digits can only be 100 (a 0 misread: "130%", "800%8");
+    a reading that starts with 100 ("100%3", "1005": the % misread) is 100 too."""
+    t = txt.replace(" ", "")
+    m = re.fullmatch(r"(\d{1,3})%?", t) or re.match(r"(\d{3})%", t)
+    if m:
+        return 100 if len(m.group(1)) == 3 else int(m.group(1))
+    return 100 if t.startswith("100") else None
+
+
 OCR_CONFUSIONS = {frozenset("38"), frozenset("40"), frozenset("59")}   # tesseract on the zone title font
 
 
@@ -353,6 +369,7 @@ class ZoneExplore:
         self.actions = None        # (left, max) from the counter, None when unreadable
         self.packs_bought = 0
         self.ocr = None            # None = unknown, True/False once probed
+        self.ocr_raw = []          # what the last ocr_digits read at each brightness cut
         self.offset = [0.0, 0.0]   # how far the map content has been dragged since the corner
         self.sweep_from_top = True
         self.partials = {}         # kind -> list of (name, template array)
@@ -576,8 +593,11 @@ class ZoneExplore:
         now = time.time()
         self.visited = {k: t for k, t in self.visited.items() if now - t < self.visited_ttl}
 
-    def ocr_digits(self, color, cx, cy, half_w, half_h):
-        """OCR digits inside a logical-pixel box; returns the raw text or ''."""
+    def ocr_digits(self, color, cx, cy, half_w, half_h, accept=None):
+        """OCR digits inside a logical-pixel box; returns the raw text or ''. The glyphs are the
+        pixels brighter than OCR_LEVELS[0]; with `accept` (text -> bool) a reading it rejects is
+        taken again at the next, lower level (a screenshot upscaled from a small device screen
+        has softer, darker glyph edges), and '' is returned when none is accepted."""
         if self.ocr is False:
             return ""
         try:
@@ -585,13 +605,18 @@ class ZoneExplore:
             x1, x2 = int((cx - half_w) * self.sft), int((cx + half_w) * self.sft)
             y1, y2 = int((cy - half_h) * self.sft), int((cy + half_h) * self.sft)
             patch = color[y1:y2, x1:x2].astype(int)
-            bright = (patch[..., 0] + patch[..., 1] + patch[..., 2]) > 480
-            mask = np.where(bright, 0, 255).astype(np.uint8)
-            mask = cv2.resize(mask, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
-            mask = cv2.copyMakeBorder(mask, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
-            txt = pytesseract.image_to_string(mask, config="--psm 7 -c tessedit_char_whitelist=0123456789/%")
-            self.ocr = True
-            return txt.strip()
+            self.ocr_raw = []
+            for level in OCR_LEVELS if accept is not None else OCR_LEVELS[:1]:
+                bright = (patch[..., 0] + patch[..., 1] + patch[..., 2]) > level
+                mask = np.where(bright, 0, 255).astype(np.uint8)
+                mask = cv2.resize(mask, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
+                mask = cv2.copyMakeBorder(mask, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+                txt = pytesseract.image_to_string(mask, config="--psm 7 -c tessedit_char_whitelist=0123456789/%").strip()
+                self.ocr = True
+                self.ocr_raw.append(txt)
+                if accept is None or accept(txt):
+                    return txt
+            return ""
         except ImportError as e:
             log(f"OCR unavailable ({e}); hp and quota will be unknown")
             self.ocr = False
@@ -750,9 +775,11 @@ class ZoneExplore:
                 if abs(px - sx) < SHIP_LAYOUT["spacing"] / 2 and abs(py - sy) < 30 and conf > best:
                     status, best = name, conf
             txt = self.ocr_digits(color, sx, sy + SHIP_LAYOUT["hp_bar_dy"],
-                                  SHIP_LAYOUT["hp_bar_half_w"], SHIP_LAYOUT["hp_bar_half_h"])
-            digits = "".join(ch for ch in txt if ch.isdigit())
-            hp = max(0, min(100, int(digits))) if digits else None
+                                  SHIP_LAYOUT["hp_bar_half_w"], SHIP_LAYOUT["hp_bar_half_h"],
+                                  accept=lambda t: hp_value(t) is not None)
+            hp = hp_value(txt) if txt else None
+            if hp is None and self.ocr and status == "idle":    # (ships out show no hp bar)
+                log(f"S{i + 1} hp unreadable (OCR {self.ocr_raw})")
             ships[i + 1] = {"status": status, "idle": status == "idle", "hp": hp, "x": sx, "y": sy}
         log("Ships: " + ", ".join(
             f"S{i}:{s['status']}" + ("" if s["hp"] is None else f"({s['hp']}%)") for i, s in ships.items()))

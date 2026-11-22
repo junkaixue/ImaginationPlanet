@@ -5,7 +5,7 @@ from datetime import datetime
 
 import cv2
 import numpy as np
-import pyautogui
+from desktop import pyautogui
 from platform_config import get_image_path
 from collections import namedtuple
 
@@ -16,7 +16,7 @@ Point = namedtuple('Point', ['x', 'y'])
 # Platform-specific imports
 if platform.system() == "Windows":
     import ctypes
-else:
+elif platform.system() == "Darwin":
     import Quartz
 
 from click import click_at, current_device

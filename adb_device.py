@@ -1,6 +1,6 @@
-"""Play on an Android device over adb (a cloud phone, or the emulator's own adb port) instead of
-the emulator window on this Mac. The script itself still runs on the Mac: the templates are
-read from pics/mac and common.py needs Quartz.
+"""Play on an Android device over adb instead of the emulator window on the Mac: from the Mac
+(MuMu's adb port, a cloud phone through Tailscale) or from the Linux inside the cloud phone,
+which reaches its own adbd at 127.0.0.1:5555 (cloudphone/). Templates come from pics/mac.
 
 Every template and layout was captured on the Mac emulator window (physical px, REF_SFT physical
 px per logical px). A device screenshot is scaled down to that reference size before anyone looks
@@ -31,6 +31,8 @@ RETRY_WAITS = (2, 5, 10, 30, 60)    # seconds between attempts while the device 
 SLOW_SWIPE_SPEED = 300      # device px/s of a drag without motionevent: `input swipe` lets go at
                             # full speed, slowly enough that the page should not fling on
 PNG_MAGIC = b"\x89PNG"
+TAP_HOLD_MS = 80            # a tap is held this long: the game misses some `input tap`s, whose down
+                            # and up come at the same instant
 
 
 class AdbLost(RuntimeError):
@@ -54,7 +56,12 @@ class AdbDevice:
                                timeout=ADB_TIMEOUT)
         # the start-up time of one `input` process; it paces the moves of a drag
         self.input_start = max(0.0, time.time() - t - t_shell)
-        self.motion = b"motionevent" in usage.stdout + usage.stderr   # Android 10+
+        usage = usage.stdout + usage.stderr
+        sdk = self._call(["shell", "getprop", "ro.build.version.sdk"]).strip()
+        # `input motionevent` exists from Android 10 (whose usage text names it "event"); CANCEL
+        # only from about 12, so a finger is lifted with UP before
+        self.motion = sdk.isdigit() and int(sdk) >= 29
+        self.lift = "CANCEL" if b"CANCEL" in usage else "UP"
         log(f"adb device {serial}: screen {self.size[0]}x{self.size[1]}, scale {self.k:.3f}, "
             f"round trip {t_shell:.2f} s, input start {self.input_start:.2f} s, "
             f"drag by {'motionevent' if self.motion else 'slow swipe (may overshoot: check the scrolls)'}")
@@ -164,8 +171,11 @@ class AdbDevice:
         return int(round(x * f)), int(round(y * f))
 
     def tap(self, x, y):
+        """Down, held TAP_HOLD_MS, up (like click_at on the Mac): a swipe that does not move,
+        one `input` process on every Android version."""
         dx, dy = self.to_device(x, y)
-        self._input(f"input tap {dx} {dy}")
+        self._input(f"input swipe {dx} {dy} {dx} {dy} {TAP_HOLD_MS}",
+                    cancel=f"input motionevent {self.lift} {dx} {dy}" if self.motion else None)
 
     def drag(self, x1, y1, x2, y2, duration=0.7, steps=14, hold=0.3, press=0.1):
         """Press at (x1, y1), move to (x2, y2) in about `duration` s and release; like
@@ -191,4 +201,4 @@ class AdbDevice:
             if gap > 0.01 and i < n:
                 cmds.append(f"sleep {gap:.2f}")
         cmds += [f"sleep {hold:.2f}", f"input motionevent UP {bx} {by}"]
-        self._input("; ".join(cmds), cancel=f"input motionevent CANCEL {bx} {by}")
+        self._input("; ".join(cmds), cancel=f"input motionevent {self.lift} {bx} {by}")

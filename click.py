@@ -1,7 +1,6 @@
 import platform
-import pyautogui
 
-pyautogui.FAILSAFE = False
+from desktop import pyautogui
 
 # Platform-specific imports and click implementation
 if platform.system() == "Darwin":  # macOS

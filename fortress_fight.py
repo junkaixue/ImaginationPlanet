@@ -21,7 +21,8 @@ Cycle (user rules):
        that shows no 袭击 when tapped is left alone for FAILED_TARGET_TTL.
     7. Wait for the fleet to come back, then repeat with the next full-hp fleet.
 
-Only one fleet fights at a time (there is one set of best gear). No zoom or map dragging.
+Only one fleet fights at a time (there is one set of best gear). The map is kept at 75%; it
+is only dragged when the fortress icon is not in view (bring_fortress_into_view).
 
 Ordered mode (-oxz / -ozx ORDER, e.g. 41032: five fleet digits from 0, big ship first, then two
 middle, two small): no gear swaps; each idle fleet below full energy is repaired (修理舰队 only),
@@ -50,7 +51,8 @@ from collections import namedtuple
 
 import cv2
 import numpy as np
-import pyautogui
+
+from desktop import pyautogui
 
 from common import single_find, get_center, get_all, single_find_map
 from log_helper import log
@@ -122,6 +124,14 @@ FORTRESS = {
     "content_bottom_dy": 530, # the page content measured for scrolling ends this far below the title (above 停机坪)
     "tap_timeout": 5.0,       # seconds a tap on a target gets to open something
     "icon_timeout": 2.0,      # the map icon's popup shows within a second
+    "icon_color_th": 0.8,     # colour match of the map icon. The fortress icons share one outline in
+                              # different colours, so grey matching cannot tell them apart; in colour
+                              # the 星炽 icon scores 0.97 and the 铸械 template on it 0.39
+    "centre_slack": 120,      # logical px from the middle within which a found icon is left where it is
+    "icon_search": ((0, -1), (-1, 0), (0, 1), (0, 1), (1, 0), (1, 0), (0, -1), (0, -1), (0, -1),
+                    (-1, 0), (-1, 0), (-1, 0)),   # look steps (a spiral) from our base, which lies
+                                                  # below and right of the fortresses
+    "search_step": 0.6,       # one look step, of the map area's width / height
     "want_grace": 2.0,        # seconds 袭击 still gets after another part of its popup showed
     "tap_settle": 1.0,        # a popup draws its parts over a few frames: look once more after this
     "building_tap_dy": 35,    # tap point above a building's label
@@ -841,8 +851,9 @@ class FortressFight(ZoneExplore):
             if not self.on_map():
                 self.close_popup()          # a leftover popup from the previous attempt hides the icon
             self.invalidate_shot()
-            # the program is started in the central zone with the fortress on screen; no zone logic
-            icon = get_center(self.map_key, "Single")
+            icon = self.fortress_icon()         # by colour: another fortress's icon must not do
+            if icon is None and attempt == 0 and self.bring_fortress_into_view():
+                icon = self.fortress_icon()
             if icon is None:
                 log(f"{self.kind['name']} icon not on screen (attempt {attempt + 1})")
                 self.save_debug("no_fortress_icon")
@@ -872,6 +883,53 @@ class FortressFight(ZoneExplore):
             self.close_popup()
         self.save_debug("fortress_page_missing")
         return False
+
+    def fortress_icon(self):
+        """This fortress's icon on the 75% map by colour (see icon_color_th), or None."""
+        self.invalidate_shot()
+        color = self.shot()[0]
+        t = cv2.cvtColor(cv2.imread(single_find_map[self.map_key]), cv2.COLOR_BGR2RGB)
+        _, conf, _, loc = cv2.minMaxLoc(cv2.matchTemplate(color, t, cv2.TM_CCOEFF_NORMED))
+        if conf < FORTRESS["icon_color_th"]:
+            return None
+        return Point((loc[0] + t.shape[1] / 2) / self.sft, (loc[1] + t.shape[0] / 2) / self.sft)
+
+    def bring_fortress_into_view(self):
+        """The fortress icon is not on the 75% map: the view is elsewhere (after a new login it
+        opens on our base). Each zoom level keeps a view of its own, so the search is at 75%:
+        from our base (the base icon jumps there; the fortresses are in the same central zone),
+        a spiral of drags until the icon shows, which is then dragged to the middle. The view
+        stays there for the next visits. True when the icon is in view."""
+        base, region = self.anchor("ZBase"), self.map_region()
+        if base is None or region is None:
+            return False
+        log(f"{self.kind['name']} icon not on the map: looking for it from our base")
+        self.click(base.x, base.y, 3, "base icon -> our base", force=True)
+        spot = self.plain_spot()                # the base opens a menu of its own (基地详情...), which
+        if spot is not None:                    # no dialog template knows: a tap beside it closes it
+            self.click(spot.x, spot.y, 1.5, "close the base menu", force=True)
+        self.ensure_zoom()
+        w, h = region[2] - region[0], region[3] - region[1]
+        icon = self.fortress_icon()
+        for sx, sy in FORTRESS["icon_search"]:
+            if icon is not None:
+                break
+            # the content moves against the look direction
+            self.drag_map(-sx * w * FORTRESS["search_step"], -sy * h * FORTRESS["search_step"])
+            icon = self.fortress_icon()
+        if icon is None:
+            log(f"{self.kind['name']} icon not found around our base")
+            self.save_debug("fortress_search_failed")
+            return False
+        # towards the middle, one axis at a time: a diagonal drag gets a single gesture, which
+        # starts on the icon when it is near the middle (and opens its popup instead)
+        dx, dy = (region[0] + region[2]) / 2 - icon.x, (region[1] + region[3]) / 2 - icon.y
+        log(f"{self.kind['name']} icon at ({icon.x:.0f},{icon.y:.0f}), {dx:.0f},{dy:.0f} from the middle")
+        if abs(dx) > FORTRESS["centre_slack"]:
+            self.drag_map(dx, 0)
+        if abs(dy) > FORTRESS["centre_slack"]:
+            self.drag_map(0, dy)
+        return True
 
     def guard_cells(self, gray, title):
         """[(x, y, bright, level)] of every guard cell on the fortress page (logical px); the
@@ -1986,8 +2044,8 @@ if __name__ == "__main__":
                         help="Wait on the dice board until the dice run out, enter 星际探险, then fight")
     parser.add_argument("--adb", metavar="SERIAL",
                         help="Play on an Android device over adb instead of the emulator window, e.g. "
-                             "127.0.0.1:16384 (MuMu) or 100.x.y.z:5555 (a cloud phone); "
-                             "the script still runs on the Mac (pics/mac templates)")
+                             "127.0.0.1:16384 (MuMu), 100.x.y.z:5555 (a cloud phone from the Mac) or "
+                             "127.0.0.1:5555 (inside the cloud phone, see cloudphone/)")
     for kind in sorted(FORTRESS_KINDS):
         parser.add_argument(f"-o{kind}", metavar="ORDER",
                             help=f"Ordered mode on {FORTRESS_KINDS[kind]['name']}: five fleet digits from 0, "
