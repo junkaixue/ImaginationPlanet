@@ -84,8 +84,18 @@ restart_sh() {   # ARGS: this checkout's phone/restart.sh, run from the phone's 
   push "$HERE/phone/restart.sh" "$D/tmp/cp.restart.sh"
   psh "sh $D/tmp/cp.restart.sh $*"
 }
-supervisor_process() {   # a supervisor runs on the phone, whatever supervisor.pid says
-  restart_sh --find >/dev/null
+supervisor_process() {   # 0: a supervisor runs on the phone (whatever supervisor.pid says), 1: none
+  # does, 2: the phone did not answer (adb or the link dropped: no word on the supervisor).
+  # restart.sh --find prints the pid or "none"; nothing here ends the script.
+  local out
+  adb -s "$SERIAL" shell "mkdir -p $D/tmp" >/dev/null 2>&1 || return 2
+  adb -s "$SERIAL" push "$HERE/phone/restart.sh" "$D/tmp/cp.restart.sh" >/dev/null 2>&1 || return 2
+  out="$(adb -s "$SERIAL" shell "sh $D/tmp/cp.restart.sh --find" 2>/dev/null || true)"
+  case "$out" in
+    none*) return 1 ;;
+    [0-9]*) return 0 ;;
+    *) return 2 ;;
+  esac
 }
 install_apk() {   # [-r]: adb install of the panel app, its output in $out; tried again when the
   # cloud phone's install check refuses it (INSTALL_FAILED_VERIFICATION_FAILURE, now and then)
@@ -180,7 +190,7 @@ code_github() {
     if [ -n "$(psh "curl -s -m 10 http://127.0.0.1:8765/status" || true)" ]; then
       # (while it is busy with an update of its own or a restart, or silent between two
       # supervisors, the request is made again: for 15 min from the first try, then no more)
-      local out gone=0 end=$((SECONDS + 900))
+      local out rc gone=0 end=$((SECONDS + 900))
       while :; do
         out="$(api POST "/update?force=1" || true)"
         echo "${out:-no answer from the supervisor}"
@@ -188,8 +198,10 @@ code_github() {
           *'"result": "updated to'*|*'"result": "已是最新'*) return 0 ;;
           *已经在更新了*|*服务正在重启*) [ $SECONDS -lt $end ] || { echo "the supervisor stayed busy: try again later"; exit 1; }
             echo "(the supervisor is busy: again in 20 s)" ;;
-          "")   # (silent between two supervisors, for seconds; gone when no process is found twice)
-            if supervisor_process; then gone=0; else gone=$((gone + 1)); fi
+          "")   # (silent between two supervisors, for seconds; gone when no process is found twice;
+                # a phone that does not answer is a drop of the link and says nothing of it)
+            rc=0; supervisor_process || rc=$?
+            case $rc in 0) gone=0 ;; 1) gone=$((gone + 1)) ;; esac
             [ $gone -lt 2 ] || { echo "the supervisor is gone: start it (cloudphone/cp.sh up) and run this again"; exit 1; }
             [ $SECONDS -lt $end ] || { echo "no answer from the supervisor for 15 min: giving up"; exit 1; }
             echo "(again in 20 s)" ;;
@@ -197,8 +209,12 @@ code_github() {
         esac
         sleep 20
       done
-    elif supervisor_process; then
-      echo "the supervisor runs but does not answer: try again (or cp.sh restart)"; exit 1
+    else
+      local rc=0; supervisor_process || rc=$?
+      case $rc in
+        0) echo "the supervisor runs but does not answer: try again (or cp.sh restart)"; exit 1 ;;
+        2) echo "the phone does not answer adb: try again"; exit 1 ;;
+      esac
     fi
   fi
   inside "set -e
@@ -264,9 +280,13 @@ case "$CMD" in
   try)
     connect
     st="$(psh "curl -s -m 10 http://127.0.0.1:8765/status" || true)"
-    if [ -z "$st" ] && supervisor_process; then
-      echo "the supervisor runs but does not answer: no test beside its script (try again, or cp.sh restart)"
-      exit 1
+    if [ -z "$st" ]; then
+      rc=0; supervisor_process || rc=$?
+      case $rc in
+        0) echo "the supervisor runs but does not answer: no test beside its script (try again, or cp.sh restart)"
+           exit 1 ;;
+        2) echo "the phone does not answer adb: try again"; exit 1 ;;
+      esac
     fi                                                    # (empty and no supervisor: nothing to stop)
     # what the supervisor means to run (state.json): also a script being restarted, or waiting
     # for its automatic restart; nothing when it was stopped by hand

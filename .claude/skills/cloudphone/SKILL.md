@@ -148,7 +148,9 @@ debugging on in the phone's 开发者选项.
   stay, and so does one that is not the file seen at the look any more). With nothing new
   (code, phone files, panel, supervisor) the answer is 已是最新 and the script is not
   restarted; a new supervisor.py that failed its load check is remembered and counts as
-  nothing new until it changes. `cp.sh code --github` hands over to a running supervisor (`/update?force=1`): it
+  nothing new until it changes (a check that could not run, a timeout, is tried again). The
+  code label in /status ends in ` +local` for code from the Mac and ` +?` when git status
+  gave no answer. `cp.sh code --github` hands over to a running supervisor (`/update?force=1`): it
   waits while that is busy (更新 under way, restarting; 15 min at most), exits 1 unless the
   answer is "updated to", and refuses when a supervisor process runs but does not answer:
   one writer of the checkout.
@@ -159,8 +161,8 @@ debugging on in the phone's 开发者选项.
 - `adb install` of the panel app is refused now and then with
   `INSTALL_FAILED_VERIFICATION_FAILURE: com.ip.panel is not allowed to be installed` (the cloud
   phone's install check; the next try passes): `cp.sh app` and the supervisor's own install
-  try up to three times (the supervisor's within 6 min, 9 with a reinstall after an
-  uninstall: its re-exec waits for it).
+  try up to three times (the supervisor's within 6 min, 11.5 with a reinstall after an
+  uninstall: its re-exec waits for it, so a `cp.sh restart` meanwhile may end with exit 3).
 - Toggling USB debugging (or anything that restarts adbd) may end the supervisor too: then
   浮窗 → 启动服务, or `cp.sh up`.
 - `run.sh` uses proot `--kill-on-exit`: whatever a command leaves behind ends with it. The

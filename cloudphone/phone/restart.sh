@@ -6,7 +6,8 @@
 #   restart.sh [SECONDS]   wait up to SECONDS (600); then the wait goes on in the background, for
 #                          an hour at most, and this ends with exit 3: the next supervisor starts
 #                          on the phone once the old one is gone
-#   restart.sh --find      only tell whether a supervisor runs: its pid and exit 0, or exit 1
+#   restart.sh --find      only tell whether a supervisor runs: its pid and exit 0, or "none"
+#                          and exit 1 (no output at all: the phone did not run this)
 # supervisor.pid is left to start.sh (it removes a stale one itself): one that another start has
 # written meanwhile is not taken away. cloudphone/cp.sh restart runs its own copy of this file
 # (pushed to tmp/, so that cp.sh and this logic match); the one here is the phone's.
@@ -31,10 +32,10 @@ find_supervisor() {   # the pid of a running supervisor: a python whose script, 
     shift
     script=; value=
     for w in "$@"; do
-      if [ -n "$value" ]; then value=; continue; fi     # (what -X or -W takes)
+      if [ -n "$value" ]; then value=; continue; fi     # (what the option before it takes)
       case "$w" in
         -c*|-m*) break ;;                               # (a command or a module: no script)
-        -X|-W) value=1 ;;
+        -X|-W|--check-hash-based-pycs) value=1 ;;
         -*) ;;
         *) script=$w; break ;;
       esac
@@ -47,6 +48,7 @@ alive || p=$(find_supervisor)   # (supervisor.pid lost or stale while one runs: 
                                 # would only fail on the port, and the old one would go on)
 if [ "$1" = "--find" ]; then
   if alive; then echo $p; exit 0; fi
+  echo none
   exit 1
 fi
 gone_within() {   # SECONDS [quiet]: 0 once the old supervisor is gone, 1 when it outlasts SECONDS

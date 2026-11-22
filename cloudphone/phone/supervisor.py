@@ -198,14 +198,17 @@ class Supervisor:
     def code_version():
         if os.path.isdir(f"{APP}/.git"):
             git = ["git", "--no-optional-locks", "-C", APP]    # (no index.lock against an update)
-            r = subprocess.run(git + ["log", "-1", "--format=%h %cd", "--date=format:%m-%d %H:%M"],
-                               capture_output=True, text=True)
+            try:
+                label = subprocess.run(git + ["log", "-1", "--format=%h %cd", "--date=format:%m-%d %H:%M"],
+                                       capture_output=True, text=True, timeout=20).stdout.strip()
+            except subprocess.TimeoutExpired:
+                label = "?"
             try:
                 dirty = subprocess.run(git + ["status", "--porcelain", "-uno", "--no-renames"],
                                        capture_output=True, text=True, timeout=20).stdout.strip()
-            except subprocess.TimeoutExpired:
-                dirty = ""
-            return r.stdout.strip() + (" +local" if dirty else "")
+                return label + (" +local" if dirty else "")
+            except subprocess.TimeoutExpired:   # (not known: it does not pass for GitHub's code)
+                return label + " +?"
         return "local copy"
 
     # ------------------------------------------------------------------ game
@@ -544,12 +547,15 @@ class Supervisor:
         r = subprocess.run(["git", "-C", APP, "rev-parse", "HEAD", "FETCH_HEAD"], capture_output=True, text=True)
         heads = r.stdout.split()
         same = r.returncode == 0 and len(heads) == 2 and heads[0] == heads[1]
-        try:                                # (--no-renames: no file contents are fetched for it)
-            r = subprocess.run(["git", "--no-optional-locks", "-C", APP, "status", "--porcelain", "-uno",
-                                "--no-renames"], capture_output=True, text=True, timeout=60)
-            dirty = r.returncode != 0 or bool(r.stdout.strip())     # (changes from the Mac in the checkout)
-        except subprocess.TimeoutExpired:
-            dirty = True
+        dirty = True                        # (changes from the Mac in the checkout)
+        for attempt in (1, 2):              # (--no-renames: no file contents are fetched for it)
+            try:
+                r = subprocess.run(["git", "--no-optional-locks", "-C", APP, "status", "--porcelain", "-uno",
+                                    "--no-renames"], capture_output=True, text=True, timeout=60)
+                dirty = r.returncode != 0 or bool(r.stdout.strip())
+                break
+            except subprocess.TimeoutExpired:   # (twice: counted as changed, the script is restarted)
+                log(f"update: git status got no answer in 60 s (try {attempt})")
         if not same:                        # (else: all is here)
             ok, out = self.retried("正在下载改动的文件", self.scratch_checkout)
             if not ok:
@@ -569,14 +575,15 @@ class Supervisor:
         if os.path.exists(LOCAL_CODE):      # (code and phone files are GitHub's now)
             os.remove(LOCAL_CODE)
         panel = os.path.exists(PANEL_APK) and sha1(PANEL_APK) != self.read(PANEL_SHA)
-        there = sha1(f"{HOME}/supervisor.py")
+        there = sha1(f"{HOME}/supervisor.py")       # (None: not readable right now, so not to be started)
+        failed = there is not None and there == self.unloadable
         # (also after cp.sh code copied it; not one that failed its load check: this one goes on)
-        own = there != LOADED and there != self.unloadable
+        own = there is not None and there != LOADED and not failed
         # (`fresh` by itself: a script started while the code was being changed cleared the mark)
         if not (fresh or self.code_changed or changed or panel or own):
             log(f"update: nothing new ({self.code_version()})")
             return (f"已是最新: {self.code_version()}"     # (the script goes on: no restart for nothing)
-                    + ("（新的服务代码加载不了，仍用现在的）" if there == self.unloadable else ""))
+                    + ("（新的服务代码加载不了，仍用现在的）" if failed else ""))
         msg = f"updated to {self.code_version()}" + (", installing the new panel app" if panel else "")
         log(msg + (f"; phone files changed: {', '.join(changed)}" if changed else ""))
         if own:
@@ -610,9 +617,9 @@ class Supervisor:
     def adb_install(deadline, *flags):
         """`adb install` of the checkout's panel app. The cloud phone's install check refuses
         one now and then (INSTALL_FAILED_VERIFICATION_FAILURE) and passes it on the next try.
-        One try may take 300 s; the tries end by `deadline` (monotonic), 6 min for an install
-        and at least 3 more for the one after an uninstall: a re-exec of the supervisor waits
-        for it, 9 min at most."""
+        One try may take 300 s; the tries end by `deadline` (monotonic): 6 min for an install,
+        and 5.5 more, counted from before the uninstall, for the one after it. A re-exec of the
+        supervisor waits for that, 11.5 min at most."""
         for attempt in (1, 2, 3):
             left = deadline - time.monotonic()
             if left < 5:
@@ -639,9 +646,11 @@ class Supervisor:
             except RuntimeError as e:
                 if "UPDATE_INCOMPATIBLE" not in str(e):
                     raise
+                # (the time of a whole install try after the uninstall, which may take 30 s: no
+                # panel at all is worse than a late restart)
+                again = max(deadline, time.monotonic() + 330)
                 adb("uninstall", "com.ip.panel")
-                # (at least 3 min of its own: no panel at all is worse than a late restart)
-                self.adb_install(max(deadline, time.monotonic() + 180), "-g")
+                self.adb_install(again, "-g")
             with open(PANEL_SHA, "w") as f:
                 f.write(sha1(PANEL_APK))
             adb("shell", "appops", "set", "com.ip.panel", "SYSTEM_ALERT_WINDOW", "allow")
@@ -678,11 +687,12 @@ class Supervisor:
             r = subprocess.run([sys.executable, "-c", LOAD_CHECK, new], capture_output=True, text=True,
                                timeout=120)
             ok, why = r.returncode == 0, (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+            if not ok:                      # (no further try, no restart for it, until it changes)
+                self.unloadable = sha1(new)
         except (OSError, subprocess.TimeoutExpired) as e:
-            ok, why = False, str(e)
+            ok, why = False, f"the check did not run: {e}"     # (the next update tries it again)
         if not ok:
             log(f"the new supervisor.py does not load ({why}): this one goes on")
-            self.unloadable = sha1(new)     # (no further try, no restart for it, until it changes)
         stopped = False
         try:
             if panel:
@@ -711,6 +721,8 @@ class Supervisor:
                 resume = self.script["id"] if running else None
         if resume:
             self.start_retrying(resume)
+        else:
+            self.code_changed = False       # (no script runs on the old code)
 
     # ------------------------------------------------------------------ state
     @staticmethod
