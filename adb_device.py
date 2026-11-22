@@ -11,6 +11,7 @@ window-scale calibration (zone_explore.calibrate_scale) corrects what REF_WIDTH 
     click.use_device(device)                 # before ZoneExplore is created
 """
 import io
+import re
 import subprocess
 import time
 
@@ -31,6 +32,20 @@ RETRY_WAITS = (2, 5, 10, 30, 60)    # seconds between attempts while the device 
 SLOW_SWIPE_SPEED = 300      # device px/s of a drag without motionevent: `input swipe` lets go at
                             # full speed, slowly enough that the page should not fling on
 PNG_MAGIC = b"\x89PNG"
+# The floating panel app (cloudphone/app) draws a bubble (and at times a panel) over the game. A tap
+# on it would land on it. Before every touch the app's windows are read afresh; a touch on one is
+# sent in the same shell right after a HIDE broadcast (the app steps aside for HIDE_MS and lets
+# touches through; each touch there renews it). A panel the user has open is waited for first.
+OVERLAY_PKG = "com.ip.panel"
+# the app's whole window blocks only (a block runs to the next "Window #"; ~27 lines on Android 13)
+OVERLAY_WINDOWS = "dumpsys window windows | awk '/^ *Window #/ {p = /com[.]ip[.]panel/} p'; true"
+BROADCAST = f"am broadcast --receiver-foreground -p {OVERLAY_PKG} -a"
+HIDE_MS = 3000
+HELLO_EVERY = 60            # seconds between HELLOs: "this script steps around the bubble" (the app
+                            # keeps it 3 min; a restarted app hears it within a minute)
+OVERLAY_MARGIN = 12         # device px around an overlay window that count as on it
+PANEL_MIN_W = 200           # device px: a window this wide is the panel (the bubble is ~100)
+PANEL_WAIT = 12             # seconds a touch under an open panel waits for the user to close it
 TAP_HOLD_MS = 80            # a tap is held this long: the game misses some `input tap`s, whose down
                             # and up come at the same instant
 
@@ -62,6 +77,10 @@ class AdbDevice:
         # only from about 12, so a finger is lifted with UP before
         self.motion = sdk.isdigit() and int(sdk) >= 29
         self.lift = "CANCEL" if b"CANCEL" in usage else "UP"
+        self.hello_at = None            # monotonic time of the last HELLO to the panel app
+        self.hidden_until = 0.0         # monotonic: our last HIDE keeps the app's windows aside until then
+        listed = self._call(["shell", "pm", "list", "packages", OVERLAY_PKG]) or b""   # (retried)
+        self.panel_app = f"package:{OVERLAY_PKG}".encode() in listed   # no app: no window checks
         log(f"adb device {serial}: screen {self.size[0]}x{self.size[1]}, scale {self.k:.3f}, "
             f"round trip {t_shell:.2f} s, input start {self.input_start:.2f} s, "
             f"drag by {'motionevent' if self.motion else 'slow swipe (may overshoot: check the scrolls)'}")
@@ -133,7 +152,7 @@ class AdbDevice:
         self._wait_online()
         if cancel:
             self._call(["shell", cancel], tries=1)
-        raise AdbLost(f"may not have been delivered: {cmd.split(';')[0]}")
+        raise AdbLost(f"may not have been delivered: {cmd.split(';')[-1].strip()[:60]}")
 
     def _capture(self):
         """Full-resolution RGB array of the device screen."""
@@ -157,6 +176,9 @@ class AdbDevice:
         """Stand-in for pyautogui.screenshot: the device screen at the reference size.
         `region` (left, top, width, height) crops it, in reference physical px."""
         shot = self._capture()
+        hello = self.hello_due() if self.panel_app else ""
+        if hello:
+            self._call(["shell", hello + "true"], tries=1)
         h, w = shot.shape[:2]
         img = cv2.resize(shot, (round(w / self.k), round(h / self.k)), interpolation=cv2.INTER_AREA)
         if region is not None:
@@ -170,11 +192,73 @@ class AdbDevice:
         f = REF_SFT * self.k
         return int(round(x * f)), int(round(y * f))
 
+    def overlay_windows(self):
+        """The panel app's visible windows: [((left, top, right, bottom), touchable)] in device
+        px, read now; None when the read failed. Android 12+ prints `frame=[..][..]`, older ones
+        `mFrame=[..][..]`. About 0.1 s on the phone with the adb round trip, before every touch:
+        not cached, as a read from a moment ago would let taps land on a panel the user has just
+        opened (to press 停止, say)."""
+        out = self._call(["shell", OVERLAY_WINDOWS], tries=1)
+        if out is None:
+            return None
+        out = out.decode("utf-8", "replace")
+        wins = []
+        for block in out.split("Window #")[1:]:
+            if OVERLAY_PKG not in block.split("\n", 1)[0] or "isVisible=true" not in block:
+                continue
+            m = re.search(r"\b(?:mFrame|frame)=\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]", block)
+            if m:
+                wins.append((tuple(int(v) for v in m.groups()), "NOT_TOUCHABLE" not in block))
+        return wins
+
+    def hello_due(self):
+        """The HELLO broadcast when one is due (every HELLO_EVERY s, also from screenshots: a
+        script waiting long between taps keeps the bubble usable), else ''."""
+        if self.hello_at is not None and time.monotonic() - self.hello_at < HELLO_EVERY:
+            return ""
+        self.hello_at = time.monotonic()
+        return f"{BROADCAST} com.ip.panel.HELLO >/dev/null 2>&1; "
+
+    def before_touch(self, dx, dy):
+        """Shell commands to run right before a touch at device (dx, dy): a HELLO now and then
+        (the app keeps its bubble touchable during a run only for scripts that step around it),
+        and a HIDE when the touch would land on one of the app's windows. A panel the user has
+        opened over the spot is given PANEL_WAIT s to be closed before it is hidden."""
+        if not self.panel_app:
+            return ""
+        pre = self.hello_due()
+        m = OVERLAY_MARGIN
+        on = lambda r: r[0] - m <= dx <= r[2] + m and r[1] - m <= dy <= r[3] + m
+        panel = lambda ws: ws is not None and any(r[2] - r[0] >= PANEL_MIN_W for r, _ in ws)
+        both = self.overlay_windows()
+        if both is None:                    # (rare and passing: one more read)
+            both = self.overlay_windows()
+        # a touch on the panel, or one on the bubble while the panel is open (the HIDE would close
+        # it): the user is at it, so they get PANEL_WAIT s first
+        if panel(both) and any(on(r) for r, _ in both):
+            log("The panel is open and the next tap needs its place: waiting for it to be closed")
+            end = time.monotonic() + PANEL_WAIT
+            while time.monotonic() < end and panel(both):
+                time.sleep(1)
+                new = self.overlay_windows()
+                if new is not None:         # (a failed read keeps the last one: the wait goes on)
+                    both = new
+        # (no read at all: the app's windows may be anywhere, so it counts as a touchable hit; the
+        # HIDE then also closes a panel, which beats a tap landing on it)
+        hits = [True] if both is None else [touchable for r, touchable in both if on(r)]
+        # a touchable one (a panel app just restarted, too) always; a hidden one renewed when less
+        # than a second of its hide is left
+        if any(hits) or (hits and time.monotonic() > self.hidden_until - 1.0):
+            pre += f"{BROADCAST} com.ip.panel.HIDE --ei ms {HIDE_MS} >/dev/null 2>&1; sleep 0.3; "
+            self.hidden_until = time.monotonic() + HIDE_MS / 1000.0
+        return pre
+
     def tap(self, x, y):
         """Down, held TAP_HOLD_MS, up (like click_at on the Mac): a swipe that does not move,
         one `input` process on every Android version."""
         dx, dy = self.to_device(x, y)
-        self._input(f"input swipe {dx} {dy} {dx} {dy} {TAP_HOLD_MS}",
+        pre = self.before_touch(dx, dy)
+        self._input(pre + f"input swipe {dx} {dy} {dx} {dy} {TAP_HOLD_MS}",
                     cancel=f"input motionevent {self.lift} {dx} {dy}" if self.motion else None)
 
     def drag(self, x1, y1, x2, y2, duration=0.7, steps=14, hold=0.3, press=0.1):
@@ -182,12 +266,13 @@ class AdbDevice:
         click.drag, it rests before the release so that the map does not fling on."""
         ax, ay = self.to_device(x1, y1)
         bx, by = self.to_device(x2, y2)
+        pre = self.before_touch(ax, ay)         # (the window under the first touch gets the gesture)
         if not self.motion:
             # Android 9 and older: `input swipe` cannot pause before the release; slow enough
             # that the release speed stays low
             dist = ((bx - ax) ** 2 + (by - ay) ** 2) ** 0.5
             ms = int(max(press + duration + hold, dist / SLOW_SWIPE_SPEED) * 1000)
-            self._input(f"input swipe {ax} {ay} {bx} {by} {ms}")
+            self._input(pre + f"input swipe {ax} {ay} {bx} {by} {ms}")
             return
         # one shell for the whole gesture. Each `input` call starts a new process
         # (input_start s), so the moves are few and the pause between them is what is left of
@@ -201,4 +286,4 @@ class AdbDevice:
             if gap > 0.01 and i < n:
                 cmds.append(f"sleep {gap:.2f}")
         cmds += [f"sleep {hold:.2f}", f"input motionevent UP {bx} {by}"]
-        self._input("; ".join(cmds), cancel=f"input motionevent {self.lift} {bx} {by}")
+        self._input(pre + "; ".join(cmds), cancel=f"input motionevent {self.lift} {bx} {by}")

@@ -6,7 +6,7 @@
 D=/data/local/tmp/ip
 mkdir -p $D/logs
 running() {   # the pid in supervisor.pid is a live supervisor (not a reused pid after a reboot)
-  [ -f $D/supervisor.pid ] && tr '\0' ' ' < /proc/$(cat $D/supervisor.pid)/cmdline 2>/dev/null | grep -q supervisor.py
+  [ -f $D/supervisor.pid ] && cat /proc/$(cat $D/supervisor.pid)/cmdline 2>/dev/null | tr '\0' ' ' | grep -q supervisor.py
 }
 if running; then
   echo "supervisor already running (pid $(cat $D/supervisor.pid))"

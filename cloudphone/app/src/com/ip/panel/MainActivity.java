@@ -33,7 +33,11 @@ public class MainActivity extends Activity {
             Toast.makeText(this, "请允许“星球脚本”显示在其他应用上层", Toast.LENGTH_LONG).show();
             startActivity(new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:" + getPackageName())));
         } else {
-            Intent i = new Intent(this, OverlayService.class).setAction(OverlayService.ACTION_PANEL);
+            // (quiet: the bubble only, as after an update that reinstalled the app)
+            Intent i = new Intent(this, OverlayService.class);
+            if (!getIntent().getBooleanExtra("quiet", false)) {
+                i.setAction(OverlayService.ACTION_PANEL);
+            }
             if (Build.VERSION.SDK_INT >= 26) {
                 startForegroundService(i);
             } else {

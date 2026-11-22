@@ -46,6 +46,8 @@ Usage:
 import argparse
 import json
 import os
+import signal
+import sys
 import time
 from collections import namedtuple
 
@@ -194,6 +196,10 @@ BUSY_MIN = 90
 BUSY_MAX = 2 * 60 * 60
 BUSY_DY = 50                 # (cells are ~33 apart: the guards right above and below are left out too)
 BUSY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fortress_busy.json")
+# the fleet that held the best gear last (swap mode): a run whose holder lookup finds no fleet with
+# the gear (a swap cut off by a kill, a crash) gives it 一键配队 to take the loose gear back
+GEAR_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fortress_gear.json")
+# (cloudphone/cp.sh STATE_FILES names these two: a fresh clone on the phone keeps them)
 NO_TARGET_WAIT = 3 * 60      # seconds a rank waits after its search found nothing (ordered mode)
 FLEET_FAIL_WAIT = 60         # seconds a fleet whose attack or repair failed is left out (ordered mode;
                              # the fortress page likewise when it would not open or got lost) ...
@@ -310,11 +316,14 @@ class FortressFight(ZoneExplore):
         self.search_gave_up = False   # the last pick_target stopped on a page problem, not on "nothing"
         self.kind = FORTRESS_KINDS[fortress]
         self.map_key, self.title_key, self.guard_key = self.kind["map"], self.kind["title"], self.kind["guard"]
-        self.holder = None        # fleet index currently carrying the best gear
+        self._holder = None
+        self.holder = None        # fleet index currently carrying the best gear (saved in GEAR_FILE)
+        self.regear_tried = False     # the loose-gear recovery ran this run
         self.pending_repair = set()   # fleets whose repair could not be started yet
         self.repair_tries = {}        # fleet -> attempts made from pending_repair
         self.holder_misses = 0        # consecutive starts that could not find the gear holder
         self.lookup_unreadable = False  # the last find_gear_holder failed to read the fleet page (not: no match)
+        self.stop_requested = False   # SIGTERM (the supervisor's 停止 / 更新): end at the next stop point
         self.swap_fails = 0           # consecutive swap_gear failures before the holder is looked for again
         self.calibrated = False       # the window scale was measured on the map
         self.swap = None              # an unfinished gear swap (see finish_swap)
@@ -339,6 +348,49 @@ class FortressFight(ZoneExplore):
     # dialogs that can sit on top of 我的舰队 without dimming its tabs; the slot must not be
     # re-tapped into them
     FLEET_DIALOGS = ("ZBuyPrompt", "ZRepairPrompt", "ZContinueHint", "ZCancel")
+
+    @property
+    def holder(self):
+        return self._holder
+
+    @holder.setter
+    def holder(self, value):
+        if value is not None and value != self._holder:
+            try:
+                tmp = GEAR_FILE + ".tmp"
+                with open(tmp, "w") as fh:
+                    json.dump({"holder": value}, fh)
+                os.replace(tmp, GEAR_FILE)
+            except OSError as e:
+                log(f"Could not save the gear holder: {e}")
+        self._holder = value
+
+    @staticmethod
+    def last_holder():
+        try:
+            with open(GEAR_FILE) as fh:
+                h = json.load(fh).get("holder")
+            return h if isinstance(h, int) and 1 <= h <= SHIP_LAYOUT["slots"] else None
+        except (OSError, ValueError, AttributeError):
+            return None
+
+    def recover_loose_gear(self, ships):
+        """No fleet matches the standard loadout although the page was read: the gear may lie
+        loose (a swap cut off by a kill or a crash). Only with a recorded last holder (GEAR_FILE)
+        that is in port, and only when a second look agrees (a single miss may be a passing
+        visual), 一键配队 on it takes the loose items back (on the real holder it changes
+        nothing); then the lookup runs again. Once a run, counted when it ran."""
+        last = self.last_holder()
+        if last is None or not ships.get(last, {}).get("idle"):
+            return None
+        again = self.find_gear_holder()
+        if again is not None or self.lookup_unreadable:
+            return again
+        self.regear_tried = True
+        log(f"No fleet holds the best gear twice; it may lie loose (a swap cut off). 一键配队 on fleet {last} "
+            "(the last holder), then a new look")
+        self.auto_equip(last)
+        return self.find_gear_holder()
 
     def edit_page_open(self, gs=None):
         """Which edit sub-page is on top, or None. One capture for all the templates."""
@@ -1621,6 +1673,8 @@ class FortressFight(ZoneExplore):
         page_ok = True
         launched = 0
         for fleet in fleets:
+            if self.stop_requested:             # (the fleets sent so far are out; the page is left below)
+                break
             rank = self.order[fleet]
             if time.time() < self.no_target_until.get(rank, 0):
                 continue
@@ -1714,7 +1768,8 @@ class FortressFight(ZoneExplore):
             ships = self.scan_ships()
             if ships.get(index, {}).get("idle"):
                 return True
-            time.sleep(POLL)
+            if not self.nap(POLL):
+                return False            # (a stop: the fleet is out, nothing is half done)
         return False
 
     def wait_for_dice_run(self):
@@ -1744,7 +1799,8 @@ class FortressFight(ZoneExplore):
                     idle_since = None
             else:
                 log("Unknown page, waiting")
-            time.sleep(MONITOR_POLL)
+            if not self.nap(MONITOR_POLL):
+                return False                    # (a stop: nothing is half done on the dice board)
 
 
     def on_known_page(self):
@@ -1798,12 +1854,54 @@ class FortressFight(ZoneExplore):
         return self.scan_ships()
 
     def pause(self, msg):
-        """Log `msg` and wait POLL seconds before the next pass; False in a dry run (one pass)."""
+        """Log `msg` and wait POLL seconds before the next pass; False in a dry run (one pass)
+        or once a stop is requested (the caller ends the run)."""
         log(msg)
-        if self.dry_run:
-            return False
-        time.sleep(POLL)
-        return True
+        return not self.dry_run and self.nap(POLL)
+
+    def nap(self, seconds):
+        """Sleep, waking every second for a stop request; False when one came. (A monotonic
+        clock: the phone's time sync may step the wall clock.)"""
+        end = time.monotonic() + seconds
+        while not self.stop_requested:
+            if time.monotonic() >= end:
+                return True
+            time.sleep(1)
+        return False
+
+    def settle_before_stop(self):
+        """Swap mode, ending on a stop: stripped fleets wait in deferred_equip for their 一键配队
+        until the gear has an owner, and the next run does not know them. Those that are in get
+        it now; those still out are named in the log (一键配队 them by hand)."""
+        left = self.deferred_equip - {self.holder}
+        if left and self.holder is not None and self.swap is None:
+            ships = self.scan_ships()
+            ready = {i for i in left if ships.get(i, {}).get("idle")}
+            if ready:
+                log(f"Before stopping: 一键配队 on the stripped fleets {sorted(ready)}")
+                self.deferred_equip -= ready
+                self.re_equip(ready)            # (a failed one is put back in deferred_equip)
+                self.close_fleet_page()
+            left = self.deferred_equip - {self.holder}
+        if left:
+            log(f"Stopping with fleets {sorted(left)} still without their 一键配队 "
+                "(out at sea, or it failed): 一键配队 them by hand")
+
+    def on_term(self, signum, frame):
+        """SIGTERM (the supervisor's 停止 / 更新, cp.sh restart): a kill in the middle of a gear
+        swap would leave the gear loose (no fleet holds it; the next run cannot find it). The
+        run ends at its next stop point instead: between passes, before a swap or an attack
+        starts, after the swap in hand is finished or abandoned (the gear put back)."""
+        first = not self.stop_requested
+        self.stop_requested = True
+        if first:
+            log("Stop requested: ending after the step in hand")
+
+    def stop_point(self):
+        """True when a stop was requested; the caller returns (nothing is half done here)."""
+        if self.stop_requested:
+            log("Stopping now: nothing is half done")
+        return self.stop_requested
 
     def abandon_swap(self):
         """A swap that could not be finished in SWAP_FINISH_TRIES passes: the gear must not
@@ -1812,7 +1910,8 @@ class FortressFight(ZoneExplore):
         until the owner is known (一键配队 during their repair would take loose gear). The new
         holder then gets one check swap (holder == target: 一键配队, loadout) before it attacks."""
         sw, self.swap = self.swap, None
-        log(f"Giving up on the gear swap to fleet {sw['target']} after {SWAP_FINISH_TRIES} passes")
+        log(f"Giving up on the gear swap to fleet {sw['target']} "
+            + ("(a stop)" if self.stop_requested else f"after {SWAP_FINISH_TRIES} passes"))
         self.deferred_repair |= sw["to_repair"]
         if sw["holder"] == sw["target"]:        # a check swap failed: this holder only attacks after a
             self.no_direct_attack.add(sw["target"])     # real swap
@@ -1839,10 +1938,24 @@ class FortressFight(ZoneExplore):
         """The fight loop; an unexpected error in a pass is logged (with a debug shot), the
         dialogs are closed and the loop starts again with its state kept."""
         import traceback
+        signal.signal(signal.SIGTERM, self.on_term)
         errors = []                             # times of recent errors
         while True:
             try:
-                return self._run_ordered(monitor) if self.order else self._run(monitor)
+                # a stop that came while a pass was recovered (below): no new pass, which would
+                # start by navigating, unless a gear swap is in hand (the pass finishes or undoes it)
+                if self.stop_requested and (self.swap is None or self.dry_run):
+                    self.stop_point()
+                elif self.order:
+                    return self._run_ordered(monitor)
+                else:
+                    self._run(monitor)
+                if self.stop_requested:
+                    try:
+                        self.settle_before_stop()
+                    except Exception:
+                        log("Settling the stripped fleets before the stop failed:\n" + traceback.format_exc())
+                return
             except AdbLost as e:
                 # the device dropped out and is back: not a bug, nothing is counted
                 log(f"adb: a tap or drag {e}; the pass starts again")
@@ -1869,7 +1982,7 @@ class FortressFight(ZoneExplore):
                 except Exception:
                     pass
                 monitor = False                 # (already on the map side; _run re-enters the map)
-                time.sleep(POLL)
+                self.nap(POLL)
 
     def start(self, monitor):
         if monitor:
@@ -1893,6 +2006,8 @@ class FortressFight(ZoneExplore):
         to the fortress page, biggest first, while the others are still out."""
         self.start(monitor)
         while True:
+            if self.stop_point():
+                return
             if not self.map_ready():
                 if not self.pause("Not on the zone map and no known page to leave; waiting"):
                     return
@@ -1926,6 +2041,8 @@ class FortressFight(ZoneExplore):
                 if not self.pause("No fleet of the order is idle at full energy with something to attack; waiting"):
                     return
                 continue
+            if self.stop_point():               # (a stop during the repairs: no fortress visit)
+                return
             log(f"Sending fleets {', '.join(map(str, ready))} in one fortress visit")
             launched = self.attack_fleets(ready)
             if self.dry_run:
@@ -1936,8 +2053,17 @@ class FortressFight(ZoneExplore):
     def _run(self, monitor=False):
         self.start(monitor)
         while True:
+            if self.swap is None and self.stop_point():   # (a swap in hand is finished or abandoned below)
+                return
             if not self.map_ready():
-                if not self.pause("Not on the zone map and no known page to leave; waiting"):
+                if self.swap is not None and self.stop_requested and not self.dry_run:
+                    # a stop, but the gear is not back on a fleet yet: keep trying to reach the map,
+                    # where the swap block puts it back (the supervisor's grace bounds the wait)
+                    log("Not on the zone map with a gear swap in hand; trying again in 10 s")
+                    time.sleep(10)
+                    continue
+                if not self.pause("Not on the zone map and no known page to leave; waiting") \
+                        and (self.swap is None or self.dry_run):
                     return
                 continue
             ships = self.scan_ships()
@@ -1957,19 +2083,28 @@ class FortressFight(ZoneExplore):
                 if r:
                     self.swap_fails = 0
                     ships = self.scan_ships()
-                elif self.swap["tries"] >= SWAP_FINISH_TRIES:
-                    self.abandon_swap()
-                    if not self.pause("Swap abandoned; the next pass checks the gear's owner first"):
+                elif self.swap["tries"] >= SWAP_FINISH_TRIES or self.stop_requested:
+                    self.abandon_swap()         # (on a stop too: the gear goes back on a fleet first)
+                    # (a check swap the abandon left is finished or dropped first, even on a stop)
+                    if not self.pause("Swap abandoned; the next pass checks the gear's owner first") \
+                            and (self.swap is None or self.dry_run):
                         return
                     continue                    # (the check swap, or the holder lookup, comes first)
-                elif not self.pause(f"Gear swap to fleet {self.swap['target']} unfinished; resumed in {POLL} s"):
-                    return
                 else:
+                    # (a stop meanwhile does not end the run here: the next pass abandons the swap,
+                    # the gear put back first)
+                    if not self.pause(f"Gear swap to fleet {self.swap['target']} unfinished; resumed in {POLL} s") \
+                            and self.dry_run:
+                        return
                     continue
+            if self.stop_point():               # (no swap in hand from here on)
+                return
             if self.holder is None:
                 # every start looks for the gear afresh (it may have been moved by hand); inside
                 # the loop the holder is remembered and only verified when swapping
                 self.holder = self.find_gear_holder()
+                if self.holder is None and not self.lookup_unreadable and not self.regear_tried and not self.dry_run:
+                    self.holder = self.recover_loose_gear(ships)
                 self.close_fleet_page()
                 log(f"Gear holder: fleet {self.holder}; map page back: {self.on_map()}")
                 ships = self.scan_ships()           # the earlier scan may have seen the dimmed bar
@@ -2020,16 +2155,22 @@ class FortressFight(ZoneExplore):
                         return
                     continue
                 target = fresh[0]
+                if self.stop_point():
+                    return
                 r = self.swap_gear(self.holder, target, ships)
                 if not r:
                     if self.swap is None:       # failed before the swap started: the holder's page/tab
                         self.swap_fails += 1    # (a started swap is resumed by the swap block)
                     if self.swap_fails >= SWAP_FINISH_TRIES:
                         self.holder, self.swap_fails = None, 0
-                    if not self.pause("Gear swap failed"):
+                    # a swap that started (the holder may be stripped) stays in hand: the swap block
+                    # finishes it, or on a stop abandons it with the gear put back, before the run ends
+                    if not self.pause("Gear swap failed") and (self.swap is None or self.dry_run):
                         return
                     continue
                 self.swap_fails = 0
+            if self.stop_point():
+                return
             if not self.attack_with(target):
                 if not self.pause("Attack not launched; next pass"):
                     return
@@ -2078,4 +2219,7 @@ if __name__ == "__main__":
         from click import use_device
         use_device(AdbDevice(args.adb))     # before FortressFight: it keeps pyautogui.screenshot
     time.sleep(args.delay)
-    FortressFight(dry_run=args.dry, fortress=args.fortress or "xz", order=order).run(monitor=args.monitor)
+    fight = FortressFight(dry_run=args.dry, fortress=args.fortress or "xz", order=order)
+    fight.run(monitor=args.monitor)
+    if fight.stop_requested:
+        sys.exit(143)                       # (ended by a SIGTERM, as a kill would: callers tell it from a finish)

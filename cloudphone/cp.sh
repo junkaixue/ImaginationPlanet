@@ -11,7 +11,7 @@
 #   app                 build (if the sources changed) and install the floating panel app
 #   up                  start the supervisor and the panel
 #   restart             restart the supervisor (after its files changed); the script resumes
-#   scripts | status | log [N] | start ID | stop | update      talk to the supervisor
+#   scripts | status | log [N] | start ID | stop | update [--force]   talk to the supervisor
 #   try ARGS...         a test run: stop the supervisor's script, run `python3 -u ARGS --adb
 #                       127.0.0.1:5555 --delay 0` in the code folder (timeout $TRY_TIMEOUT s,
 #                       default 600), then start the stopped script again
@@ -26,7 +26,10 @@ REPO="$(dirname "$HERE")"
 D=/data/local/tmp/ip
 REPO_URL=https://github.com/junkaixue/ImaginationPlanet
 SCRATCH="${SCRATCH:-${TMPDIR:-/tmp}}"
-SPARSE='"/*.py" "/pics/mac/zone/*" "!/pics/mac/zone/pages/" "!/pics/mac/zone/debug/" "/cloudphone/phone/"'
+# what the phone checks out (keep in step with SPARSE in phone/supervisor.py)
+SPARSE='"/*.py" "/pics/mac/zone/*" "!/pics/mac/zone/pages/" "!/pics/mac/zone/debug/" "/cloudphone/phone/" "/cloudphone/app/panel.apk"'
+# what the scripts keep next to them (gitignored): a fresh clone puts them back
+STATE_FILES="fortress_busy.json fortress_gear.json"
 
 usage() { sed -n '2,/^# SERIAL/p' "$0" | sed 's/^# \{0,1\}//'; }
 SERIAL="${CP_SERIAL:-}"
@@ -46,14 +49,53 @@ inside() {   # CMD: run in Alpine; single quotes in CMD survive the two shells
   local q="${1//\'/$sq}"
   psh "cd $D && ./run.sh /bin/sh -c '$q'"
 }
-api() {   # METHOD PATH: the supervisor, through the phone's own curl
-  psh "curl -sS -m 600 -X $1 'http://127.0.0.1:8765$2'"; echo
+api() {   # METHOD PATH: the supervisor, through the phone's own curl; curl's exit status. (An
+  # update may fetch the commit and then the changed files for up to 600 s each, check out and
+  # set the file list for 120 s each, wait 240 s for the script to stop and ~75 s for the game.)
+  local rc=0
+  psh "curl -sS -m 1800 -X $1 'http://127.0.0.1:8765$2'" || rc=$?
+  echo
+  return $rc
 }
 push() { local out; out="$(adb -s "$SERIAL" push "$1" "$2" 2>&1)" || { echo "adb push $1 failed: $out"; exit 1; }; }
+sup_sum() { psh "md5sum $D/supervisor.py 2>/dev/null | cut -d' ' -f1"; }
+restart_if_changed() {   # BEFORE: the supervisor.py checksum before new phone files came in
+  [ "$(sup_sum)" != "$1" ] || return 0
+  local st; st="$(psh "curl -s -m 10 http://127.0.0.1:8765/status" || true)"
+  [ -n "$st" ] || return 0                                  # (none running: the next up starts the new one)
+  case "$st" in
+    *'"stopping":'*)   # (a supervisor with graceful stops: the script ends at a safe point and resumes)
+      echo "supervisor.py changed: restarting the supervisor"
+      "$0" -s "$SERIAL" restart || [ $? -eq 3 ] ;;       # (3: the phone starts the next one itself)
+    *)   # an older one kills its script at once (maybe mid gear swap): leave the moment to the user
+      echo "supervisor.py changed, but the running supervisor is an older one that kills its script"
+      echo "at once: run 'cloudphone/cp.sh restart' while 'cloudphone/cp.sh log' shows the script waiting" ;;
+  esac
+}
+mark_local_code() {
+  # the phone now has code from this working tree: its time (the commit's when nothing that is
+  # pushed differs from it, else now). 更新 keeps it while GitHub's main is older (not pushed yet).
+  local t h
+  local pushed=(':(glob)*.py' pics/mac/zone ':(exclude)pics/mac/zone/pages' ':(exclude)pics/mac/zone/debug'
+                cloudphone/phone)
+  h="$(git -C "$REPO" log -1 --format=%h)"
+  # (tracked files among those pushed. An untracked one goes to the phone as well, and the label
+  # says so, but an update does not replace it: it does not make the code newer than the commit.)
+  if git -C "$REPO" diff --quiet HEAD -- "${pushed[@]}"; then
+    t="$(git -C "$REPO" log -1 --format=%ct)"
+    [ -z "$(git -C "$REPO" ls-files --others --exclude-standard -- "${pushed[@]}")" ] || h="$h+untracked"
+  else
+    t="$(date +%s)"; h="$h+local"
+  fi
+  psh "echo $t $h > $D/local_code"
+}
 push_phone_files() {
+  local before; before="$(sup_sum)"
   psh "mkdir -p $D"
   for f in "$HERE"/phone/*; do push "$f" "$D/"; done
   psh "chmod 755 $D/*.sh"
+  mark_local_code
+  restart_if_changed "$before"
 }
 jpeg() {   # OUT CMD: write the JPEG a phone-side command prints, fail when there is none
   adb -s "$SERIAL" exec-out "cd $D && ./run.sh $2 2>/dev/null" > "$1"
@@ -77,17 +119,24 @@ code_local() {
 }
 
 code_github() {
-  # a shallow, sparse checkout: the root .py files, the zone templates and the phone files.
-  # --no-checkout first: a plain sparse clone fetches every root file (a 94 MB installer) first.
+  # a shallow, sparse checkout: the root .py files, the zone templates, the phone files and the
+  # panel app. --no-checkout first: a plain sparse clone fetches every root file (a 94 MB
+  # installer) first.
+  local before; before="$(sup_sum)"
   inside "set -e
     if [ -d app/.git ]; then
       cd app && git fetch -q --depth 1 origin main && git reset -q --hard FETCH_HEAD
+      git sparse-checkout set --no-cone $SPARSE
     else
-      rm -rf app && git clone -q --depth 1 --filter=blob:none --no-checkout $REPO_URL app
-      cd app && git sparse-checkout set --no-cone $SPARSE && git checkout -q main
+      # (into app.new: a clone cut off leaves app/, the scripts' state files in it, as it was)
+      rm -rf app.new && git clone -q --depth 1 --filter=blob:none --no-checkout $REPO_URL app.new
+      ( cd app.new && git sparse-checkout set --no-cone $SPARSE && git checkout -q main )
+      for f in $STATE_FILES; do [ ! -f app/\$f ] || mv app/\$f app.new/; done
+      rm -rf app && mv app.new app && cd app
     fi
     git log -1 --format='code %h %s'"
-  psh "cp $D/app/cloudphone/phone/* $D/ && chmod 755 $D/*.sh"
+  psh "cp $D/app/cloudphone/phone/* $D/ && chmod 755 $D/*.sh && rm -f $D/local_code"   # (GitHub's code now)
+  restart_if_changed "$before"
 }
 
 case "$CMD" in
@@ -110,28 +159,54 @@ case "$CMD" in
         *) echo "$out"; exit 1 ;;
       esac
     fi
-    psh "appops set com.ip.panel SYSTEM_ALERT_WINDOW allow; pm grant com.ip.panel android.permission.POST_NOTIFICATIONS 2>/dev/null; true" ;;
+    psh "appops set com.ip.panel SYSTEM_ALERT_WINDOW allow; pm grant com.ip.panel android.permission.POST_NOTIFICATIONS 2>/dev/null; true"
+    # (what 更新 compares the checkout's panel.apk with)
+    psh "echo $(shasum "$HERE/app/panel.apk" | cut -d' ' -f1) > $D/panel.apk.sha"
+    echo "panel app installed (start it with: cloudphone/cp.sh up)" ;;
   up)
     connect; psh "sh $D/start.sh"; psh "am start -n com.ip.panel/.MainActivity >/dev/null" ;;
   restart)
     connect
-    psh "p=\$(cat $D/supervisor.pid 2>/dev/null); [ -n \"\$p\" ] && kill \$p 2>/dev/null
-      for i in \$(seq 1 40); do [ -n \"\$p\" ] && [ -d /proc/\$p ] || break; sleep 1; done
-      [ -n \"\$p\" ] && [ -d /proc/\$p ] && { echo 'old supervisor does not stop'; exit 1; }
-      rm -f $D/supervisor.pid"
-    psh "sh $D/start.sh" ;;
+    # (phone/restart.sh: SIGTERM, the wait for the script's safe point, start.sh. Exit 3: the
+    # old supervisor is still ending after 10 min, the phone starts the next one itself.)
+    # (a phone set up before this file existed gets it; one that has it keeps its own)
+    psh "[ -f $D/restart.sh ]" || push "$HERE/phone/restart.sh" "$D/restart.sh"
+    psh "sh $D/restart.sh" ;;
   scripts) connect; api GET /scripts ;;
   status) connect; api GET /status ;;
   log) connect; api GET "/log?n=${1:-60}" ;;
   start) connect; api POST "/start?id=$1" ;;
   stop) connect; api POST /stop ;;
-  update) connect; api POST /update ;;
+  update)   # --force: also when the phone has newer code from the Mac than GitHub (it goes back)
+    connect; if [ "${1:-}" = "--force" ]; then api POST "/update?force=1"; else api POST /update; fi ;;
   try)
     connect
-    prev="$(psh "curl -sS -m 10 http://127.0.0.1:8765/status" | sed -n 's/.*"running": "\([^"]*\)".*/\1/p')"
-    if [ -n "$prev" ]; then echo "stopping $prev for the test"; api POST /stop >/dev/null; fi
-    rc=0; inside "cd app && timeout ${TRY_TIMEOUT:-600} python3 -u $* --adb 127.0.0.1:5555 --delay 0" || rc=$?
-    if [ -n "$prev" ]; then echo "starting $prev again"; api POST "/start?id=$prev"; fi
+    st="$(psh "curl -s -m 10 http://127.0.0.1:8765/status" || true)"
+    if [ -z "$st" ] && psh "pgrep -f 'supervisor[.]py' >/dev/null"; then
+      echo "the supervisor runs but does not answer: no test beside its script (try again, or cp.sh restart)"
+      exit 1
+    fi                                                    # (empty and no supervisor: nothing to stop)
+    # what the supervisor means to run (state.json): also a script being restarted, or waiting
+    # for its automatic restart; nothing when it was stopped by hand
+    case "$st" in
+      *'"wanted":'*) prev="$(echo "$st" | sed -n 's/.*"wanted": "\([^"]*\)".*/\1/p')" ;;
+      *) prev="$(echo "$st" | sed -n 's/.*"running": "\([^"]*\)".*/\1/p')" ;;   # (an older supervisor)
+    esac
+    if [ -n "$prev" ]; then echo "stopping $prev for the test"; fi
+    if [ -n "$st" ]; then
+      out="$(api POST /stop || true)"                     # (it also waits for a stop under way)
+      case "$out" in
+        *'"result": "ok"'*) ;;
+        *) echo "the supervisor did not stop its script (${out:-no answer}): no test beside it"; exit 1 ;;
+      esac
+    fi
+    # SIGTERM at the timeout ends the script at its next stop point (exit 143); -k: killed 300 s later
+    rc=0; inside "cd app && timeout -k 300 ${TRY_TIMEOUT:-600} python3 -u $* --adb 127.0.0.1:5555 --delay 0" || rc=$?
+    case $rc in 124|143) echo "(the test run was stopped at ${TRY_TIMEOUT:-600} s)" ;; esac
+    if [ -n "$prev" ]; then
+      echo "starting $prev again"
+      api POST "/start?id=$prev" || echo "could not start it: cloudphone/cp.sh start $prev"
+    fi
     exit $rc ;;
   peek)
     connect; jpeg "${2:-$SCRATCH/peek.jpg}" "/usr/bin/python3 /ip/peek.py ${1:-0.5}" ;;

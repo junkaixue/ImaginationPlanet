@@ -1,14 +1,16 @@
 """Runs the game scripts inside the cloud phone and is driven by the floating panel app (and by
 cloudphone/cp.sh on the Mac) over http://127.0.0.1:8765 (this phone only).
 
-    GET  /scripts         [{"id", "name"}] from scripts.json
+    GET  /scripts         [{"id", "name", "group"}] from scripts.json (the panel groups them)
     GET  /status          what runs, since when, the last log lines, the code version
     GET  /log?n=200       the running (or last) script's log tail, text
     POST /start?id=ID     stop what runs, bring the game to the front, start ID
     POST /stop            stop what runs
     POST /update          fetch the newest code from GitHub (a git checkout in /ip/app), copy its
-                          cloudphone/phone files to /ip, start the running script again on it
-                          (and the supervisor itself when supervisor.py changed)
+                          cloudphone/phone files to /ip, start the running script again on it,
+                          the supervisor itself when its code changed, and install a changed
+                          panel app. Refused when the phone has newer code from the Mac
+                          (cp.sh code, not pushed yet), unless ?force=1
 
 One script runs at a time (one game). A script that fails (ends by itself with an error exit,
 e.g. fortress_fight's "errors keep coming") is started again after RESTART_WAIT s, at most
@@ -18,12 +20,14 @@ state.json: a supervisor started again (cp.sh restart, or after a reboot by the 
 starts it again.
 """
 import filecmp
+import hashlib
 import json
 import os
 import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,6 +36,14 @@ from urllib.parse import parse_qs, urlparse
 HOME = "/ip"
 APP = f"{HOME}/app"
 PHONE_FILES = f"{APP}/cloudphone/phone"     # the repo's copy of the files in HOME
+PANEL_APK = f"{APP}/cloudphone/app/panel.apk"
+PANEL_SHA = f"{HOME}/panel.apk.sha"       # the sha1 of the panel app installed last (cp.sh app / update)
+LOCAL_CODE = f"{HOME}/local_code"         # "<epoch> <commit>": code or phone files came from the Mac (cp.sh
+                                          # code / setup) and are that new; no update to an older commit
+# what of the repo the phone checks out (cp.sh code_github has the same list): the root scripts,
+# the zone templates, the phone files and the panel app
+SPARSE = ["/*.py", "/pics/mac/zone/*", "!/pics/mac/zone/pages/", "!/pics/mac/zone/debug/",
+          "/cloudphone/phone/", "/cloudphone/app/panel.apk"]
 LOGS = f"{HOME}/logs"
 STATE = f"{HOME}/state.json"
 SCRIPTS = f"{HOME}/scripts.json"
@@ -43,12 +55,45 @@ GAME = "com.tfgame.planet"
 EXTRA_ARGS = ["--adb", DEVICE, "--delay", "0"]
 RESTART_WAIT = 60
 MAX_RESTARTS = 5                    # per hour
-STOP_GRACE = 8                      # seconds between SIGTERM and SIGKILL
+STOP_GRACE = 240                    # seconds a script gets after SIGTERM to end at a safe point (a gear
+                                    # swap finished or undone, the attack in hand sent), then SIGKILL
 ADB_TIMEOUT = 30
 
 
 def log(msg):
     print(time.strftime("[%Y-%m-%d %H:%M:%S] ") + msg, flush=True)
+
+
+_logged = set()
+
+
+def kill_group(pgid):
+    """SIGKILL to a script's process group (it leads its own); no error when it is empty."""
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def log_once(msg):
+    if msg not in _logged:
+        _logged.add(msg)
+        log(msg)
+
+
+def sha1(path):
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha1(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+LOADED = sha1(os.path.abspath(__file__))    # the code this process runs (an update re-execs when it differs)
+# loads a supervisor.py as a module, main() not called (nothing bound or started): exit 0 when it loads
+LOAD_CHECK = ("import importlib.util as u, sys\n"
+              "s = u.spec_from_file_location('supervisor_check', sys.argv[1])\n"
+              "s.loader.exec_module(u.module_from_spec(s))")
 
 
 def adb(*args, timeout=ADB_TIMEOUT):
@@ -88,6 +133,14 @@ class Supervisor:
         self.since = None
         self.gen = 0                # counts starts: a restart only for the run that failed
         self.stopping = False
+        self.stop_count = 0         # stops asked for by hand: a start waiting for the game gives way
+        self.restarting = False     # the supervisor itself is going away (update / cp.sh restart)
+        self.exit_instead = False   # a SIGTERM came while an update re-exec waited: exit, do not exec
+        self.term_lock = threading.RLock()  # restarting and exit_instead change together (SIGTERM
+                                            # handler and re-exec thread: no SIGTERM goes unseen)
+        self.panel_note = None      # the outcome of the last panel app install (status)
+        self.updating = None        # what an update under way is doing (shown in the panel), else None
+        self.update_lock = threading.Lock()     # one update at a time
         self.restarts = []          # times of automatic restarts this hour
         self.logfile = None
         self.last_exit = None
@@ -95,8 +148,25 @@ class Supervisor:
     # ------------------------------------------------------------------ scripts
     @staticmethod
     def scripts():
-        with open(SCRIPTS, encoding="utf-8") as f:
-            return json.load(f)
+        """scripts.json: a list of {"group", "id", "name", "args", "restart"?}; the panel shows
+        one group (kind of feature) at a time. Kept a flat list so that older supervisors and
+        panels read it too. Entries without an id or args, and a second use of an id (ids are
+        global: state.json, logs, /start), are skipped with a log line."""
+        with open(SCRIPTS, encoding="utf-8-sig") as f:
+            data = json.load(f)
+        if isinstance(data, dict):          # (the grouped form of 847be53)
+            data = [dict(s, group=g.get("name", "")) for g in data.get("groups") or []
+                    if isinstance(g, dict) for s in g.get("items") or [] if isinstance(s, dict)]
+        out, seen = [], set()
+        for s in data if isinstance(data, list) else []:
+            if not isinstance(s, dict) or not s.get("id") or not isinstance(s.get("args"), list):
+                log_once(f"scripts.json: skipped {s!r} (needs an id and args)")
+            elif s["id"] in seen:
+                log_once(f"scripts.json: id {s['id']} used twice; the second one is skipped")
+            else:
+                seen.add(s["id"])
+                out.append(s)
+        return out
 
     def find(self, sid):
         return next((s for s in self.scripts() if s["id"] == sid), None)
@@ -143,19 +213,25 @@ class Supervisor:
 
     # ------------------------------------------------------------------ run / stop
     def start(self, sid, remember=True, manual=True):
+        if self.restarting:
+            return "服务正在重启，稍后再试"
         script = self.find(sid)
         if script is None:
             return f"no script {sid}"
+        stops = self.stop_count
         with self.start_lock:
+            if not manual and self.saved_running() != sid:
+                return "stopped meanwhile"  # (an automatic start no longer wanted: nothing is stopped)
             self.stop(remember=False)
             self.ensure_game()              # (outside self.lock: status and stop stay quick)
             with self.lock:
-                if not manual and self.stopping and self.saved_running() != sid:
+                if self.restarting or self.stop_count != stops or (not manual and self.saved_running() != sid):
                     return "stopped meanwhile"
                 os.makedirs(LOGS, exist_ok=True)
                 self.logfile = f"{LOGS}/{sid}.log"
                 with open(self.logfile, "a", encoding="utf-8") as out:
-                    out.write(time.strftime(f"\n===== %Y-%m-%d %H:%M:%S start {script['name']} ({self.code_version()})\n"))
+                    out.write(time.strftime(f"\n===== %Y-%m-%d %H:%M:%S start {script.get('name', sid)} "
+                                            f"({self.code_version()})\n"))
                     out.flush()
                     self.proc = subprocess.Popen(["python3", "-u"] + script["args"] + EXTRA_ARGS, cwd=APP,
                                                  stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
@@ -172,37 +248,56 @@ class Supervisor:
         return "ok"
 
     def stop(self, remember=True):
+        """SIGTERM to the script itself (not its adb children, whose calls must not break
+        mid-step): it ends at its next safe point, a gear swap finished or undone first. SIGKILL
+        to the whole group after STOP_GRACE, and once the script has ended to what is left of the
+        group (a script without a graceful stop dies at once, its adb call under way does not).
+        The wait holds no lock (status stays live)."""
         with self.lock:
             proc, self.stopping = self.proc, True
+            sid = self.script["id"] if self.script else None
+            if remember:
+                self.stop_count += 1
+                self.save_state(None)
+        try:
             if proc is not None and proc.poll() is None:
-                os.killpg(proc.pid, signal.SIGTERM)
+                log(f"stopping {sid}: it ends after the step in hand (at most {STOP_GRACE} s)")
+                proc.send_signal(signal.SIGTERM)    # (no error when it has just ended by itself)
                 try:
                     proc.wait(STOP_GRACE)
                 except subprocess.TimeoutExpired:
-                    os.killpg(proc.pid, signal.SIGKILL)
+                    log(f"{sid} did not end in {STOP_GRACE} s: killed")
+                    kill_group(proc.pid)
                     proc.wait()
-                log(f"stopped {self.script['id']}")
-            self.proc = None
-            if os.path.exists(SCRIPT_PID):
-                os.remove(SCRIPT_PID)
-            if remember:
-                self.save_state(None)
+                kill_group(proc.pid)            # (usually nobody is left)
+                log(f"stopped {sid}")
+        finally:
+            with self.lock:
+                if self.proc is proc:
+                    self.proc = None
+                    if os.path.exists(SCRIPT_PID):
+                        os.remove(SCRIPT_PID)
         return "ok"
 
     @staticmethod
     def stop_leftover():
         """A script started by an earlier supervisor (killed without stopping it) still runs:
         stop it, or two scripts would drive the game. The pid is checked to be a script still
-        (after a reboot it may belong to anything)."""
+        (after a reboot it may belong to anything); it gets the same graceful stop."""
         try:
             with open(SCRIPT_PID) as f:
-                pgid = int(f.read().strip())
-            if "python3" in cmdline(pgid):
-                log(f"stopping a script left running (pid {pgid})")
-                os.killpg(pgid, signal.SIGTERM)
-                time.sleep(STOP_GRACE)
-                if "python3" in cmdline(pgid):
-                    os.killpg(pgid, signal.SIGKILL)
+                pid = int(f.read().strip())
+            # (after a reboot the pid may be anyone's, this supervisor's own included: a script
+            # leads its own process group and is not a supervisor)
+            line = cmdline(pid)
+            if pid != os.getpid() and os.getpgid(pid) == pid and "python3" in line and "supervisor.py" not in line:
+                log(f"stopping a script left running (pid {pid})")
+                os.kill(pid, signal.SIGTERM)
+                for _ in range(STOP_GRACE):
+                    if "python3" not in cmdline(pid):
+                        break
+                    time.sleep(1)
+                kill_group(pid)                 # (after STOP_GRACE, or what it left behind)
         except (OSError, ValueError):
             pass
         if os.path.exists(SCRIPT_PID):
@@ -248,27 +343,164 @@ class Supervisor:
         log(f"giving up starting {sid}")
 
     # ------------------------------------------------------------------ update
-    def update(self):
+    def update(self, force=False):
+        """The code of GitHub's main. One at a time; `updating` tells the panel what it is at (the
+        fetch may take minutes). Code that came from the Mac and is newer than GitHub's commit
+        (not pushed yet) is kept unless `force`: the update would put older code back."""
         if not os.path.isdir(f"{APP}/.git"):
             return "the code is a copy from the Mac (cp.sh code); run `cp.sh code --github` once"
-        r = subprocess.run(["sh", "-c", f"cd {APP} && git fetch -q --depth 1 origin main && git reset -q --hard FETCH_HEAD"],
-                           capture_output=True, text=True, timeout=600)
-        if r.returncode != 0:
-            out = (r.stdout + r.stderr).strip()
+        if not self.update_lock.acquire(blocking=False):
+            return "已经在更新了：" + (self.updating or "")
+        try:
+            if self.restarting:             # (the re-exec of the last update waits for the script: a
+                return "服务正在重启，稍后再点更新"     # new supervisor.py now would start unchecked)
+            return self.update_locked(force)
+        finally:
+            self.updating = None
+            self.update_lock.release()
+
+    @staticmethod
+    def local_code_time():
+        try:
+            with open(LOCAL_CODE) as f:
+                return int(f.read().split()[0])
+        except (OSError, ValueError, IndexError):
+            return None
+
+    # (what curl and git say when the network, not the request, is the trouble)
+    NETWORK_ERRORS = ("too slow", "timed out", "timeout", "could not resolve", "failed to connect",
+                      "couldn't connect", "connection reset", "connection refused", "recv failure",
+                      "send failure", "empty reply", "early eof", "rpc failed", "hung up", "ssl", "tls")
+
+    def git_step(self, args, timeout, env=None):
+        """One git command of an update in the checkout: (ok, output). A download that stalls
+        ends after a minute (lowSpeed) instead of holding the update. One that outlasts
+        `timeout` is killed; the index lock it then leaves is removed (updates are the only
+        writers of this checkout, one at a time), not for a scratch index (`env`)."""
+        git = ["git", "-C", APP, "-c", "http.lowSpeedLimit=1000", "-c", "http.lowSpeedTime=60"]
+        try:
+            r = subprocess.run(git + args, capture_output=True, text=True, timeout=timeout, env=env)
+            return r.returncode == 0, (r.stdout + r.stderr).strip() or f"git {args[0]}: exit {r.returncode}"
+        except subprocess.TimeoutExpired:
+            lock = f"{APP}/.git/index.lock"
+            if env is None and os.path.exists(lock):
+                os.remove(lock)
+            return False, f"git {args[0]}: {timeout // 60} 分钟没做完"
+
+    def download(self, what, args, env=None):
+        """A git step that downloads, tried once more when the network failed it (GitHub is slow
+        from the phone at times): (ok, output)."""
+        for attempt in (1, 2):
+            self.updating = what + ("，第 2 次尝试" if attempt == 2 else "")
+            ok, out = self.git_step(args, 300, env)
+            if ok:
+                return True, out
+            log(f"update: git {args[0]} try {attempt} failed: " + out.replace("\n", " | "))
+            if not self.network_trouble(out):
+                break                       # (a second try would fail the same way)
+        return False, out
+
+    def network_trouble(self, out):
+        """The output of a failed download step tells of the network (or it ran out of time)."""
+        return "分钟没做完" in out or any(k in out.lower() for k in self.NETWORK_ERRORS)
+
+    def download_failed(self, step, out):
+        if self.network_trouble(out):
+            return "更新失败（手机连 GitHub 不稳，稍后再点）: " + out
+        return f"更新失败（{step}）: " + out
+
+    def update_locked(self, force):
+        lock = f"{APP}/.git/index.lock"     # (left by a git that was killed, with an earlier supervisor)
+        if os.path.exists(lock) and time.time() - os.path.getmtime(lock) > 600:
+            log("update: removing a stale index.lock")
+            os.remove(lock)
+        ok, out = self.download("正在从 GitHub 拉代码（可能要几分钟）", ["fetch", "-q", "--depth", "1", "origin", "main"])
+        if not ok:
+            return self.download_failed("拉代码", out)
+        r = subprocess.run(["git", "-C", APP, "log", "-1", "--format=%ct %h %cd", "--date=format:%m-%d %H:%M",
+                            "FETCH_HEAD"], capture_output=True, text=True)
+        local = self.local_code_time()
+        try:
+            fetched_time, fetched = int(r.stdout.split()[0]), r.stdout.split(None, 1)[1].strip()
+        except (ValueError, IndexError):
+            fetched_time, fetched = None, "?"
+        if not force and local is not None and fetched_time is not None and fetched_time < local:
+            log(f"update: GitHub's main ({fetched}) is older than the code from the Mac on this phone: kept")
+            return (f"没有更新：GitHub 上的代码（{fetched}）比手机上从电脑推来的代码旧，还没推送？"
+                    "推送后再点更新")
+        # The checkout holds no file contents it does not need (blob:none): those of the changed
+        # files come down now, by a checkout into a scratch index and folder. Cut off or failed,
+        # nothing of the real checkout is half done; the reset below then needs no network.
+        os.makedirs(f"{HOME}/tmp", exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=f"{HOME}/tmp", prefix="update.") as scratch:
+            os.mkdir(f"{scratch}/tree")
+            env = dict(os.environ, GIT_DIR=f"{APP}/.git", GIT_INDEX_FILE=f"{scratch}/index",
+                       GIT_WORK_TREE=f"{scratch}/tree")
+            ok, out = self.download("正在下载改动的文件", ["read-tree", "--reset", "-u", "FETCH_HEAD"], env)
+        if not ok:
+            return self.download_failed("下载文件", out)
+        self.updating = "正在换上新代码"
+        ok, out = self.git_step(["reset", "-q", "--hard", "FETCH_HEAD"], 120)
+        if not ok:
             log("update failed: " + out.replace("\n", " | "))
-            return "更新失败: " + out
+            return "更新失败（换代码）: " + out
+        ok, out = self.git_step(["sparse-checkout", "set", "--no-cone"] + SPARSE, 120)
+        if not ok:                          # (the code is updated; only the file list stays as it was)
+            log("update: sparse-checkout set failed: " + out.replace("\n", " | "))
         changed = self.copy_phone_files()
-        msg = f"updated to {self.code_version()}"
+        if os.path.exists(LOCAL_CODE):      # (code and phone files are GitHub's now)
+            os.remove(LOCAL_CODE)
+        panel = os.path.exists(PANEL_APK) and sha1(PANEL_APK) != self.read(PANEL_SHA)
+        own = sha1(f"{HOME}/supervisor.py") != LOADED   # (also after cp.sh code copied it)
+        msg = f"updated to {self.code_version()}" + (", installing the new panel app" if panel else "")
         log(msg + (f"; phone files changed: {', '.join(changed)}" if changed else ""))
-        if "supervisor.py" in changed:
-            threading.Thread(target=self.reexec, daemon=True).start()
+        if own:
+            with self.term_lock:                # (no start slips in before the exec)
+                if self.restarting:
+                    return msg + "; the supervisor is restarting already"
+                self.restarting = True
+            threading.Thread(target=self.reexec, args=(panel,), daemon=True).start()
             return msg + ", restarting the supervisor"
-        with self.lock:
-            running = self.proc is not None and self.script is not None
+        with self.lock:                         # (a script being stopped by hand stays stopped)
+            running = self.proc is not None and self.script is not None and not self.stopping
             sid = self.script["id"] if running else None
         if running:
-            self.start(sid)
-        return msg + (", restarted" if running else "")
+            result = self.start(sid)
+            msg += ", restarted" if result == "ok" else f"; {result}"
+        if panel:                               # (after the answer: the install restarts the panel)
+            threading.Thread(target=lambda: (time.sleep(2), self.install_panel()), daemon=True).start()
+        return msg
+
+    @staticmethod
+    def read(path):
+        try:
+            with open(path) as f:
+                return f.read().strip()
+        except OSError:
+            return None
+
+    def install_panel(self):
+        """Install the checkout's panel app through the phone's own adb (runtime permissions
+        granted: no dialog over the game), then start it without opening its panel. One signed
+        with another machine's key is installed afresh."""
+        try:
+            connect_adb()
+            try:
+                adb("install", "-r", "-g", PANEL_APK, timeout=300)
+            except RuntimeError as e:
+                if "UPDATE_INCOMPATIBLE" not in str(e):
+                    raise
+                adb("uninstall", "com.ip.panel")
+                adb("install", "-g", PANEL_APK, timeout=300)
+            with open(PANEL_SHA, "w") as f:
+                f.write(sha1(PANEL_APK))
+            adb("shell", "appops", "set", "com.ip.panel", "SYSTEM_ALERT_WINDOW", "allow")
+            adb("shell", "am", "start", "-n", "com.ip.panel/.MainActivity", "--ez", "quiet", "true")
+            self.panel_note = time.strftime("panel app installed %m-%d %H:%M")
+            log("panel app updated")
+        except Exception as e:
+            self.panel_note = f"panel app install failed: {e}"
+            log(f"panel app update failed: {e}")
 
     @staticmethod
     def copy_phone_files():
@@ -284,13 +516,50 @@ class Supervisor:
                 changed.append(name)
         return changed
 
-    def reexec(self):
+    def reexec(self, panel=False):
         """Start the new supervisor.py in this process (same pid); the running script stops and
-        the new one resumes it from state.json."""
+        the new one resumes it from state.json. A changed panel app is installed first. A new
+        file that does not load (a syntax error, a failing import, an error at its top level: it
+        would end the service) is not started, and when the exec fails this one goes on: either
+        way it takes starts again instead of answering 服务正在重启 for good."""
         time.sleep(1)                       # (the /update answer goes out first)
-        self.stop(remember=False)
-        log("supervisor.py changed: starting it again")
-        os.execv(sys.executable, [sys.executable, "-u", f"{HOME}/supervisor.py"])
+        new = f"{HOME}/supervisor.py"
+        try:
+            r = subprocess.run([sys.executable, "-c", LOAD_CHECK, new], capture_output=True, text=True,
+                               timeout=120)
+            ok, why = r.returncode == 0, (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+        except (OSError, subprocess.TimeoutExpired) as e:
+            ok, why = False, str(e)
+        if not ok:
+            log(f"the new supervisor.py does not load ({why}): this one goes on")
+        stopped = False
+        try:
+            if panel:
+                self.install_panel()
+            if ok:
+                self.stop(remember=False)
+                stopped = True
+                if not self.exit_instead:   # (cp.sh restart meanwhile: it starts the next one)
+                    log("supervisor.py changed: starting it again")
+                    os.execv(sys.executable, [sys.executable, "-u", new])
+        except Exception as e:
+            log(f"restarting the supervisor failed ({e}): this one goes on")
+        with self.term_lock:                # (a SIGTERM from here on stops this one by itself)
+            self.restarting = False
+            leave = self.exit_instead
+        if leave:
+            try:
+                self.stop(remember=False)
+            finally:
+                os._exit(0)
+        if stopped:                         # (the script was stopped for the exec)
+            resume = self.saved_running()
+        else:                               # (it still runs the old script code: restarted, as
+            with self.lock:                 # an update without a new supervisor.py does)
+                running = self.proc is not None and self.script is not None and not self.stopping
+                resume = self.script["id"] if running else None
+        if resume:
+            self.start_retrying(resume)
 
     # ------------------------------------------------------------------ state
     @staticmethod
@@ -312,7 +581,11 @@ class Supervisor:
             script, since, last_exit, logfile = self.script, self.since, self.last_exit, self.logfile
         tail = self.tail(logfile, 8) if logfile and os.path.exists(logfile) else []
         return {"running": script["id"] if running else None,
-                "name": script["name"] if script else None,
+                "stopping": running and self.stopping,
+                "name": script.get("name", script["id"]) if script else None,
+                "wanted": self.saved_running(),     # (state.json: what a restart or resume brings back)
+                "panel": self.panel_note,
+                "updating": self.updating,
                 "since": since if running else None,
                 "last_exit": last_exit, "tail": tail, "code": self.code_version()}
 
@@ -341,7 +614,8 @@ class Handler(BaseHTTPRequestHandler):
         q = parse_qs(u.query)
         try:
             if u.path == "/scripts":
-                return self.reply(200, [{"id": s["id"], "name": s["name"]} for s in SUP.scripts()])
+                return self.reply(200, [{"id": s["id"], "name": s.get("name", s["id"]), "group": s.get("group", "")}
+                                        for s in SUP.scripts()])
             if u.path == "/status":
                 return self.reply(200, SUP.status())
             if u.path == "/log":
@@ -362,7 +636,7 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == "/stop":
                 return self.reply(200, {"result": SUP.stop()})
             if u.path == "/update":
-                return self.reply(200, {"result": SUP.update()})
+                return self.reply(200, {"result": SUP.update(force=q.get("force", ["0"])[0] == "1")})
         except Exception as e:      # (shown in the panel)
             return self.reply(500, {"result": f"error: {e}"})
         self.reply(404, {"error": "unknown"})
@@ -376,19 +650,35 @@ def main():
     server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)     # (fails here when one runs already)
     with open(SUPERVISOR_PID, "w") as f:
         f.write(str(os.getpid()))
-    SUP.stop_leftover()
-    # the adb server lives in this long-running proot: short `run.sh` calls (peek, cp.sh sh)
-    # then find it instead of forking one that would keep their proot waiting
-    connect_adb()
 
-    def on_term(signum, frame):     # (cp.sh restart): the script stops too, and resumes after
-        SUP.stop(remember=False)
-        os._exit(0)
+    def on_term(signum, frame):
+        """cp.sh restart: the script ends at its safe point (up to STOP_GRACE) on a thread, so
+        the server keeps answering meanwhile; it resumes under the next supervisor."""
+        with SUP.term_lock:
+            if SUP.restarting:              # (an update re-exec is under way: it exits instead)
+                SUP.exit_instead = True
+                return
+            SUP.restarting = True
+
+        def stop_and_exit():
+            try:
+                SUP.stop(remember=False)
+            finally:
+                os._exit(0)
+        threading.Thread(target=stop_and_exit, daemon=True).start()
     signal.signal(signal.SIGTERM, on_term)
-    resume = SUP.saved_running()
-    if resume:
-        log(f"resuming {resume}")
-        threading.Thread(target=SUP.start_retrying, args=(resume,), daemon=True).start()
+
+    def startup():
+        with SUP.start_lock:                # (a 开始 meanwhile waits: no second script beside a leftover)
+            SUP.stop_leftover()
+            # the adb server lives in this long-running proot: short `run.sh` calls (peek,
+            # cp.sh sh) then find it instead of forking one that would keep their proot waiting
+            connect_adb()
+        resume = SUP.saved_running()
+        if resume:
+            log(f"resuming {resume}")
+            SUP.start_retrying(resume)
+    threading.Thread(target=startup, daemon=True).start()
     server.serve_forever()
 
 
