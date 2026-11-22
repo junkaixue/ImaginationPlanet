@@ -15,8 +15,14 @@ mkdir -p tmp logs
 
 if [ ! -x root/bin/proot ]; then
   echo "== proot"
-  curl -fsSL -m 300 -o proot.tgz $PROOT_URL
-  tar xzf proot.tgz
+  # (a proot.tgz already here was pushed from the Mac: some phones cannot reach GitHub's raw files)
+  [ -s proot.tgz ] || curl -fsSL -m 300 -o proot.tgz $PROOT_URL || {
+    rm -f proot.tgz
+    echo "proot could not be downloaded: $PROOT_URL"
+    echo "on the Mac: download that file, adb push it to $D/proot.tgz, and run setup again"
+    exit 1
+  }
+  tar xzf proot.tgz || { rm -f proot.tgz; echo "proot.tgz does not unpack (removed): run setup again"; exit 1; }
   rm proot.tgz
 fi
 export PROOT_LOADER=$D/root/libexec/proot/loader PROOT_TMP_DIR=$D/tmp

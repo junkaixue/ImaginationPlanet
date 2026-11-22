@@ -69,7 +69,7 @@ EQUIP_LAYOUT = {
     "shield_slot": (152.5, 475),                     # bottom right lv.6 shield: never touched
     "power_dx": 0, "power_dy": 618, "power_half_w": 95, "power_half_h": 15,   # "战力:835.26万"
     "close_dx": 0, "close_dy": -60,                  # tap the dimmed top bar above the title to close
-    "loadout_dx": 3, "loadout_dy": 305,              # center of the loadout grid (ZLoadoutStandard)
+    "loadout_dx": 3, "loadout_dy": 305,              # center of the loadout grid (the standard loadout screenshot)
     "loadout_th": 0.9,                               # the holder's grid matches the standard >= this ...
     "loadout_margin": 0.05,                          # ... and clearly better than every other tab
 }
@@ -199,6 +199,23 @@ BUSY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fortress_b
 # the fleet that held the best gear last (swap mode): a run whose holder lookup finds no fleet with
 # the gear (a swap cut off by a kill, a crash) gives it 一键配队 to take the loose gear back
 GEAR_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fortress_gear.json")
+# a cloud phone names its game account here (one word, e.g. gs). An account is
+# its config, the logic is the same: its script list (cloudphone/phone/scripts.NAME.json) and its
+# standard loadout screenshot (zone/loadout_standard_NAME.png: its best gear on the 我的舰队 grid,
+# see loadout_score). Without the file, or without files of that name: the default ones (jx).
+# (On gs's phone jx's screenshot scores 0.84-0.88 on every tab, its own 1.0 on the holder: one
+# account's picture does not find another's gear.)
+ACCOUNT_FILE = "/ip/account"
+
+
+def phone_account():
+    """The account named in ACCOUNT_FILE, None without one (the Mac, a phone of the default account)."""
+    try:
+        with open(ACCOUNT_FILE) as fh:
+            name = fh.read().strip()
+    except OSError:
+        return None
+    return name if name.isalnum() else None
 # (cloudphone/cp.sh STATE_FILES names these two: a fresh clone on the phone keeps them)
 NO_TARGET_WAIT = 3 * 60      # seconds a rank waits after its search found nothing (ordered mode)
 FLEET_FAIL_WAIT = 60         # seconds a fleet whose attack or repair failed is left out (ordered mode;
@@ -300,6 +317,16 @@ class FortressFight(ZoneExplore):
 
     def __init__(self, dry_run=False, fortress="xz", order=None):
         super().__init__(dry_run=dry_run)
+        # the standard loadout screenshot: this phone's account's own when there is one
+        self.account = phone_account()
+        self.loadout_path = single_find_map["ZLoadoutStandard"]
+        if self.account:
+            own = os.path.join(os.path.dirname(self.loadout_path), f"loadout_standard_{self.account}.png")
+            if os.path.exists(own):
+                self.loadout_path = own
+            else:
+                log(f"Account {self.account} has no {os.path.basename(own)}: the default screenshot is used")
+        self._loadout = None          # that screenshot, read once (loadout_score)
         # ordered mode (-oxz/-ozx): fleet -> rank (SHIP_RANKS), biggest first
         self.order = dict(zip(order, SHIP_RANKS)) if order else None
         self.no_target_until = {}     # rank -> time before which its search is not repeated
@@ -340,7 +367,7 @@ class FortressFight(ZoneExplore):
         self.fortress_title = None    # title position on the open fortress page (the header does not scroll)
         mode = (" ordered: " + ", ".join(f"fleet {f} {RANK_NAMES[r]}"
                                          for f, r in self.order.items())) if self.order else ""
-        log(f"FortressFight ready: {self.kind['name']}{mode} (code={_code_version()})")
+        log(f"FortressFight ready: {self.kind['name']}{mode}, account {self.account or 'default'} (code={_code_version()})")
 
     # ------------------------------------------------------------------ fleet page
     EDIT_PAGES = ("ZEditFleetTitle", "ZEditCatTitle", "ZEditGearTitle", "ZEditArtifactTitle")
@@ -542,7 +569,9 @@ class FortressFight(ZoneExplore):
             return 0.0
         self.invalidate_shot()
         gray = self.shot()[1]
-        t = self.full_template("ZLoadoutStandard")
+        if self._loadout is None:
+            self._loadout = cv2.imread(self.loadout_path, 0)
+        t = self._loadout
         if t is None:
             return 0.0
         cx, cy = title.x + EQUIP_LAYOUT["loadout_dx"], title.y + EQUIP_LAYOUT["loadout_dy"]
@@ -2112,7 +2141,7 @@ class FortressFight(ZoneExplore):
                 self.holder_misses += 1
                 if self.dry_run or self.holder_misses >= HOLDER_LOOKUP_TRIES:
                     log(f"Could not tell which fleet has the best gear after {self.holder_misses} looks; "
-                        "check the standard loadout screenshot (pages/boss/loadout_standard_user.png)")
+                        f"check the standard loadout screenshot ({os.path.basename(self.loadout_path)})")
                     return
                 self.pause(f"Could not tell which fleet has the best gear; looking again in {POLL} s")
                 continue

@@ -1,0 +1,6 @@
+[
+  {"group": "星际探险", "id": "zx_swap", "name": "铸械要塞 换装",
+   "args": ["fortress_fight.py", "-f", "zx"]},
+  {"group": "星际探险", "id": "zx_swap_dry", "name": "铸械要塞 换装 试跑(不出击)",
+   "args": ["fortress_fight.py", "-f", "zx", "--dry", "--debug-shots"]}
+]
