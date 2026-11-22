@@ -142,6 +142,7 @@ class Supervisor:
         self.panel_note = None      # the outcome of the last panel app install (status)
         self.updating = None        # what an update under way is doing (shown in the panel), else None
         self.code_changed = False   # an update changed the code and the running script is not on it yet
+        self.unloadable = None      # the sha1 of a new supervisor.py that failed its load check
         self.update_lock = threading.Lock()     # one update at a time
         self.restarts = []          # times of automatic restarts this hour
         self.logfile = None
@@ -183,8 +184,12 @@ class Supervisor:
             git = ["git", "--no-optional-locks", "-C", APP]    # (no index.lock against an update)
             r = subprocess.run(git + ["log", "-1", "--format=%h %cd", "--date=format:%m-%d %H:%M"],
                                capture_output=True, text=True)
-            dirty = subprocess.run(git + ["status", "--porcelain", "-uno"], capture_output=True, text=True)
-            return r.stdout.strip() + (" +local" if dirty.stdout.strip() else "")
+            try:
+                dirty = subprocess.run(git + ["status", "--porcelain", "-uno", "--no-renames"],
+                                       capture_output=True, text=True, timeout=20).stdout.strip()
+            except subprocess.TimeoutExpired:
+                dirty = ""
+            return r.stdout.strip() + (" +local" if dirty else "")
         return "local copy"
 
     # ------------------------------------------------------------------ game
@@ -468,17 +473,26 @@ class Supervisor:
         """The lock files a killed git left in the checkout's .git (index.lock, shallow.lock, a
         ref's, the config's, ...). Only a running git holds a lock: with none at work every lock
         there is stale and goes, whatever its age; with one at work all stay. (A git that starts
-        meanwhile fails on a stale lock, it does not take it over; a lock that appears after the
-        look here is that git's and stays.)"""
-        seen = time.time()
-        locks = [os.path.join(root, name) for root, _, names in os.walk(f"{APP}/.git")
-                 for name in names if name.endswith(".lock")]
-        if not locks or self.git_at_work():
+        meanwhile fails on a stale lock, it does not take it over; a lock that is not the file
+        seen at the look any more is that git's and stays.)"""
+        def identity(path):
+            st = os.stat(path)
+            return st.st_ino, st.st_mtime_ns, st.st_size
+
+        seen = {}
+        for root, _, names in os.walk(f"{APP}/.git"):
+            for name in names:
+                if name.endswith(".lock"):
+                    try:
+                        seen[os.path.join(root, name)] = identity(os.path.join(root, name))
+                    except OSError:
+                        pass                # (gone meanwhile)
+        if not seen or self.git_at_work():
             return
-        for lock in locks:
+        for lock, was in seen.items():
             try:
-                if os.path.getmtime(lock) >= seen:
-                    continue                # (taken after the look, by a git that started since)
+                if identity(lock) != was:
+                    continue                # (another one by now: taken by a git that started since)
                 os.remove(lock)
                 log(f"update: removed a stale {os.path.relpath(lock, APP)}")
             except OSError:
@@ -514,14 +528,18 @@ class Supervisor:
         r = subprocess.run(["git", "-C", APP, "rev-parse", "HEAD", "FETCH_HEAD"], capture_output=True, text=True)
         heads = r.stdout.split()
         same = r.returncode == 0 and len(heads) == 2 and heads[0] == heads[1]
-        r = subprocess.run(["git", "--no-optional-locks", "-C", APP, "status", "--porcelain", "-uno"],
-                           capture_output=True, text=True)
-        dirty = r.returncode != 0 or bool(r.stdout.strip())     # (changes from the Mac in the checkout)
+        try:                                # (--no-renames: no file contents are fetched for it)
+            r = subprocess.run(["git", "--no-optional-locks", "-C", APP, "status", "--porcelain", "-uno",
+                                "--no-renames"], capture_output=True, text=True, timeout=60)
+            dirty = r.returncode != 0 or bool(r.stdout.strip())     # (changes from the Mac in the checkout)
+        except subprocess.TimeoutExpired:
+            dirty = True
         if not same:                        # (else: all is here)
             ok, out = self.retried("正在下载改动的文件", self.scratch_checkout)
             if not ok:
                 return self.download_failed("下载文件", out)
-        if not same or dirty:
+        fresh = not same or dirty           # (this update changes the code)
+        if fresh:
             self.code_changed = True        # (until a script starts on it: also when this update fails)
         self.updating = "正在换上新代码"
         ok, out = self.git_step(["reset", "-q", "--hard", "FETCH_HEAD"], 120)
@@ -535,10 +553,14 @@ class Supervisor:
         if os.path.exists(LOCAL_CODE):      # (code and phone files are GitHub's now)
             os.remove(LOCAL_CODE)
         panel = os.path.exists(PANEL_APK) and sha1(PANEL_APK) != self.read(PANEL_SHA)
-        own = sha1(f"{HOME}/supervisor.py") != LOADED   # (also after cp.sh code copied it)
-        if not (self.code_changed or changed or panel or own):
+        there = sha1(f"{HOME}/supervisor.py")
+        # (also after cp.sh code copied it; not one that failed its load check: this one goes on)
+        own = there != LOADED and there != self.unloadable
+        # (`fresh` by itself: a script started while the code was being changed cleared the mark)
+        if not (fresh or self.code_changed or changed or panel or own):
             log(f"update: nothing new ({self.code_version()})")
-            return f"已是最新: {self.code_version()}"      # (the script goes on: no restart for nothing)
+            return (f"已是最新: {self.code_version()}"     # (the script goes on: no restart for nothing)
+                    + ("（新的服务代码加载不了，仍用现在的）" if there == self.unloadable else ""))
         msg = f"updated to {self.code_version()}" + (", installing the new panel app" if panel else "")
         log(msg + (f"; phone files changed: {', '.join(changed)}" if changed else ""))
         if own:
@@ -572,8 +594,9 @@ class Supervisor:
     def adb_install(deadline, *flags):
         """`adb install` of the checkout's panel app. The cloud phone's install check refuses
         one now and then (INSTALL_FAILED_VERIFICATION_FAILURE) and passes it on the next try.
-        One try may take 300 s; all of an install end by `deadline` (monotonic): a re-exec of
-        the supervisor waits for it."""
+        One try may take 300 s; the tries end by `deadline` (monotonic), 6 min for an install
+        and at least 3 more for the one after an uninstall: a re-exec of the supervisor waits
+        for it, 9 min at most."""
         for attempt in (1, 2, 3):
             left = deadline - time.monotonic()
             if left < 5:
@@ -601,7 +624,8 @@ class Supervisor:
                 if "UPDATE_INCOMPATIBLE" not in str(e):
                     raise
                 adb("uninstall", "com.ip.panel")
-                self.adb_install(time.monotonic() + 360, "-g")     # (its own time: no panel is worse)
+                # (at least 3 min of its own: no panel at all is worse than a late restart)
+                self.adb_install(max(deadline, time.monotonic() + 180), "-g")
             with open(PANEL_SHA, "w") as f:
                 f.write(sha1(PANEL_APK))
             adb("shell", "appops", "set", "com.ip.panel", "SYSTEM_ALERT_WINDOW", "allow")
@@ -642,6 +666,7 @@ class Supervisor:
             ok, why = False, str(e)
         if not ok:
             log(f"the new supervisor.py does not load ({why}): this one goes on")
+            self.unloadable = sha1(new)     # (no further try, no restart for it, until it changes)
         stopped = False
         try:
             if panel:

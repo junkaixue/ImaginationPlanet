@@ -15,10 +15,10 @@ p=$(cat $D/supervisor.pid 2>/dev/null)
 alive() {   # the pid is a supervisor still (not a pid reused after a reboot)
   [ -n "$p" ] && cat /proc/$p/cmdline 2>/dev/null | tr '\0' ' ' | grep -q supervisor.py
 }
-find_supervisor() {   # the pid of a running supervisor: a python whose last argument is
-  # supervisor.py (`python3 -u /ip/supervisor.py`, also started by hand with other options), not
-  # the proot around it, nor a python that runs something else on the file (-c: an update's
-  # load check, -m: a py_compile)
+find_supervisor() {   # the pid of a running supervisor: a python whose script, its first argument
+  # that is no option, is supervisor.py (`python3 -u /ip/supervisor.py`, also started by hand
+  # with other options). Not the proot around it, nor a python that runs something else on the
+  # file: a command (-c, an update's load check), a module (-m py_compile), another script
   if command -v pgrep >/dev/null 2>&1; then
     cand=$(pgrep -f 'supervisor[.]py')
   else
@@ -28,13 +28,18 @@ find_supervisor() {   # the pid of a running supervisor: a python whose last arg
   for q in $cand; do
     set -- $(cat /proc/$q/cmdline 2>/dev/null | tr '\0' ' ')
     case "${1:-}" in python*|*/python*) ;; *) continue ;; esac
-    last=; other=
+    shift
+    script=; value=
     for w in "$@"; do
-      last=$w
-      case "$w" in -c|-m) other=1 ;; esac
+      if [ -n "$value" ]; then value=; continue; fi     # (what -X or -W takes)
+      case "$w" in
+        -c*|-m*) break ;;                               # (a command or a module: no script)
+        -X|-W) value=1 ;;
+        -*) ;;
+        *) script=$w; break ;;
+      esac
     done
-    [ -z "$other" ] || continue
-    case "$last" in *supervisor.py) set +f; echo $q; return ;; esac
+    case "$script" in *supervisor.py) set +f; echo $q; return ;; esac
   done
   set +f
 }

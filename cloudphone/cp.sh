@@ -149,7 +149,7 @@ code_github() {
     if [ -n "$(psh "curl -s -m 10 http://127.0.0.1:8765/status" || true)" ]; then
       # (while it is busy with an update of its own or a restart, or silent between two
       # supervisors, the request is made again: for 15 min from the first try, then no more)
-      local out end=$((SECONDS + 900))
+      local out gone=0 end=$((SECONDS + 900))
       while :; do
         out="$(api POST "/update?force=1" || true)"
         echo "${out:-no answer from the supervisor}"
@@ -157,7 +157,10 @@ code_github() {
           *'"result": "updated to'*|*'"result": "已是最新'*) return 0 ;;
           *已经在更新了*|*服务正在重启*) [ $SECONDS -lt $end ] || { echo "the supervisor stayed busy: try again later"; exit 1; }
             echo "(the supervisor is busy: again in 20 s)" ;;
-          "") [ $SECONDS -lt $end ] || exit 1
+          "")   # (silent between two supervisors, for seconds; gone when no process is found twice)
+            if supervisor_process; then gone=0; else gone=$((gone + 1)); fi
+            [ $gone -lt 2 ] || { echo "the supervisor is gone: start it (cloudphone/cp.sh up) and run this again"; exit 1; }
+            [ $SECONDS -lt $end ] || { echo "no answer from the supervisor for 15 min: giving up"; exit 1; }
             echo "(again in 20 s)" ;;
           *) exit 1 ;;
         esac
