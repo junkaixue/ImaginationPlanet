@@ -13,6 +13,8 @@ adbd at `127.0.0.1:5555` (`--adb` mode of `adb_device.py`). A supervisor (`super
 talks to the phone over adb through Tailscale, with `cloudphone/cp.sh`.
 
 Read `cloudphone/README.md` for the layout of the files; this skill is the procedure.
+`cloudphone/USER_GUIDE.md` is the user's guide (Chinese): when a change alters what it
+describes (panel, scripts, update, restart rules, commands), update it in the same commit.
 
 ## Rules
 - Answer the user in Chinese.
