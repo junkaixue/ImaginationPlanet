@@ -70,8 +70,8 @@ EQUIP_LAYOUT = {
     "power_dx": 0, "power_dy": 618, "power_half_w": 95, "power_half_h": 15,   # "战力:835.26万"
     "close_dx": 0, "close_dy": -60,                  # tap the dimmed top bar above the title to close
     "loadout_dx": 3, "loadout_dy": 305,              # center of the loadout grid (the standard loadout screenshot)
-    "loadout_th": 0.9,                               # the holder's grid matches the standard >= this ...
-    "loadout_margin": 0.05,                          # ... and clearly better than every other tab
+    "loadout_th": 0.9,                               # the holder's grid matches the standard >= this (of
+                                                     # several tabs that do, the highest 战力 has the gear)
 }
 # ---- 编辑舰队 page, relative to its title center. The equipped items sit in the bottom area;
 # clicking one removes it and the rest shift left, an empty place shows a "+" placeholder.
@@ -200,23 +200,32 @@ BUSY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fortress_b
 # the gear (a swap cut off by a kill, a crash) gives it 一键配队 to take the loose gear back
 GEAR_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fortress_gear.json")
 # (cloudphone/cp.sh STATE_FILES names these two: a fresh clone on the phone keeps them)
-# a cloud phone names its game account here (one word, e.g. gs). An account is
-# its config, the logic is the same: its script list (cloudphone/phone/scripts.NAME.json) and its
-# standard loadout screenshot (zone/loadout_standard_NAME.png: its best gear on the 我的舰队 grid,
-# see loadout_score). Without the file, or without files of that name: the default ones (jx).
-# (On gs's phone jx's screenshot scores 0.84-0.88 on every tab, its own 1.0 on the holder: one
-# account's picture does not find another's gear.)
+
+# a cloud phone names its game account here (one word of letters and digits, e.g. gs). An account
+# is its config, the logic is the same: its script list (cloudphone/phone/scripts.NAME.json) and
+# its standard loadout screenshot (zone/loadout_standard_NAME.png: its best gear on the 我的舰队
+# grid, see loadout_score). Without the file: the default ones (jx). A named account without a
+# screenshot of its own cannot run swap mode: on gs's phone jx's screenshot scores 0.84-0.88 on
+# every tab, its own 1.0 on the holder, so one account's picture does not find another's gear.
 ACCOUNT_FILE = "/ip/account"
 
 
 def phone_account():
     """The account named in ACCOUNT_FILE, None without one (the Mac, a phone of the default account)."""
     try:
-        with open(ACCOUNT_FILE) as fh:
+        with open(ACCOUNT_FILE, encoding="utf-8-sig") as fh:
             name = fh.read().strip()
     except OSError:
         return None
-    return name if name.isalnum() else None
+    except ValueError:                  # (not text)
+        name = "?"
+    if not name.isalnum():
+        log(f"{ACCOUNT_FILE} does not hold an account name (one word of letters and digits): {name!r}; "
+            "the default account's config is used")
+        return None
+    return name
+
+
 NO_TARGET_WAIT = 3 * 60      # seconds a rank waits after its search found nothing (ordered mode)
 FLEET_FAIL_WAIT = 60         # seconds a fleet whose attack or repair failed is left out (ordered mode;
                              # the fortress page likewise when it would not open or got lost) ...
@@ -317,16 +326,15 @@ class FortressFight(ZoneExplore):
 
     def __init__(self, dry_run=False, fortress="xz", order=None):
         super().__init__(dry_run=dry_run)
-        # the standard loadout screenshot: this phone's account's own when there is one
+        # the standard loadout screenshot: the default one, or this phone's account's own (swap
+        # mode does not run without it, see run)
         self.account = phone_account()
         self.loadout_path = single_find_map["ZLoadoutStandard"]
         if self.account:
-            own = os.path.join(os.path.dirname(self.loadout_path), f"loadout_standard_{self.account}.png")
-            if os.path.exists(own):
-                self.loadout_path = own
-            else:
-                log(f"Account {self.account} has no {os.path.basename(own)}: the default screenshot is used")
-        self._loadout = False         # that screenshot, read once (loadout_score); None: unreadable
+            self.loadout_path = os.path.join(os.path.dirname(self.loadout_path),
+                                             f"loadout_standard_{self.account}.png")
+        self._loadout = None          # that screenshot once it could be read (loadout_template)
+        self._loadout_warned = False
         # ordered mode (-oxz/-ozx): fleet -> rank (SHIP_RANKS), biggest first
         self.order = dict(zip(order, SHIP_RANKS)) if order else None
         self.no_target_until = {}     # rank -> time before which its search is not repeated
@@ -562,6 +570,16 @@ class FortressFight(ZoneExplore):
         except ValueError:
             return None
 
+    def loadout_template(self):
+        """The standard loadout screenshot (gray), None while it cannot be read: a file that is
+        being replaced (a code push, an update) reads the next time, so only a read is kept."""
+        if self._loadout is None:
+            self._loadout = cv2.imread(self.loadout_path, 0) if os.path.exists(self.loadout_path) else None
+            if self._loadout is None and not self._loadout_warned:
+                self._loadout_warned = True
+                log(f"The standard loadout screenshot cannot be read: {self.loadout_path}")
+        return self._loadout
+
     def loadout_score(self):
         """How well the open tab's equipment grid matches the standard best loadout (0..1)."""
         title = self.fleet_title()
@@ -569,11 +587,7 @@ class FortressFight(ZoneExplore):
             return 0.0
         self.invalidate_shot()
         gray = self.shot()[1]
-        if self._loadout is False:
-            self._loadout = cv2.imread(self.loadout_path, 0)
-            if self._loadout is None:
-                log(f"The standard loadout screenshot could not be read: {self.loadout_path}")
-        t = self._loadout
+        t = self.loadout_template()
         if t is None:
             return 0.0
         cx, cy = title.x + EQUIP_LAYOUT["loadout_dx"], title.y + EQUIP_LAYOUT["loadout_dy"]
@@ -588,8 +602,10 @@ class FortressFight(ZoneExplore):
     def find_gear_holder(self):
         """The fleet carrying the best equipment: all five tabs are compared against the
         standard loadout screenshot. 战力 is logged for reference only. lookup_unreadable tells
-        a None from an unreadable page apart from one with no matching fleet."""
+        a None from an unreadable page (or screenshot) apart from one with no matching fleet."""
         self.lookup_unreadable = True
+        if self.loadout_template() is None:     # (every tab would score 0: that is not "no fleet has the gear")
+            return None
         if not self.open_fleet_page():
             return None
         self.lookup_unreadable = False
@@ -1969,6 +1985,12 @@ class FortressFight(ZoneExplore):
         """The fight loop; an unexpected error in a pass is logged (with a debug shot), the
         dialogs are closed and the loop starts again with its state kept."""
         import traceback
+        if not self.order and not os.path.exists(self.loadout_path):
+            # (another account's picture scores below the threshold on every tab: the run would
+            # only look for the gear, try a 一键配队 on the last holder and give up)
+            log(f"Swap mode needs the standard loadout screenshot of account {self.account or 'default'}: "
+                f"{self.loadout_path} is missing. Capture it on the fleet that carries the whole best gear")
+            return
         signal.signal(signal.SIGTERM, self.on_term)
         errors = []                             # times of recent errors
         while True:

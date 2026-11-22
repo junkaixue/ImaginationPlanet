@@ -1,7 +1,8 @@
 """Runs the game scripts inside the cloud phone and is driven by the floating panel app (and by
 cloudphone/cp.sh on the Mac) over http://127.0.0.1:8765 (this phone only).
 
-    GET  /scripts         [{"id", "name", "group"}] from scripts.json (the panel groups them)
+    GET  /scripts         [{"id", "name", "group"}] from scripts.json, or from the list of the
+                          phone's account (scripts.NAME.json; the panel groups them)
     GET  /status          what runs, since when, the last log lines, the code version
     GET  /log?n=200       the running (or last) script's log tail, text
     POST /start?id=ID     stop what runs, bring the game to the front, start ID
@@ -155,23 +156,31 @@ class Supervisor:
     def scripts_file():
         """This phone's script list: its account's own (see ACCOUNT) when there is one."""
         try:
-            with open(ACCOUNT) as f:
+            with open(ACCOUNT, encoding="utf-8-sig") as f:
                 name = f.read().strip()
         except OSError:
             return SCRIPTS
+        except ValueError:              # (not text)
+            name = "?"
+        if not name.isalnum():
+            log_once(f"{ACCOUNT} does not hold an account name (one word of letters and digits): "
+                     f"{name!r}; the default scripts.json is used")
+            return SCRIPTS
         own = f"{HOME}/scripts.{name}.json"
-        if name.isalnum() and os.path.exists(own):
+        if os.path.exists(own):
             return own
-        log_once(f"account {name!r}: no scripts.{name}.json here; the default scripts.json is used")
+        log_once(f"account {name}: no scripts.{name}.json here; the default scripts.json is used")
         return SCRIPTS
 
     @staticmethod
     def scripts():
-        """scripts.json: a list of {"group", "id", "name", "args", "restart"?}; the panel shows
-        one group (kind of feature) at a time. Kept a flat list so that older supervisors and
-        panels read it too. Entries without an id or args, and a second use of an id (ids are
-        global: state.json, logs, /start), are skipped with a log line."""
-        with open(Supervisor.scripts_file(), encoding="utf-8-sig") as f:
+        """The script list (scripts_file()): a list of {"group", "id", "name", "args", "restart"?};
+        the panel shows one group (kind of feature) at a time. Kept a flat list so that older
+        supervisors and panels read it too. Entries without an id or args, and a second use of an
+        id (ids are global: state.json, logs, /start), are skipped with a log line."""
+        path = Supervisor.scripts_file()
+        which = os.path.basename(path)
+        with open(path, encoding="utf-8-sig") as f:
             data = json.load(f)
         if isinstance(data, dict):          # (the grouped form of 847be53)
             data = [dict(s, group=g.get("name", "")) for g in data.get("groups") or []
@@ -179,9 +188,9 @@ class Supervisor:
         out, seen = [], set()
         for s in data if isinstance(data, list) else []:
             if not isinstance(s, dict) or not s.get("id") or not isinstance(s.get("args"), list):
-                log_once(f"scripts.json: skipped {s!r} (needs an id and args)")
+                log_once(f"{which}: skipped {s!r} (needs an id and args)")
             elif s["id"] in seen:
-                log_once(f"scripts.json: id {s['id']} used twice; the second one is skipped")
+                log_once(f"{which}: id {s['id']} used twice; the second one is skipped")
             else:
                 seen.add(s["id"])
                 out.append(s)
@@ -363,7 +372,9 @@ class Supervisor:
         is logged and the start tried again later instead of being dropped."""
         for wait in (30, 60, 120, 300, 600):
             try:
-                self.start(sid, manual=False)
+                res = self.start(sid, manual=False)
+                if res != "ok":         # (not in this phone's list any more, stopped meanwhile, ...)
+                    log(f"{sid} was not started: {res}")
                 return
             except Exception as e:
                 log(f"could not start {sid}: {e}; trying again in {wait} s")
@@ -677,6 +688,11 @@ class Supervisor:
                 if name.endswith(".sh"):
                     os.chmod(dst, 0o755)
                 changed.append(name)
+        for name in os.listdir(HOME):   # an account's list that is gone from the repo: scripts_file()
+            if (name.startswith("scripts.") and name.endswith(".json") and name != "scripts.json"
+                    and not os.path.exists(f"{PHONE_FILES}/{name}")):       # would keep choosing it
+                os.remove(f"{HOME}/{name}")
+                changed.append(f"{name} (removed)")
         return changed
 
     def reexec(self, panel=False):

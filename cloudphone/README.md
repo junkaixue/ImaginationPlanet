@@ -38,7 +38,7 @@ Mac 只在部署和调试时通过 Tailscale + adb 连手机，命令都在 `clo
 | `sh 命令` | 在手机的 Alpine 里执行（当前目录 /ip） |
 
 ## 文件
-- `phone/`：放到手机 `/data/local/tmp/ip` 的文件：`setup.sh`（装环境）、`run.sh`（进 Alpine）、`start.sh`（启动服务）、`restart.sh`（等旧服务安全停下再启动新的）、`supervisor.py`、`scripts.json`、`peek.py`/`jpg.py`（调试截图）。
+- `phone/`：放到手机 `/data/local/tmp/ip` 的文件：`setup.sh`（装环境）、`run.sh`（进 Alpine）、`start.sh`（启动服务）、`restart.sh`（等旧服务安全停下再启动新的）、`supervisor.py`、`scripts.json`（默认的脚本列表；另一个号的是 `scripts.号名.json`）、`peek.py`/`jpg.py`（调试截图）。
 - `app/`：浮窗 App（Java，无 Gradle，`build.sh` 编译；第一次会下载约 150 MB 的安卓编译工具到 `app/.sdk`）。`panel.apk` 一起提交，换电脑不用重新编。
 - 手机上：`/data/local/tmp/ip/app`（代码，GitHub 稀疏检出）、`logs/`（每个脚本的日志、服务日志）、`state.json`（重启后接着跑哪个脚本）。
 

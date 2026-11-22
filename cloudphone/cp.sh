@@ -50,6 +50,15 @@ if [ -z "$SERIAL" ] && [ -n "$ACCOUNT" ]; then
   [ -f "$HERE/.serial.$ACCOUNT" ] ||
     { echo "no phone for account $ACCOUNT: write HOST:PORT to cloudphone/.serial.$ACCOUNT (or give -s)"; exit 1; }
   SERIAL="$(head -1 "$HERE/.serial.$ACCOUNT")"
+  # (never on to the default phone: the command was meant for this account's)
+  [ -n "$SERIAL" ] || { echo "cloudphone/.serial.$ACCOUNT has no HOST:PORT in its first line"; exit 1; }
+fi
+if [ -n "$ACCOUNT" ]; then
+  # an account is its config files, spelt as they are: the phone's file names are case-sensitive
+  # (this Mac's are not), and a name without files would leave the phone on the default config
+  names="$(ls "$HERE/phone" "$REPO/pics/mac/zone")"
+  grep -q -x -e "scripts\.$ACCOUNT\.json" -e "loadout_standard_$ACCOUNT\.png" <<<"$names" ||
+    { echo "account $ACCOUNT has no config: cloudphone/phone/scripts.$ACCOUNT.json, pics/mac/zone/loadout_standard_$ACCOUNT.png"; exit 1; }
 fi
 [ -n "$SERIAL" ] || SERIAL="${CP_SERIAL:-}"
 if [ -z "$SERIAL" ] && [ -f "$HERE/.serial" ]; then SERIAL="$(head -1 "$HERE/.serial")"; fi
@@ -144,6 +153,10 @@ push_phone_files() {
   psh "mkdir -p $D"
   for f in "$HERE"/phone/*; do push "$f" "$D/"; done
   psh "chmod 755 $D/*.sh"
+  # (an account's list that is gone from the repo goes from the phone: the supervisor would keep
+  # choosing it)
+  local keep; keep="$(cd "$HERE/phone" && ls scripts.*.json 2>/dev/null | tr '\n' ' ' || true)"
+  psh "cd $D && for f in scripts.*.json; do case \" $keep \" in *\" \$f \"*) ;; *) rm -f \"\$f\" ;; esac; done"
   mark_local_code
   restart_if_changed "$before"
 }
@@ -153,10 +166,14 @@ push_proot() {   # proot comes through this Mac when the phone has none: some ph
   local url tmp
   url="$(sed -n 's/^PROOT_URL=//p' "$HERE/phone/setup.sh")"
   tmp="$(mktemp -d)"
-  if curl -fsSL -m 120 -o "$tmp/proot.tgz" "$url"; then
-    push "$tmp/proot.tgz" "$D/proot.tgz"
+  # (under its name only when it is whole there; a failure here is not the end: setup.sh downloads)
+  if curl -fsSL -m 120 -o "$tmp/proot.tgz" "$url" &&
+     adb -s "$SERIAL" push "$tmp/proot.tgz" "$D/proot.tgz.part" >/dev/null 2>&1 &&
+     psh "mv $D/proot.tgz.part $D/proot.tgz"; then
+    :
   else
-    echo "this Mac could not download proot ($url): the phone tries it itself"
+    psh "rm -f $D/proot.tgz.part" || true
+    echo "proot did not get to the phone through this Mac ($url): the phone tries the download itself"
   fi
   rm -rf "$tmp"
 }
@@ -232,7 +249,9 @@ code_github() {
       rm -rf app && mv app.new app && cd app
     fi
     git log -1 --format='code %h %s'"
-  psh "cp $D/app/cloudphone/phone/* $D/ && chmod 755 $D/*.sh && rm -f $D/local_code"   # (GitHub's code now)
+  # (GitHub's code now; an account's list that is gone from it goes from the phone too)
+  psh "cd $D && cp app/cloudphone/phone/* . && chmod 755 *.sh && rm -f local_code &&
+    for f in scripts.*.json; do [ -f \"app/cloudphone/phone/\$f\" ] || rm -f \"\$f\"; done"
   restart_if_changed "$before"
 }
 
@@ -241,11 +260,21 @@ case "$CMD" in
     connect
     "$0" -s "$SERIAL" ${ACCOUNT:+-a "$ACCOUNT"} setup && "$0" -s "$SERIAL" code --github && "$0" -s "$SERIAL" app && "$0" -s "$SERIAL" up ;;
   setup)
-    connect; push_phone_files
-    # (the phone's account: the supervisor and the scripts take that account's config from now on)
-    if [ -n "$ACCOUNT" ]; then psh "echo $ACCOUNT > $D/account"; echo "this phone is account $ACCOUNT"; fi
+    connect
+    was="$ACCOUNT"
+    if [ -n "$ACCOUNT" ]; then
+      # the phone's account, before the phone files: a supervisor they restart, and the script it
+      # resumes, take the config of the account that is named then
+      was="$(psh "cat $D/account 2>/dev/null" || true)"
+      psh "mkdir -p $D && echo $ACCOUNT > $D/account"
+      echo "this phone is account $ACCOUNT"
+    fi
+    push_phone_files
     push_proot
-    psh "sh $D/setup.sh" ;;
+    psh "sh $D/setup.sh"
+    if [ "$was" != "$ACCOUNT" ] && psh "[ -f $D/state.json ]"; then
+      echo "the account was ${was:-the default}: a script that runs keeps that config until it is started again (cp.sh -a $ACCOUNT stop, then start one of cp.sh -a $ACCOUNT scripts)"
+    fi ;;
   code)
     connect
     if [ "${1:-}" = "--github" ]; then code_github; else code_local; fi ;;

@@ -15,14 +15,16 @@ mkdir -p tmp logs
 
 if [ ! -x root/bin/proot ]; then
   echo "== proot"
-  # (a proot.tgz already here was pushed from the Mac: some phones cannot reach GitHub's raw files)
-  [ -s proot.tgz ] || curl -fsSL -m 300 -o proot.tgz $PROOT_URL || {
-    rm -f proot.tgz
+  # (a proot.tgz already here was pushed from the Mac, cp.sh setup: some phones cannot reach
+  # GitHub's raw files. A download gets its name only when it is complete.)
+  [ -s proot.tgz ] || { curl -fsSL -m 300 -o proot.tgz.part $PROOT_URL && mv proot.tgz.part proot.tgz; } || {
+    rm -f proot.tgz.part
     echo "proot could not be downloaded: $PROOT_URL"
     echo "on the Mac: download that file, adb push it to $D/proot.tgz, and run setup again"
     exit 1
   }
-  tar xzf proot.tgz || { rm -f proot.tgz; echo "proot.tgz does not unpack (removed): run setup again"; exit 1; }
+  # (a cut-off unpack must not leave a root/bin/proot that the next run takes for a whole one)
+  tar xzf proot.tgz || { rm -rf proot.tgz root; echo "proot.tgz does not unpack (removed): run setup again"; exit 1; }
   rm proot.tgz
 fi
 export PROOT_LOADER=$D/root/libexec/proot/loader PROOT_TMP_DIR=$D/tmp

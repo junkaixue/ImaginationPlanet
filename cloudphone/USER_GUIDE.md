@@ -50,7 +50,7 @@ flowchart LR
 | 面板里的脚本列表 | `cloudphone/phone/scripts.json` | `cloudphone/phone/scripts.gs.json` |
 | 标准装备图 | `pics/mac/zone/loadout_standard.png` | `pics/mac/zone/loadout_standard_gs.png` |
 
-手机上的 `/data/local/tmp/ip/account` 文件里写着这台手机是哪个号（一个词，例如 `gs`）；没有这个文件就是默认的 jx。后台服务按这个名字给面板出脚本列表，脚本按这个名字找自己号的图；没有那个名字的列表或图就用默认的。脚本本身不带区分号的参数。
+手机上的 `/data/local/tmp/ip/account` 文件里写着这台手机是哪个号（一个词，例如 `gs`）；没有这个文件就是默认的 jx。后台服务按这个名字给面板出脚本列表（没有那个名字的列表就用默认的），脚本按这个名字找自己号的图。写了号名却没有那个号的图，换装模式不会跑，日志里会说缺哪张图：别的号的图认不出这个号的装备。脚本本身不带区分号的参数。
 
 gs 的列表：「铸械要塞 换装」（真的出击）和「铸械要塞 换装 试跑(不出击)」（换装和修理是真的，到最后的「袭击」确认时取消）。
 
@@ -58,7 +58,7 @@ gs 的列表：「铸械要塞 换装」（真的出击）和「铸械要塞 换
 
 电脑上，gs 手机的地址写在 `cloudphone/.serial.gs` 里，命令加 `-a gs`，例如 `cloudphone/cp.sh -a gs status`；不加 `-a` 就是 `cloudphone/.serial` 里的 jx 手机。
 
-再加一个号：起个名字（字母和数字），加 `scripts.名字.json` 和 `loadout_standard_名字.png`，把那台手机的地址写进 `cloudphone/.serial.名字`，运行 `cloudphone/cp.sh -a 名字 all`，它会在手机上记下号名。
+再加一个号：起个名字（字母和数字），加 `scripts.名字.json` 和 `loadout_standard_名字.png`，把那台手机的地址写进 `cloudphone/.serial.名字`，把这两个新文件提交并推送，再运行 `cloudphone/cp.sh -a 名字 all`，它会在手机上记下号名。`all` 的代码是从 GitHub 拿的，没推送的文件到不了手机；只想先试，可以在 `all` 之后运行 `cloudphone/cp.sh -a 名字 code` 把电脑上的代码放过去。
 
 ## 更新代码
 
