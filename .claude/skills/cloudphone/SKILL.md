@@ -72,8 +72,9 @@ debugging on in the phone's 开发者选项.
   zone_explore), 跑图日常 (imaginationplanet/running, red_pack), 战斗 (boss_fight, tower_fight,
   fight), 活动 (festival_sit, the card games, star_pick_up, black_market_finder). The panel shows
   one group at a time; keep a group to the scripts that run on the phone. The
-  supervisor appends `--adb 127.0.0.1:5555 --delay 0`, which only fortress_fight.py accepts
-  today: another script needs an `--adb` option (as in fortress_fight's `__main__`) first.
+  supervisor appends `--adb 127.0.0.1:5555 --delay 0`, which fortress_fight.py and
+  boss_fight.py (its device flow is world_boss.py) accept today: another script needs an
+  `--adb` option (as in fortress_fight's `__main__`) first.
 - 更新 also copies `cloudphone/phone/*` to /ip (and restarts the supervisor when
   supervisor.py changed); `setup.sh`/`run.sh` changes need `cp.sh setup` from the Mac.
 
@@ -150,6 +151,25 @@ debugging on in the phone's 开发者选项.
   at most 10 packs of actions (`MAX_PACKS_PER_RUN`); after that it attacks only as actions
   regrow ("Action purchase prompt -> cancel" in the log, one attack in 45 min): looks stuck, is
   the limit.
+- World boss (战斗 group, `boss_fight.py --adb` = world_boss.py): the boss is there 11:00-13:00
+  and 19:00-21:00 phone time only (the phone's clock is the Mac's PST + 16 h), so its pages can
+  be seen and tested only then; the pages are saved in `pics/mac/zone/pages/worldboss/`. Main
+  page 星际玩法 -> 星际冒险 list -> 世界BOSS 立即前往 -> 挑战 -> the fight (50 dice, a tap on
+  the dice button is one throw) -> with no dice the button opens 购买确认 (sells dice; one
+  button; closed by a tap beside it): the end -> the gift box (one gift a tap, 恭喜获得, the
+  box goes with the last) -> 回家. The strong hit's popup (美食星系的帮助) has 免费 x2, 购买 20
+  x3, 购买 100 x4: default 免费, `-d` the rightmost 购买; one tap is enough (the desktop
+  script's tap below the button first is not needed).
+- Dice are never bought, by a script or by hand while testing (the user's rule). A text-only
+  "购买" template also matches the main page's 更多骰子 popup (0.95), and the main page's dice
+  button is where the fight's is: tap a 购买 only on a page identified by something else (the
+  fight's 回家, a 免费 in the same row).
+- Templates with scenery behind them fail across accounts and bosses; cut the text or the
+  button alone, on the phone, at the reference scale (`AdbDevice.screenshot()` saved as PNG,
+  boxes in its px). A Windows template (`pics/*.png`) enlarged 1.31 times matches the
+  reference screenshot (0.97-0.99): good for a first look, replaced by a real cut before a
+  commit. OCR (`ocr_digits`) misreads this game's button font ("50" as "20", "20" as "90"):
+  do not decide by it there.
 - After a phone reboot the supervisor is gone: 浮窗 → 启动服务 starts it through the app's own
   adb client (LocalAdb.java); it resumes the script that was running (state.json).
 - Debug shots accumulate in `/ip/app/pics/mac/zone/debug`; clear with `cp.sh sh "rm app/pics/mac/zone/debug/*"`.

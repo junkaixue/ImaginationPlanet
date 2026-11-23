@@ -1,3 +1,4 @@
+import sys
 import time
 import argparse
 
@@ -187,9 +188,28 @@ if __name__ == '__main__':
     # Parse command line arguments
     parser = argparse.ArgumentParser(description='Boss Fight automation')
     parser.add_argument('-d', '--diamond', action='store_true',
-                        help='Use high diamond with relative coordinates from config file')
+                        help='Take the strong hits for diamonds, the highest offer (on the desktop: at the '
+                             'relative coordinates from the config file)')
+    parser.add_argument('--adb', metavar='SERIAL',
+                        help='Play on an Android device over adb instead of the desktop window, e.g. '
+                             '127.0.0.1:5555 inside the cloud phone (cloudphone/): the flow of world_boss.py')
+    parser.add_argument('--delay', type=int, default=0, help='Seconds to wait before starting')
+    parser.add_argument('--dry', action='store_true',
+                        help='With --adb: go to the boss page and report, do not press 挑战')
+    parser.add_argument('--max-buys', type=int, default=None, metavar='N',
+                        help='With --adb -d: buy at most N strong hits with diamonds, the free one after '
+                             'that (counted from the start of the script, not over a whole boss)')
+    parser.add_argument('--debug-shots', action='store_true',
+                        help='With --adb: save the page at every step to pics/<platform>/zone/debug/')
     args = parser.parse_args()
-    
+
+    if args.adb:
+        import world_boss       # (the device flow: on the zone scripts' helpers and templates)
+        sys.exit(world_boss.main(args))
+    if args.dry or args.debug_shots or args.max_buys is not None:
+        parser.error('--dry, --max-buys and --debug-shots go with --adb')
+    time.sleep(args.delay)
+
     # Create BossFight instance with diamond config option
     b = BossFight(1, use_config_diamond=args.diamond)
     

@@ -310,6 +310,21 @@ single_find_map = {
     "ZAutoThrowing": get_image_path("zone/auto_throwing.png"),      # "自动投掷中..." overlay
     "ZMoreDice": get_image_path("zone/more_dice.png"),              # "更多骰子" popup title = dice ran out
     "ZLongPressAuto": get_image_path("zone/long_press_auto.png"),   # "长按自动" on the dice button = not running
+    # World boss on a device (world_boss.py, boss_fight.py --adb): cut at the Mac reference scale
+    "ZWbPlay": get_image_path("zone/wb_play.png"),                  # "星际玩法" label, main page bottom left
+    "ZWbRun": get_image_path("zone/wb_run.png"),                    # "长按自动" on the dice button (the text only)
+    "ZWbTitle": get_image_path("zone/wb_title.png"),                # "星际冒险": title of the list 星际玩法 opens
+    "ZWbBanner": get_image_path("zone/wb_banner.png"),              # "世界BOSS" on its row of that list
+    "ZWbClose": get_image_path("zone/wb_close.png"),                # the X of the list and of the boss page
+    "ZWbIdle": get_image_path("zone/wb_idle.png"),                  # "没有任何威胁": the boss is not here now
+    "ZWbOk": get_image_path("zone/wb_ok.png"),                      # "好的" (the last fight's result; not met on the phone yet: the desktop's)
+    "ZWbChallenge": get_image_path("zone/wb_challenge.png"),        # "挑战" on the boss page
+    "ZWbHome": get_image_path("zone/wb_home.png"),                  # 回家 (the house): the fight's way out (a visit's page has it too)
+    "ZWbDamage": get_image_path("zone/wb_damage.png"),              # the "?" of 基础伤害: with 回家 beside it, the fight page
+    "ZWbFree": get_image_path("zone/wb_free.png"),                  # "免费": the free one of the strong hits
+    "ZWbBuy": get_image_path("zone/wb_buy.png"),                    # "购买" (the text) of a paid strong hit; what sells dice has it too
+    "ZWbReward": get_image_path("zone/wb_reward.png"),              # "恭喜获得": a gift handed out
+    "ZWbBuyConfirm": get_image_path("zone/wb_buy_confirm.png"),     # "购买确认" title: dice for sale, so none is left
 
     # Restart Game
     "DingHao": get_image_path("dinghao.png"),

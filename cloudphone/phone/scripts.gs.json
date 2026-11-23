@@ -2,5 +2,11 @@
   {"group": "星际探险", "id": "zx_swap", "name": "铸械要塞 换装",
    "args": ["fortress_fight.py", "-f", "zx"]},
   {"group": "星际探险", "id": "zx_swap_dry", "name": "铸械要塞 换装 试跑(不出击)",
-   "args": ["fortress_fight.py", "-f", "zx", "--dry", "--debug-shots"]}
+   "args": ["fortress_fight.py", "-f", "zx", "--dry", "--debug-shots"]},
+  {"group": "战斗", "id": "boss", "name": "世界Boss 普通打",
+   "args": ["boss_fight.py"]},
+  {"group": "战斗", "id": "boss_diamond", "name": "世界Boss 钻石打(最高档)",
+   "args": ["boss_fight.py", "-d"]},
+  {"group": "战斗", "id": "boss_dry", "name": "世界Boss 试跑(不挑战)",
+   "args": ["boss_fight.py", "--dry", "--debug-shots"]}
 ]
