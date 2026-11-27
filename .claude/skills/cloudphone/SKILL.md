@@ -72,9 +72,9 @@ debugging on in the phone's 开发者选项.
   zone_explore), 跑图日常 (imaginationplanet/running, red_pack), 战斗 (boss_fight, tower_fight,
   fight), 活动 (festival_sit, the card games, star_pick_up, black_market_finder). The panel shows
   one group at a time; keep a group to the scripts that run on the phone. The
-  supervisor appends `--adb 127.0.0.1:5555 --delay 0`, which fortress_fight.py and
-  boss_fight.py (its device flow is world_boss.py) accept today: another script needs an
-  `--adb` option (as in fortress_fight's `__main__`) first.
+  supervisor appends `--adb 127.0.0.1:5555 --delay 0`, which fortress_fight.py,
+  boss_fight.py (its device flow is world_boss.py) and zone_explore.py accept today: another
+  script needs an `--adb` option (as in fortress_fight's `__main__`) first.
 - 更新 also copies `cloudphone/phone/*` to /ip (and restarts the supervisor when
   supervisor.py changed); `setup.sh`/`run.sh` changes need `cp.sh setup` from the Mac.
 
@@ -116,8 +116,8 @@ debugging on in the phone's 开发者选项.
   shell as before. An open panel is waited for up to 12 s.
   Scripts send `com.ip.panel.HELLO` every minute (touches and screenshots; the app keeps it 3 min);
   while a script that has not runs, the bubble is touch-through, so older script code never taps
-  into it. A script that waits by its own sleeps (zone_explore's loop) has to call
-  `show_overlay` there too when it is ported. Without the panel app installed (MuMu) AdbDevice
+  into it. A script that waits by its own sleeps has to call `show_overlay` there too when it
+  is ported (`ZoneExplore.nap` does: use it for every wait between passes). Without the panel app installed (MuMu) AdbDevice
   skips all of this.
 - Speed on the phone: screenshots are raw files through the folder both sides see (`/ip/tmp`,
   `shot.<pid>.raw`, one per process, removed before every capture and at exit; 0.23 s, PNG by adb
@@ -235,3 +235,31 @@ debugging on in the phone's 开发者选项.
   浮窗 → 启动服务, or `cp.sh up`.
 - `run.sh` uses proot `--kill-on-exit`: whatever a command leaves behind ends with it. The
   supervisor keeps the Alpine adb server (started at its start), so short calls find it.
+- Box search (星际探险 group, `zone_explore.py --half right|left --adb`): the central zone
+  only, of its map the half on the account's side (jx near 星炽要塞: right; gs near 铸械要塞:
+  left; the middle is where 暗焰要塞 stands, `CENTRAL_MAP_WIDTH` 1862 px from line to line at
+  75%). What its first runs on the phone taught, valid for any script that drags the zone map:
+  a drag is only as good as its measurement, so drag along one axis and at most a sweep step
+  (315 across, 489 down), and measure a row step on the rows between the two blocks of the
+  right-hand buttons (the usual area keeps 35 px of it); do not let icon "landmarks" overrule
+  a measured drag (the map is a grid of identical teal boxes: wrong displacements win the
+  vote); the game lets a frame line in by a third of the screen at most (left 154, right 341,
+  bottom 696; the top one stays hidden at 141), so a line's side is never mistaken and the
+  line is a free anchor; a tap on a target one of our fleets is heading to opens that fleet's
+  panel with the map moved to the fleet, and nothing moves it back: compare the view with the
+  one before and re-anchor at the corner when they differ (`follow_view`, `adrift`); the chat
+  line covers the middle of the map's first row; 我的舰队 and 派遣舰队 close by a tap on the
+  dimmed bar above their title (their close hint is cut off at the bottom of a phone screen,
+  and a "calm point of the map" under 派遣舰队 is a fleet card); after an action purchase the
+  dispatch list is back and the fleet is picked again; the action counter's OCR needs a box
+  without the scroll icon and reads 5 as 0 now and then, so nothing is decided by it.
+- The game's own dice run (自动投掷中) is started by a long press on the dice button (1.5 s;
+  `AdbDevice.drag` from a point to itself) and ended by a tap on the board, on its text or on
+  a button (a tap on the decoration beside the board does nothing); some moments of a throw
+  take no tap, one in two was lost. Scripts end it by taps on the main page's corner button
+  they press next (`ZoneExplore.stop_dice_run`: 星际探险, 星际玩法), never on the text or the
+  board: when the dice run out, the 更多骰子 popup opens there, 购买 34 px from the text's
+  centre, while the corners are outside it. The run visits other planets by itself (拜访: a
+  page with 回家, 奖励 x5 and its own dice button): no script taps there, 回家 asks whether to
+  end the visit early (取消 keeps it). When a test on the user's phone is over and they roll dice in between, start the
+  run again where it was: the main page ("<" at the bottom left of the map), or the visit.

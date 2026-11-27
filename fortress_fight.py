@@ -59,10 +59,9 @@ from desktop import pyautogui
 from common import single_find, get_center, get_all, single_find_map
 from log_helper import log
 from adb_device import AdbLost
-from click import current_device
 import zone_explore
 from zone_explore import (ZoneExplore, pause, match_all, Point, FLEET_PAGE_LAYOUT, SHIP_LAYOUT, MATCH_TH, DRAG_LAYOUT,
-                          MONITOR_POLL, RUN_IDLE_SECONDS, CONTINUE_TAP_DY, _code_version)
+                          MONITOR_POLL, RUN_IDLE_SECONDS, CONTINUE_TAP_DY, PHONE_PACE, _code_version)
 
 # ---- 我的舰队 page, logical px relative to the "我的舰队" title center (ZMyFleet)
 EQUIP_LAYOUT = {
@@ -70,7 +69,6 @@ EQUIP_LAYOUT = {
     "row_dy": (132.5, 207.5, 305, 380, 475),         # two gear rows, two chess rows, artifact row
     "shield_slot": (152.5, 475),                     # bottom right lv.6 shield: never touched
     "power_dx": 0, "power_dy": 618, "power_half_w": 95, "power_half_h": 15,   # "战力:835.26万"
-    "close_dx": 0, "close_dy": -60,                  # tap the dimmed top bar above the title to close
     "loadout_dx": 3, "loadout_dy": 305,              # center of the loadout grid (the standard loadout screenshot)
     "loadout_th": 0.9,                               # the holder's grid matches the standard >= this (of
                                                      # several tabs that do, the highest 战力 has the gear)
@@ -179,8 +177,6 @@ HOLDER_OK_HP = 90            # the gear holder attacks again by itself above thi
 DEBUG_DIR = None             # --debug-shots: save the OCR crops here
 RETURN_TIMEOUT = 40 * 60     # seconds to wait for the fighting fleet to come back
 POLL = 30
-PHONE_PACE = 0.6             # --pace when the script runs on the phone itself (the cloud phone): it draws
-                             # a page sooner than the Mac's emulator, so the fixed waits are cut to this
 
 
 def poll():
@@ -374,7 +370,6 @@ class FortressFight(ZoneExplore):
         self.repair_tries = {}        # fleet -> attempts made from pending_repair
         self.holder_misses = 0        # consecutive starts that could not find the gear holder
         self.lookup_unreadable = False  # the last find_gear_holder failed to read the fleet page (not: no match)
-        self.stop_requested = False   # SIGTERM (the supervisor's 停止 / 更新): end at the next stop point
         self.swap_fails = 0           # consecutive swap_gear failures before the holder is looked for again
         self.calibrated = False       # the window scale was measured on the map
         self.swap = None              # an unfinished gear swap (see finish_swap)
@@ -564,7 +559,7 @@ class FortressFight(ZoneExplore):
             title = self.fleet_title()
             if title is None or not single_find("ZMyFleet"):
                 break
-            self.click(title.x + EQUIP_LAYOUT["close_dx"], title.y + EQUIP_LAYOUT["close_dy"], 1.5,
+            self.click(title.x + FLEET_PAGE_LAYOUT["close_dx"], title.y + FLEET_PAGE_LAYOUT["close_dy"], 1.5,
                        "dimmed top bar (close 我的舰队)", force=True)
         return self.close_popup()
 
@@ -1484,10 +1479,9 @@ class FortressFight(ZoneExplore):
             log(f"  tap {tap + 1} on {what} opened nothing")
         return None
 
-    # what a tap on the fortress page may leave on top (the fleet panel is a map thing); the
-    # guard popup's 袭击 ahead of the close hint here
-    FORTRESS_DIALOGS = ZoneExplore.MODAL_KEYS + (ATTACK,) + tuple(
-        k for k in ZoneExplore.DIALOGS if k not in ZoneExplore.MODAL_KEYS + ("ZGuardAttack", "ZFleetSpeed"))
+    # what a tap on the fortress page may leave on top, in the order they are looked for (the
+    # guard popup's 袭击 ahead of the close hint here; the fleet panel and 我的舰队 are map things)
+    FORTRESS_DIALOGS = ZoneExplore.MODAL_KEYS + (ATTACK, "ZCloseHint", "ZBackArrow", "ZGo", "ZDispatchTitle")
 
     def clear_fortress_dialogs(self, on_top=None, passes=3):
         """Dismiss what lies over the fortress page (purchase prompt, 点击任意处继续, estimate
@@ -1495,13 +1489,13 @@ class FortressFight(ZoneExplore):
         detected by the caller. Stops as soon as nothing is seen."""
         return self.dismiss_all(self.FORTRESS_DIALOGS, passes, first=on_top)
 
-    def blank_spot(self):
-        """On the fortress page: the description text under the title (the map's plain_spot
-        needs the map anchors, which the fortress page does not show)."""
+    def blank_spot(self, k=None, gs=None):
+        """On the fortress page, for every popup: the description text under the title (the
+        map's plain_spot needs the map anchors, which the fortress page does not show)."""
         title = self.page_title() or self.fortress_title   # the header may be dimmed by the popup
         if title is not None:
             return Point(title.x, title.y + FORTRESS["blank_dy"])
-        return super().blank_spot()
+        return super().blank_spot(k, gs)
 
     def select_and_raid(self, target):
         """Click a target on the fortress page and press its 袭击. Returns "raided", "buy"
@@ -1948,19 +1942,6 @@ class FortressFight(ZoneExplore):
         log(msg)
         return not self.dry_run and self.nap(poll())
 
-    def nap(self, seconds):
-        """Sleep, waking every second for a stop request; False when one came. (A monotonic
-        clock: the phone's time sync may step the wall clock.)"""
-        device = current_device()
-        if device is not None and hasattr(device, "show_overlay"):
-            device.show_overlay()           # (nothing is read or tapped meanwhile: the bubble is the user's)
-        end = time.monotonic() + seconds
-        while not self.stop_requested:
-            if time.monotonic() >= end:
-                return True
-            time.sleep(1)
-        return False
-
     def settle_before_stop(self):
         """Swap mode, ending on a stop: stripped fleets wait in deferred_equip for their 一键配队
         until the gear has an owner, and the next run does not know them. Those that are in get
@@ -1978,16 +1959,6 @@ class FortressFight(ZoneExplore):
         if left:
             log(f"Stopping with fleets {sorted(left)} still without their 一键配队 "
                 "(out at sea, or it failed): 一键配队 them by hand")
-
-    def on_term(self, signum, frame):
-        """SIGTERM (the supervisor's 停止 / 更新, cp.sh restart): a kill in the middle of a gear
-        swap would leave the gear loose (no fleet holds it; the next run cannot find it). The
-        run ends at its next stop point instead: between passes, before a swap or an attack
-        starts, after the swap in hand is finished or abandoned (the gear put back)."""
-        first = not self.stop_requested
-        self.stop_requested = True
-        if first:
-            log("Stop requested: ending after the step in hand")
 
     def stop_point(self):
         """True when a stop was requested; the caller returns (nothing is half done here)."""
@@ -2036,6 +2007,10 @@ class FortressFight(ZoneExplore):
             log(f"Swap mode needs the standard loadout screenshot of account {self.account or 'default'}: "
                 f"{self.loadout_path} is missing. Capture it on the fleet that carries the whole best gear")
             return
+        # SIGTERM (the supervisor's 停止 / 更新, cp.sh restart): a kill in the middle of a gear swap
+        # would leave the gear loose (no fleet holds it; the next run cannot find it). The run
+        # ends at its next stop point instead: between passes, before a swap or an attack starts,
+        # after the swap in hand is finished or abandoned (the gear put back).
         signal.signal(signal.SIGTERM, self.on_term)
         errors = []                             # times of recent errors
         while True:

@@ -82,7 +82,6 @@ class WorldBoss(ZoneExplore):
         super().__init__(dry_run=dry_run)
         self.diamond = diamond
         self.max_buys = max_buys        # --max-buys: diamond hits bought at most (None: no limit of ours)
-        self.stop_requested = False     # SIGTERM (the supervisor's 停止 / 更新): leave the boss and end
         self.attack = None              # the dice button: the main page's once that page was reached (pages
                                         # may be open from then on), the fight's once the fight is on
         self.status = 1                 # the exit status of a run that did not get to the fight (see enter)
@@ -139,20 +138,29 @@ class WorldBoss(ZoneExplore):
         return any(abs(cx / self.sft - x) <= slack and abs(cy / self.sft - y) <= slack
                    for cx, cy, _ in find_all_with_path(single_find_map["ZWbDamage"], gs, MATCH_TH))
 
+    def visiting(self, gs):
+        """A visit to another planet is on the capture `gs` (the dice run goes on such visits by
+        itself): 回家, which the fight has too, without the fight's "?" and without the main
+        page's 星际玩法. Nothing is tapped there: 回家 asks whether to end the visit early, which
+        costs the rest of it, and its dice run is the user's."""
+        return self.visible("ZWbHome", gs) and not self.in_fight(gs) and not self.visible("ZWbPlay", gs)
+
     def main_page(self):
         """Get to the game's main page with the dice at rest: from the main page itself (a dice
-        popup closed, a dice run stopped: any tap ends it), from the 星际探险 map or a fortress
+        popup closed, a dice run stopped: a tap ends it), from the 星际探险 map or a fortress
         page (their "<"), from a fight left open (回家), from the 星际冒险 list or the boss page
-        (their X). False when the page on screen is none of these."""
+        (their X). False when the page on screen is none of these, or a visit (see visiting)."""
         for _ in range(MAIN_PAGE_STEPS):
             self.invalidate_shot()
             gs = self.shot()[1]
+            if self.visiting(gs):
+                log("The dice run is visiting another planet: the visit is not ended for the boss; "
+                    "start the script again once the main page is back")
+                return False
             # (what lies on top first: the 星际玩法 label shows through a popup's dimming)
             k = self.seen("ZAutoThrowing", "ZMoreDice", "ZExplore", "ZFortressBack", "ZWbPlay", gs=gs)
             if k == "ZAutoThrowing":
-                c = get_center_with_path(single_find_map[k], gs, MATCH_TH)
-                log("The dice are being thrown automatically: stopping that")
-                self.click(c.x, c.y, 2.0, "stop the dice run", force=True)
+                self.stop_dice_run("ZWbPlay")   # (by taps on 星际玩法, never on the board: see there)
             elif k == "ZMoreDice":
                 c = get_center_with_path(single_find_map[k], gs, MATCH_TH)
                 self.click(c.x + MORE_DICE_LAYOUT["close_dx"], c.y + MORE_DICE_LAYOUT["close_dy"], 1.5,
@@ -451,6 +459,8 @@ class WorldBoss(ZoneExplore):
             self.click(ok.x, ok.y, 2.0, "好的", force=True)
             return True
         for key, what in (("ZWbReward", "恭喜获得 (close)"), ("ZWbHome", "回家"), ("ZWbClose", "X (close)")):
+            if key == "ZWbHome" and not self.in_fight(gs):
+                continue                    # (a visit's 回家: see visiting)
             c = get_center_with_path(single_find_map[key], gs, MATCH_TH)
             if c is not None:
                 self.click(c.x, c.y, 2.0, what, force=True)

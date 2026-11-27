@@ -27,7 +27,14 @@ Usage:
     python zone_explore.py --monitor    # wait in the dice run, enter 星际探险 when the dice run out
     python zone_explore.py --zone-test 03   # switch to zone 03 through the chooser and verify
     python zone_explore.py              # full loop
+    python zone_explore.py --half right # the simple search: the central zone only, and of its map only
+                                        # the right half (left: --half left); no outer zone is visited
+    python zone_explore.py --adb SERIAL # on an Android device over adb (the cloud phone, see cloudphone/)
     python imaginationplanet.py -ze     # same through the main entry
+
+The simple search (--half) is for an account whose side of the central zone is one half of its
+map: the half its fortress stands in (星炽要塞: right, 铸械要塞: left). The rows of the sweep start
+at that half's frame line and turn back at the middle of the map (CENTRAL_MAP_WIDTH / 2).
 """
 
 import argparse
@@ -35,7 +42,10 @@ import math
 import os
 import platform
 import re
+import signal
+import sys
 import time
+import traceback
 from collections import namedtuple
 
 import cv2
@@ -43,6 +53,7 @@ import numpy as np
 
 from desktop import pyautogui
 
+from adb_device import AdbLost
 from click import click_at, current_device, drag
 from common import (get_scaling_factor, single_find, get_center, get_all, find_all_with_path,
                     screen_shot, single_find_map, simple_single_find, single_find_with_path,
@@ -97,13 +108,19 @@ ACTION_PACK_SIZE = 5
 MIN_SCORE_FREE_ACTION = 1      # with free actions left, anything in RESOURCE_SCORES is fine
 MIN_SCORE_BOUGHT_ACTION = 1    # user: always buy actions, coins are the only limit
 MAX_PACKS_PER_RUN = 10         # coin limit: at most this many 150-coin packs per process run
+ACTIONS_OUT_WAIT = 15 * 60     # seconds nothing is sent after the purchase prompt came and no pack was
+                               # bought (the run's packs are used up, or the purchase did not go through:
+                               # no coins); an action regrows in about 45 min
 MATCH_TH = 0.8
 POLL_SECONDS = 90
+ADB_LOST_WAIT = 10             # seconds before the round that follows one cut off by a lost adb call
 # Monitor mode: stay in the dice run ("自动投掷中") and switch to 星际探险 once the dice run out
 # ("更多骰子" popup), or when the run button has shown "长按自动" for RUN_IDLE_SECONDS.
 MONITOR_POLL = 30
 RUN_IDLE_SECONDS = 180
 MORE_DICE_LAYOUT = {"close_dx": -95, "close_dy": 510}   # empty spot relative to the "更多骰子" title
+DICE_STOP_WAIT = 15        # seconds a running dice run gets to stop ...
+DICE_STOP_RETAP = 1.5      # ... and seconds from one of the taps that end it to the next (see stop_dice_run)
 DISPATCH_STEPS = 14        # max page transitions for one dispatch
 
 # ---- Layouts, in LOGICAL pixels, measured on the Mac emulator window at 75% zoom from
@@ -118,9 +135,12 @@ SHIP_LAYOUT = {
     "hp_bar_dy": -19,       # status text center -> hp bar center, y
     "hp_bar_half_w": 24,
     "hp_bar_half_h": 7,
-    "actions_dx": -11,      # base center -> "n/25" action counter center
+    # the "n/25" action counter: its text starts right of the scroll icon (which ends 34 left of
+    # the base center) and "25/25" ends 11 right of it; the "?" button begins 16 right. The box
+    # leaves both out: with the icon in it the counter read "12/25" for 2/25 on the phone
+    "actions_dx": -9.5,     # base center -> center of that box
     "actions_dy": 106,
-    "actions_half_w": 30,
+    "actions_half_w": 23.5,
     "actions_half_h": 10,
 }
 # Ship status templates with thresholds; the best-confidence match wins per slot ("返航中" and
@@ -138,7 +158,15 @@ MAP_LAYOUT = {"x_min_dx": 15, "x_max_dx": 430, "y_min_dy": 120, "y_max_team_dy":
 # Parts of the map area covered by fixed UI (right column: 冰封探索礼, 通缉榜, 任务榜, 我的基地,
 # zone thumbnail). Resources under them cannot be clicked; the sweep sees them one stop later.
 MAP_EXCLUDE = [(375, 440, 95, 315), (375, 440, 585, 820)]      # (x0, x1, y0, y1) relative to ZBase
-MEASURE_X_MAX_DX = 365      # drag movement is measured left of the right UI column (it never moves)
+# The chat line lies across the middle of the map's top edge, over the upper half of an icon in
+# the map's first row (which cannot be dragged lower): the icon scores by what the line reads at
+# the moment. A spot that high (y1 from ZBase) is looked at and tapped beside the line instead,
+# at the nearer of the two clear places (aims: x from ZBase).
+CHAT_LINE = {"y1": 145, "aims": (50, 325)}
+MEASURE_X_MAX_DX = 365      # drag movement is measured left of the right UI column (it never moves) ...
+MEASURE_BAND_DYS = (320, 580)   # ... or, when a move leaves too little of that area in both captures (a row
+                            # step: 315 of its 350), on the rows between that column's two blocks, at their
+                            # whole width (y relative to ZBase)
 
 # Map dragging. A drag moves the map content by (dx, dy); the real movement is measured by
 # finding a patch of the old screen in the new one. |measured| < edge_frac * |asked| = edge.
@@ -165,6 +193,8 @@ DRAG_LAYOUT = {
     "max_drags": 40,        # per direction, safety cap
 }
 SWEEP_ENABLED = True
+SHORT_ROW_MIN = 15          # logical px: a last move down of at least this (and below edge_frac of a step,
+                            # so "edge") is followed by one more row: an icon may lie in what it revealed
 # The zone map is framed by purple lines (RGB ~167,102,206). When the frame line of the side we
 # are about to reveal is already inside the map area, that side is fully visible: it is an edge.
 BOUNDARY_LAYOUT = {"min_r": 110, "min_b": 150, "max_g": 130, "min_bg_diff": 60, "min_ratio": 0.5}
@@ -174,9 +204,18 @@ BOUNDARY_LAYOUT = {"min_r": 110, "min_b": 150, "max_g": 130, "min_bg_diff": 60, 
 #             because other lords compete for them).
 #   "greedy": dispatch to whatever is on each screen while sweeping (old behaviour).
 DISPATCH_MODE = "survey"
+# The simple search (--half left|right): the central zone only, and of its map only that half; no
+# outer zone is visited. The rows of the sweep start at the half's own frame line (map x = 0
+# there) and turn back once the view reaches the middle of the map, this far from the line.
+CENTRAL_MAP_WIDTH = 1862              # logical px at 75% from the left frame line to the right one (measured
+                                      # on the cloud phone: eight drags of 200, each one measured)
 IMMEDIATE_KINDS = FACTORY_KINDS       # dispatched as soon as seen during the survey
 NAV_TOLERANCE = 80                    # logical px: re-detected icon must be this close to the memorized spot
 RESEEN_TOLERANCE = 120                # logical px: a same-kind spot this close in map coords is the same one
+                                      # when a drag since the last stop could not be measured (it moved the
+                                      # map by up to a step less than assumed) ...
+RESEEN_MEASURED = 25                  # ... and this close when all were measured (two boxes may lie a cell,
+                                      # 31 px, apart)
 
 # Zones. The chooser (bottom-right thumbnail button) shows "远古深寒区" with the zones laid out
 # around the centre. The layout is fixed, so the cards are clicked at offsets (logical px) from
@@ -203,6 +242,8 @@ RIVAL_LAYOUT = {"etas_dx0": -80, "etas_dy0": 8, "etas_dx1": 360, "etas_dy1": 58,
 # only a fallback because it misreads some numbers ("04" -> "0").
 ZONE_TITLE_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "zone_titles")
 SURVEY_TTL = 10 * 60                  # seconds a zone's memorized spots stay valid before re-surveying
+HALF_RESURVEY = 3 * 60                # the simple search: seconds after a sweep before the next one, once
+                                      # every spot of the last is used up (ships are idle, boxes keep coming)
 # Outer zones are surveyed for these kinds only and without the route-line checks (fast scan);
 # the central zone is surveyed for everything.
 OUTER_KINDS = FACTORY_KINDS | {"ZYellowBox", "ZYellowBoss", "ZBox"}
@@ -212,7 +253,10 @@ PRESS_WAIT = 5.5                      # seconds press() looks for the effect of 
                                       # looks it was 6 s on the Mac and 4 s on the phone at pace 0.6)
 PACE = 1.0                            # every fixed wait for the game (after a tap, between two looks) is
                                       # multiplied by this: 1 on the Mac's emulator, less on a device that
-                                      # answers faster (the cloud phone, see fortress_fight --pace)
+                                      # answers faster (--pace)
+PHONE_PACE = 0.6                      # --pace when the script runs on the phone itself (the cloud phone): it
+                                      # draws a page sooner than the Mac's emulator, so the fixed waits are
+                                      # cut to this
 
 
 def pause(seconds):
@@ -261,7 +305,9 @@ FACTORY_LAYOUT = {"slots": 5, "dx0": -47, "spacing": 80, "dy": 381, "free_plus_d
 # the selected tab is drawn on a bright background: a band tab_sel_dy below the title averages
 # ~115 there, the other tabs ~35
 FLEET_PAGE_LAYOUT = {"tab_dx0": -151, "tab_spacing": 76, "tab_dy": 66, "tab_sel_dy": 78, "tab_sel_half_w": 15,
-                     "tab_sel_min": 75, "tab_retries": 3, "dim_retries": 2}     # dim_retries: looks before the dialog check
+                     "tab_sel_min": 75, "tab_retries": 3, "dim_retries": 2,     # dim_retries: looks before the dialog check
+                     "close_dx": 0, "close_dy": -60}    # a tap on the dimmed top bar above the title closes the page
+                                                        # (the dispatch list, 派遣舰队, as well)
 
 # Boosting a sailing fleet: click its rocket icon in the top bar (icon_dy above the status text;
 # cross-zone fleets sometimes need several clicks) -> panel with "加速" -> dialog with one row per
@@ -324,6 +370,9 @@ def _uninstall_screenshot_scaler():
 
 
 OCR_LEVELS = (480, 420, 360)     # R+G+B above which a pixel is glyph (see ocr_digits)
+ACTION_OCR_LEVELS = (420, 360)   # the same for the action counter: its glyphs are cyan (R+G+B ~460), and at
+                                 # 480 only their brightest pixels are left on an upscaled screenshot
+ACTIONS_RE = re.compile(r"(\d{1,3})/(\d{1,3})")     # "2/25"; more than the maximum right after a purchase
 
 
 def hp_value(txt):
@@ -368,17 +417,24 @@ def _code_version():
 
 
 class ZoneExplore:
-    def __init__(self, dry_run=False):
+    def __init__(self, dry_run=False, half=None):
         self.dry_run = dry_run
+        self.half = half           # "left" / "right": the simple search (see CENTRAL_MAP_WIDTH); None: all
+        self.zones = ["central"] if half else ZONES     # the zones a round surveys, in this order
+        self.stop_requested = False    # SIGTERM (the cloud phone's 停止 / 更新): end at the next stop point
         self.is_mac = platform.system() == "Darwin"
         self.sft = get_scaling_factor()
         self.visited = {}          # spot key (map coords) -> timestamp, avoids re-sending to the same spot
         self.visited_ttl = 1800
+        self.missed = []           # (zone, mx, my, time) of spots that were not found where they were
+                                   # memorized: not memorized again for visited_ttl
         self.rounds = 0
         self.fails = 0
         self.attack_quota = None
         self.actions = None        # (left, max) from the counter, None when unreadable
         self.packs_bought = 0
+        self.actions_out_at = 0.0  # time the purchase prompt came and no pack was bought (see actions_out)
+        self.no_action = False     # the last dispatch ended that way
         self.ocr = None            # None = unknown, True/False once probed
         self.ocr_raw = []          # what the last ocr_digits read at each brightness cut
         self.offset = [0.0, 0.0]   # how far the map content has been dragged since the corner
@@ -395,6 +451,9 @@ class ZoneExplore:
         self._shot, self._shot_time = None, 0.0
         self._title_ocr = None        # OCR reading of the last read_zone (None = not run / failed)
         self.last_drag_unknown = False
+        self.unmeasured = False       # a drag since the last survey stop could not be measured
+        self.adrift = False           # the game moved the view by itself, by an amount that could not be
+                                      # measured: the offsets are wrong until the next go_to_corner
         self._scan_frame = None
         self.last_landmarks = []      # every template hit of the last scan (any colour): used as landmarks
         self.prev_landmarks = None    # landmarks of the previous survey stop
@@ -404,7 +463,8 @@ class ZoneExplore:
         self.win_scale = 1.0       # current window size / reference window size
         _install_screenshot_scaler()
         self._orig_screenshot = _SCREENSHOT["orig"]
-        log(f"ZoneExplore init. platform={platform.system()} sft={self.sft} dry_run={dry_run} code={_code_version()}")
+        log(f"ZoneExplore init. platform={platform.system()} sft={self.sft} dry_run={dry_run} code={_code_version()}"
+            + (f"; the {half} half of the central zone only" if half else ""))
 
     # ------------------------------------------------------------------ screenshots
     def shot(self):
@@ -418,6 +478,28 @@ class ZoneExplore:
 
     def invalidate_shot(self):
         self._shot_time = 0.0
+
+    # ------------------------------------------------------------------ waiting, stopping
+    def nap(self, seconds):
+        """Sleep, waking every second for a stop request; False when one came. (A monotonic
+        clock: the phone's time sync may step the wall clock.)"""
+        device = current_device()
+        if device is not None and hasattr(device, "show_overlay"):
+            device.show_overlay()           # (nothing is read or tapped meanwhile: the bubble is the user's)
+        end = time.monotonic() + seconds
+        while not self.stop_requested:
+            if time.monotonic() >= end:
+                return True
+            time.sleep(1)
+        return False
+
+    def on_term(self, signum, frame):
+        """SIGTERM (the cloud phone's 停止 / 更新, cp.sh restart): the run ends at its next stop
+        point, with nothing half done, instead of wherever the kill finds it."""
+        first = not self.stop_requested
+        self.stop_requested = True
+        if first:
+            log("Stop requested: ending after the step in hand")
 
     def visible(self, key, gs, th=MATCH_TH):
         """Template `key` matches on the gray capture `gs`."""
@@ -606,10 +688,17 @@ class ZoneExplore:
     def prune_visited(self):
         now = time.time()
         self.visited = {k: t for k, t in self.visited.items() if now - t < self.visited_ttl}
+        self.missed = [m for m in self.missed if now - m[3] < self.visited_ttl]
 
-    def ocr_digits(self, color, cx, cy, half_w, half_h, accept=None):
+    def was_missed(self, x, y):
+        """The screen position is that of a spot that was not found again lately (see missed)."""
+        mx, my = x - self.offset[0], y - self.offset[1]
+        return any(z == self.zone and abs(mx - px) < RESEEN_MEASURED and abs(my - py) < RESEEN_MEASURED
+                   for z, px, py, _ in self.missed)
+
+    def ocr_digits(self, color, cx, cy, half_w, half_h, accept=None, levels=OCR_LEVELS):
         """OCR digits inside a logical-pixel box; returns the raw text or ''. The glyphs are the
-        pixels brighter than OCR_LEVELS[0]; with `accept` (text -> bool) a reading it rejects is
+        pixels brighter than levels[0]; with `accept` (text -> bool) a reading it rejects is
         taken again at the next, lower level (a screenshot upscaled from a small device screen
         has softer, darker glyph edges), and '' is returned when none is accepted."""
         if self.ocr is False:
@@ -620,7 +709,7 @@ class ZoneExplore:
             y1, y2 = int((cy - half_h) * self.sft), int((cy + half_h) * self.sft)
             patch = color[y1:y2, x1:x2].astype(int)
             self.ocr_raw = []
-            for level in OCR_LEVELS if accept is not None else OCR_LEVELS[:1]:
+            for level in levels if accept is not None else levels[:1]:
                 bright = (patch[..., 0] + patch[..., 1] + patch[..., 2]) > level
                 mask = np.where(bright, 0, 255).astype(np.uint8)
                 mask = cv2.resize(mask, None, fx=4, fy=4, interpolation=cv2.INTER_CUBIC)
@@ -672,11 +761,25 @@ class ZoneExplore:
     TAB_DIM_LOOKS = FLEET_PAGE_LAYOUT["dim_retries"]    # looks at a dimmed 我的舰队 before the dialog check
     # the close hint before 袭击: on the map the fortress icon's popup carries both and closes
     # with a tap under its hint
-    DIALOGS = MODAL_KEYS + ("ZCloseHint", "ZBackArrow", "ZFleetSpeed", "ZGo", "ZDispatchTitle", "ZGuardAttack")
+    # 我的舰队 before the close hint and the back arrow: on a phone its hint lies at the bottom edge
+    # of the screen, cut off, and the ornament left of its title passes for the arrow. The
+    # dispatch list before 前往: it lies over the target's popup, whose button shows through.
+    DIALOGS = MODAL_KEYS + ("ZMyFleet", "ZDispatchTitle", "ZCloseHint", "ZBackArrow", "ZFleetSpeed", "ZGo",
+                            "ZGuardAttack")
 
-    def blank_spot(self):
-        """Where to tap to close a popup that has no button of its own."""
-        return self.plain_spot()
+    def above_title(self, key, gs=None):
+        """The dimmed top bar above the title `key` of a page that closes by a tap there (我的舰队,
+        派遣舰队); None when that title is not on screen."""
+        title = self.anchor(key, gs)
+        if title is None:
+            return None
+        return Point(title.x + FLEET_PAGE_LAYOUT["close_dx"], title.y + FLEET_PAGE_LAYOUT["close_dy"])
+
+    def blank_spot(self, k=None, gs=None):
+        """Where to tap to close the popup `k`, which has no button of its own: a calm point of
+        the map; for the dispatch list the bar above its title (the list covers the map: a
+        point of the map area is one of its fleet cards)."""
+        return (self.above_title(k, gs) if k == "ZDispatchTitle" else None) or self.plain_spot()
 
     def dismiss(self, k, gs=None):
         """Close the dialog `k` (a key of DIALOGS) found on the capture `gs`."""
@@ -686,6 +789,10 @@ class ZoneExplore:
             self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
         elif k in ("ZCancel", "ZEstimateLabel"):    # the estimate dialog closes with its 取消
             self.click_button("ZCancel", force=True)
+        elif k == "ZMyFleet":               # (in every subclass: not a matter of blank_spot)
+            p = self.above_title(k, gs)
+            if p is not None:
+                self.click(p.x, p.y, 1.5, "dimmed top bar (close 我的舰队)", force=True)
         elif k == "ZCloseHint":
             c = get_center_with_path(single_find_map["ZCloseHint"], gs if gs is not None else self.shot()[1], MATCH_TH)
             if c is not None:
@@ -694,8 +801,8 @@ class ZoneExplore:
             self.click_button("ZBackArrow", force=True)
         elif k == "ZFleetSpeed":
             self.close_fleet_panel(self.last_dispatched or 1)
-        else:                               # 前往 popup / dispatch dialog / guard popup
-            p = self.blank_spot()
+        else:                               # 前往 popup / dispatch list / guard popup
+            p = self.blank_spot(k, gs)
             if p is not None:
                 self.click(p.x, p.y, 1.5, "blank spot (close popup)", force=True)
 
@@ -816,16 +923,15 @@ class ZoneExplore:
         if base is None:
             return None
         color = np.array(pyautogui.screenshot())
-        txt = self.ocr_digits(color, base.x + SHIP_LAYOUT["actions_dx"], base.y + SHIP_LAYOUT["actions_dy"],
-                              SHIP_LAYOUT["actions_half_w"], SHIP_LAYOUT["actions_half_h"])
-        if "/" not in txt:
+        reading = lambda t: ACTIONS_RE.fullmatch(t.replace(" ", ""))
+        m = reading(self.ocr_digits(color, base.x + SHIP_LAYOUT["actions_dx"], base.y + SHIP_LAYOUT["actions_dy"],
+                                    SHIP_LAYOUT["actions_half_w"], SHIP_LAYOUT["actions_half_h"],
+                                    accept=lambda t: reading(t) is not None, levels=ACTION_OCR_LEVELS))
+        if m is None:
+            if self.ocr:
+                log(f"Action counter unreadable (OCR {self.ocr_raw})")
             return None
-        left, right = txt.split("/", 1)
-        left = "".join(ch for ch in left if ch.isdigit())
-        right = "".join(ch for ch in right if ch.isdigit())
-        if not left or not right:
-            return None
-        self.actions = (int(left), int(right))
+        self.actions = (int(m.group(1)), int(m.group(2)))
         log(f"Actions: {self.actions[0]}/{self.actions[1]}")
         return self.actions
 
@@ -847,6 +953,32 @@ class ZoneExplore:
         if region is None or base is None:
             return region
         return (region[0], region[1], min(region[2], base.x + MEASURE_X_MAX_DX), region[3])
+
+    def measure_regions(self):
+        """The areas a drag can be measured on: measure_region(), and the rows between the two
+        blocks of the right-hand column at the map's whole width. A row step leaves 35 px of
+        the first in both captures, too little to match, and 100 of the second; a step down
+        leaves nothing of the second."""
+        first = self.measure_region()
+        region = self.map_region()
+        base = self.anchor("ZBase")
+        if first is None or region is None or base is None:
+            return [first] if first is not None else []
+        y0, y1 = (max(region[1], min(region[3], base.y + dy)) for dy in MEASURE_BAND_DYS)
+        return [first, (region[0], y0, region[2], y1)] if y1 - y0 >= 60 else [first]
+
+    def measure_drag(self, regions, before, dx, dy):
+        """How far the content moved (measure_shift), on the first of `regions` that can tell,
+        the one that keeps most of itself in both captures first (`before`: their crops from
+        before the drag); None when none can."""
+        def kept(i):
+            x1, y1, x2, y2 = regions[i]
+            return max(0.0, x2 - x1 - abs(dx)) * max(0.0, y2 - y1 - abs(dy))
+        for i in sorted(range(len(regions)), key=kept, reverse=True):
+            shift = self.measure_shift(before[i], self.grab_region(regions[i]), dx, dy)
+            if shift is not None:
+                return shift
+        return None
 
     def grab_region(self, region):
         """Grayscale physical-pixel crop of the map area."""
@@ -991,22 +1123,21 @@ class ZoneExplore:
                 dx, dy = ex - sx, ey - sy
             if not self.on_map():
                 self.close_popup()
-            mregion = self.measure_region()
-            before = self.grab_region(mregion)
+            mregions = self.measure_regions()
+            before = [self.grab_region(r) for r in mregions]    # (crops of one capture)
             rsx, rsy = self.to_real(sx, sy)
             rex, rey = self.to_real(ex, ey)
             drag(rsx, rsy, rex, rey)
             self.invalidate_shot()
             pause(DRAG_LAYOUT["settle"])
             self.wait_still()
-            after = self.grab_region(mregion)
-            shift = self.measure_shift(before, after, dx, dy)
+            shift = self.measure_drag(mregions, before, dx, dy)
             if shift is None:
                 pause(1.0)          # maybe still animating (rubber band at the edge); look again
                 self.invalidate_shot()
-                after = self.grab_region(mregion)
-                shift = self.measure_shift(before, after, dx, dy)
+                shift = self.measure_drag(mregions, before, dx, dy)
             self.last_drag_unknown = shift is None
+            self.unmeasured = self.unmeasured or shift is None
             if shift is None:
                 log(f"Drag ({dx:.0f},{dy:.0f}): movement unknown (plain map), assuming it worked")
                 self.offset[0] += dx
@@ -1014,7 +1145,7 @@ class ZoneExplore:
                 return "moved"
             got = (shift[0] ** 2 + shift[1] ** 2) ** 0.5
             if got < DRAG_LAYOUT["edge_frac"] * asked:
-                self.debug_drag(before, after, dx, dy, shift)
+                self.debug_drag(before[0], self.grab_region(mregions[0]), dx, dy, shift)
             self.offset[0] += shift[0]
             self.offset[1] += shift[1]
             if got >= DRAG_LAYOUT["edge_frac"] * asked:
@@ -1037,16 +1168,54 @@ class ZoneExplore:
 
     def go_to_corner(self, dx, dy):
         """Drag to a corner and anchor the map frame there: map (0,0) = the frame lines when
-        they are visible, otherwise the view itself. Repeatable, so spots survive zone switches."""
+        they are visible (of the side the drag led to: the right one after dx < 0), otherwise
+        the view itself. Repeatable, so spots survive zone switches."""
         self.drag_to_edge(dx, 0)
         self.drag_to_edge(0, dy)
         self.offset = [0.0, 0.0]
         sides = self.boundary_sides()
-        if "left" in sides:
-            self.offset[0] = sides["left"]
+        side = "right" if dx < 0 else "left"
+        if side in sides:
+            self.offset[0] = sides[side]
+        elif side == "right":
+            region = self.map_region()          # (the line is at most this far right)
+            self.offset[0] = region[2] if region else 0.0
         if "top" in sides:
             self.offset[1] = sides["top"]
-        log(f"Corner reached, frame lines {sides}, offset {self.offset}")
+        self.prev_landmarks = self.prev_offset = None   # (a new anchor: no stop before it counts)
+        self.unmeasured = self.adrift = False
+        log(f"Corner reached, frame lines { {k: round(float(v)) for k, v in sides.items()} }, "
+            f"offset ({self.offset[0]:.0f},{self.offset[1]:.0f})")
+
+    def home_corner(self):
+        """(dx, dy) for go_to_corner to the corner the map coordinates are anchored at: the top
+        left one, the top right one when only the right half is searched. None without anchors."""
+        steps = self.drag_steps()
+        if steps is None:
+            return None
+        return (-steps[0] if self.half == "right" else steps[0]), steps[1]
+
+    def half_reach(self):
+        """Simple search: how far the view reaches from the half's frame line into the map."""
+        region = self.map_region()
+        if region is None:
+            return 0.0
+        return self.offset[0] - region[0] if self.half == "right" else region[2] - self.offset[0]
+
+    def in_half(self, x):
+        """Simple search: the screen position x lies in the half that is searched."""
+        mx = x - self.offset[0]
+        return -CENTRAL_MAP_WIDTH / 2 <= mx if self.half == "right" else mx <= CENTRAL_MAP_WIDTH / 2
+
+    def anchor_half(self):
+        """Simple search: the half's frame line is map x = 0. Whenever it is in view the offset
+        is set by it, so that drags which could not be measured do not add up over the rows."""
+        line = self.boundary_sides().get(self.half) if self.half else None
+        if line is None:
+            return
+        if abs(line - self.offset[0]) > 8:
+            log(f"The {self.half} frame line is at {line:.0f}, not at {self.offset[0]:.0f}: offset corrected")
+        self.offset[0] = float(line)
 
     def drag_steps(self):
         """Step sizes so that consecutive stops overlap by one icon width only."""
@@ -1216,6 +1385,7 @@ class ZoneExplore:
         wrong_color = 0
         skipped_visited = 0
         skipped_ui = 0
+        other_half = 0
         for kind, score in RESOURCE_SCORES.items():
             if kinds is not None and kind not in kinds:
                 continue
@@ -1235,6 +1405,9 @@ class ZoneExplore:
                 if not (y_min < y < y_max and x_min < x < x_max):
                     continue
                 landmarks.append((kind + ("" if how == "full" else f"[{how}]"), x, y))
+                if self.half and not self.in_half(x):
+                    other_half += 1             # (a landmark all the same)
+                    continue
                 if base is not None and any(base.x + ex0 < x < base.x + ex1 and base.y + ey0 < y < base.y + ey1
                                             for ex0, ex1, ey0, ey1 in MAP_EXCLUDE):
                     skipped_ui += 1
@@ -1246,7 +1419,7 @@ class ZoneExplore:
                         if rgb[2] > rgb[1]:                  # bluish: a purple box the rule rejected?
                             log(f"  colour reject {kind} at ({x:.0f},{y:.0f}) RGB={tuple(round(v) for v in rgb)} shape={color.shape} dtype={color.dtype}")
                     continue
-                if self.spot_key(x, y) in self.visited:
+                if self.spot_key(x, y) in self.visited or self.was_missed(x, y):
                     skipped_visited += 1
                     continue
                 if self.targeted_by_route(x, y, ends):
@@ -1269,6 +1442,7 @@ class ZoneExplore:
             + (f" (+{contested} with a rival on the way)" if contested else "")
             + (f" (+{skipped_visited} visited recently)" if skipped_visited else "")
             + (f" (+{skipped_ui} under the UI column)" if skipped_ui else "")
+            + (f" (+{other_half} in the other half)" if other_half else "")
             + (f" [kinds={len(kinds)}]" if kinds is not None else "")
             + " -> " + ", ".join(f"{c.kind}@({c.x:.0f},{c.y:.0f})" for c in found[:8]))
         return found
@@ -1319,6 +1493,7 @@ class ZoneExplore:
             log("[DRY] action purchase prompt -> cancel")
             self.press("ZBuyCancel", "取消 (dry run)", gone="ZBuyPrompt")
             return False
+        self.actions_out_at = time.time()       # (no action left; cleared below once a pack is bought)
         if not allow_buy or self.packs_bought >= MAX_PACKS_PER_RUN:
             log("Action purchase prompt -> cancel (not allowed for this target)")
             self.press("ZBuyCancel", "取消 (buy actions)", gone="ZBuyPrompt")
@@ -1333,6 +1508,7 @@ class ZoneExplore:
             log("No purchase receipt after 确定; treating the purchase as failed")
             self.close_popup()
             return False
+        self.actions_out_at = 0.0
         self.packs_bought += 1          # the receipt is the proof of a purchase
         # tapping the hint text itself does nothing; tap the empty area below it
         self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY)
@@ -1344,33 +1520,59 @@ class ZoneExplore:
         self.visited[self.spot_key(cand.x, cand.y)] = time.time()
         contested = self.contested.pop(self.spot_key(cand.x, cand.y), None) is not None
         idle_before = set(self.idle_ships(self.scan_ships()))
-        region = self.measure_region()
-        before = self.grab_region(region) if region else None
+        view = self.view_before()
+        started = time.time()
         ok = self._dispatch(cand, allow_buy)
-        self.last_shift = (0.0, 0.0)
-        if before is not None and self.on_map():
-            # the game sometimes recenters the view after a dispatch: keep offsets and the
-            # candidate's position consistent for everything that follows
-            self.invalidate_shot()
-            shift = self.measure_shift(before, self.grab_region(region), 0, 0)
-            if shift is not None and (abs(shift[0]) > 5 or abs(shift[1]) > 5):
-                self.offset[0] += shift[0]
-                self.offset[1] += shift[1]
-                self.last_shift = shift
-                log(f"Map view moved after dispatch by ({shift[0]:.0f},{shift[1]:.0f}), offsets corrected")
+        # ended at the purchase prompt without a pack: the target is as it was, and is gone to
+        # again once an action has regrown
+        self.no_action = not ok and self.actions_out_at >= started
+        if self.no_action:
+            self.visited.pop(self.spot_key(cand.x, cand.y), None)
+        # the game sometimes recenters the view after a dispatch: keep offsets and the
+        # candidate's position consistent for everything that follows
+        self.last_shift = self.follow_view(view, "the dispatch")
         if ok:
             pause(2)
             idle_after = set(self.idle_ships(self.scan_ships()))
             gone = sorted(idle_before - idle_after)
             self.last_dispatched = gone[0] if gone else None
             is_factory = cand.kind.split("[")[0] in FACTORY_KINDS
-            if self.last_dispatched and (is_factory or contested):
+            # (not with the position lost: the target could not be tapped again)
+            if self.last_dispatched and (is_factory or contested) and not self.adrift:
                 now = Candidate(cand.kind, cand.score, cand.x + self.last_shift[0], cand.y + self.last_shift[1])
                 if FACTORY_BOOST == "always" and is_factory:
                     self.boost_ship(self.last_dispatched)
                 elif FACTORY_BOOST != "never":
                     self.check_rivals_and_boost(now)
         return ok
+
+    def view_before(self):
+        """What follow_view needs from before a step that may move the view: the measuring area
+        and its crop (None without the map's anchors)."""
+        region = self.measure_region()
+        return (region, self.grab_region(region)) if region else None
+
+    def follow_view(self, view, what):
+        """After a step in which the game may have moved the view by itself (a dispatch; a tap
+        on a target one of our fleets is heading to shows that fleet, wherever it is): a small
+        move is measured and the offsets follow it; anything else leaves the position unknown
+        (self.adrift) until the next go_to_corner. Returns the measured move."""
+        if view is None or not self.on_map():
+            self.adrift = True
+            return 0.0, 0.0
+        region, before = view
+        self.invalidate_shot()
+        shift = self.measure_shift(before, self.grab_region(region), 0, 0)
+        if shift is None:
+            log(f"The map view after {what} is not the one before it: the position is taken anew at the corner")
+            self.adrift = True
+            return 0.0, 0.0
+        if abs(shift[0]) > 5 or abs(shift[1]) > 5:
+            self.offset[0] += shift[0]
+            self.offset[1] += shift[1]
+            log(f"Map view moved after {what} by ({shift[0]:.0f},{shift[1]:.0f}), offsets corrected")
+            return shift
+        return 0.0, 0.0
 
     # ------------------------------------------------------------------ rivals
     def ocr_times(self, color, x1, y1, x2, y2):
@@ -1421,15 +1623,19 @@ class ZoneExplore:
         up to 5. After every booster our countdown is re-read and boosting stops as soon as we
         arrive first."""
         pause(3)
+        view = self.view_before()
         self.click(cand.x, cand.y, 2, "target again (rival check)")
         if not self.wait_for("ZGo", 6):
+            # (without a rival the tap shows our own fleet's panel, the map moved to the fleet)
             log("Target popup did not open for the rival check")
             self.close_popup()
+            self.follow_view(view, "the rival check")
             return False
         etas = self.read_rival_etas() if single_find("ZRivalPanel") else []
         ours = self.read_ship_countdown(self.last_dispatched)
         log(f"Rival arrival times {etas}s, ours {ours}s")
         self.close_popup()
+        self.follow_view(view, "the rival check")
         if not etas or (ours is not None and ours < min(etas)):
             return False
         rival = min(etas)
@@ -1452,11 +1658,13 @@ class ZoneExplore:
             return True
 
         picked = False
+        repick = False              # the list came back after a purchase: its card is tapped again
         ok = False
         for step in range(DISPATCH_STEPS):
             if single_find("ZBuyPrompt"):
                 if not self.handle_buy_prompt(allow_buy):
                     break
+                repick = True
                 continue
             if single_find("ZContinueHint"):
                 self.press("ZContinueHint", "点击任意处继续", gone="ZContinueHint", dy=CONTINUE_TAP_DY, tries=1)
@@ -1472,12 +1680,15 @@ class ZoneExplore:
                     self.click_button("ZCancel")
                 break
             if single_find("ZDispatchTitle") or single_find("ZFleetDetail"):
-                if picked:
+                if picked and not repick:
                     pause(1)
                     continue
-                picked = self.pick_idle_fleet()
-                if not picked:
-                    break
+                if not self.pick_idle_fleet():
+                    if not repick:
+                        break
+                    pause(1)                    # (the list is still coming back: its cards are
+                    continue                    # looked for again, the pack is paid)
+                picked, repick = True, False
                 # boxes finish here (back on the map); battles continue to the estimate dialog
                 state = self.wait_after_pick()
                 if state == "map":
@@ -1602,6 +1813,7 @@ class ZoneExplore:
             return False
         x = base.x + SHIP_LAYOUT["status_dx0"] + (index - 1) * SHIP_LAYOUT["spacing"]
         y = base.y + SHIP_LAYOUT["status_dy"] + BOOST_LAYOUT["icon_dy"]
+        self.adrift = True                  # (the panel comes with the map moved to that fleet)
         for _ in range(BOOST_LAYOUT["max_clicks"]):
             self.raw_click(x, y)
             pause(1.5)
@@ -1833,39 +2045,55 @@ class ZoneExplore:
         return True
 
     def sweep(self, on_screen=None):
-        """Serpentine sweep over the whole map, calling on_screen() at every stop (it returns
-        False to stop early). Alternates between starting at the top-left and the bottom-left
-        corner to save drags."""
+        """Serpentine sweep over the map, calling on_screen() at every stop (it returns False to
+        stop early). The whole map: rows from the left frame line to the right one, starting by
+        turns at the top-left and the bottom-left corner to save drags. The simple search
+        (self.half): rows from that half's frame line to the middle of the map, from the top."""
         on_screen = on_screen or self.process_screen
         steps = self.drag_steps()
         if steps is None:
             log("Map area anchors not found")
             return False
         step_x, step_y = steps
-        if on_screen == self.survey_screen:     # bound methods compare equal, never `is`
-            self.sweep_from_top = True          # map coordinates are anchored at the top-left corner
+        if self.half or on_screen == self.survey_screen:    # bound methods compare equal, never `is`
+            self.sweep_from_top = True          # map coordinates are anchored at a top corner
         vdir = 1 if self.sweep_from_top else -1    # content movement for the next row (up = -step_y)
-        log(f"Sweep: to the {'top' if self.sweep_from_top else 'bottom'}-left corner")
-        self.go_to_corner(step_x, step_y * vdir)
-        hdir = -1                                   # content moves left -> we look further right
+        start = self.half or "left"             # the side whose frame line the rows start at
+        away = 1 if start == "right" else -1    # content moves left (-1) -> we look further right
+        log(f"Sweep: to the {'top' if self.sweep_from_top else 'bottom'}-{start} corner"
+            + (f"; rows end {CENTRAL_MAP_WIDTH / 2:.0f} px from the {start} frame line" if self.half else ""))
+        self.go_to_corner(-away * step_x, step_y * vdir)
+        hdir = away
         rows = 0
+        last_row = False                        # the row at the far edge, reached by a short move
         while rows < DRAG_LAYOUT["max_drags"]:
             rows += 1
             for _ in range(DRAG_LAYOUT["max_drags"]):
-                if not on_screen():
+                self.anchor_half()
+                if self.stop_requested or not on_screen():
                     log("Sweep stopped early")
                     self.sweep_from_top = not self.sweep_from_top
                     return True
+                if self.half and hdir == away and self.half_reach() >= CENTRAL_MAP_WIDTH / 2:
+                    break                       # the view has reached the middle of the map
                 r = self.drag_map(step_x * hdir, 0)
                 if r == "fail":
                     return False
                 if r == "edge":
                     break
+            if last_row:
+                break
+            y = self.offset[1]
             r = self.drag_map(0, -step_y * vdir)
             if r == "fail":
                 return False
             if r == "edge":
-                break
+                # a move too short to count as one still brought a strip of the map into view
+                # (the frame line stops up to 100 px from where it came into sight): that strip
+                # gets its row
+                if abs(self.offset[1] - y) < SHORT_ROW_MIN:
+                    break
+                last_row = True
             hdir = -hdir
         log(f"Sweep finished ({rows} rows)")
         self.sweep_from_top = not self.sweep_from_top
@@ -2043,6 +2271,19 @@ class ZoneExplore:
     def to_screen(self, mx, my):
         return mx + self.offset[0], my + self.offset[1]
 
+    def may_buy(self):
+        return ACTION_BUY_ENABLED and self.packs_bought < MAX_PACKS_PER_RUN
+
+    def actions_out(self):
+        """True while nothing is sent for want of an action: the purchase prompt came less than
+        ACTIONS_OUT_WAIT ago and no pack was bought (the run's packs are used up, buying is
+        off, or the purchase did not go through). The prompt tells that the actions are used
+        up; the counter on screen is only logged (its 5 has been read as 0)."""
+        out = time.time() - self.actions_out_at < ACTIONS_OUT_WAIT
+        if out:
+            log("The actions are used up and none could be bought -> waiting for one to regrow")
+        return out
+
     def can_dispatch(self):
         """(idle ship count, allow_buy) or (0, False) when nothing can be sent right now.
         A dry run pretends all ships are idle so the whole flow can be exercised any time."""
@@ -2050,16 +2291,10 @@ class ZoneExplore:
         idle = self.idle_ships(ships) if ships else []
         if self.dry_run:
             return SHIP_LAYOUT["slots"], False
-        if not idle:
+        if not idle or self.actions_out():
             return 0, False
-        actions = self.read_actions()
-        free_left = actions[0] if actions else None
-        if free_left is not None and free_left <= 0:
-            if not ACTION_BUY_ENABLED or self.packs_bought >= MAX_PACKS_PER_RUN:
-                log("No free actions left and buying is off")
-                return 0, False
-            return len(idle), True
-        return len(idle), False
+        self.read_actions()
+        return len(idle), self.may_buy()
 
     def debug_drag(self, before, after, dx, dy, shift):
         """With --debug-shots: save the before/after map crops of a drag judged as 'no move'."""
@@ -2104,15 +2339,18 @@ class ZoneExplore:
             outer = self.zone is not None and self.zone != "central"
             cands = self.scan_resources(kinds=OUTER_KINDS if outer else None, light=outer)
             self.debug_shot(cands)
-            corrected = self.correct_offset_from_landmarks()   # voting first; the per-spot fallback stays otherwise
+            # the offsets are only doubted after a drag that could not be measured: the landmarks
+            # vote first, the per-spot fallback stays otherwise
+            corrected = self.correct_offset_from_landmarks() or not self.unmeasured
+            tol = RESEEN_TOLERANCE if self.unmeasured else RESEEN_MEASURED
             for c in cands:
                 mx, my = self.to_map(c.x, c.y)
                 same = [s for s in self.spots
-                        if s.kind == c.kind and abs(s.mx - mx) < RESEEN_TOLERANCE and abs(s.my - my) < RESEEN_TOLERANCE]
+                        if s.kind == c.kind and abs(s.mx - mx) < tol and abs(s.my - my) < tol]
                 if same:
                     # the same resource seen again in the overlap: its memorized position is the
-                    # truth, so a drift of the drag offsets (e.g. an unmeasurable drag) is
-                    # corrected here instead of accumulating
+                    # truth, so a drift of the drag offsets (an unmeasurable drag) is corrected
+                    # here instead of accumulating
                     s = same[0]
                     ddx, ddy = mx - s.mx, my - s.my
                     if not corrected and (abs(ddx) > 4 or abs(ddy) > 4):
@@ -2126,39 +2364,44 @@ class ZoneExplore:
                     n, allow_buy = self.can_dispatch()
                     if n > 0:
                         self.dispatch(c, allow_buy=allow_buy)
+                        if self.adrift:
+                            return False        # (what follows would be memorized at wrong places)
                         dispatched = True
                         break
                 self.spots.append(Spot(c.kind, c.score, mx, my, self.zone))
             if not dispatched:
-                self.prev_landmarks = list(self.last_landmarks)
-                self.prev_offset = list(self.offset)
-                return True
+                break
         self.prev_landmarks = list(self.last_landmarks)
         self.prev_offset = list(self.offset)
+        self.unmeasured = False
         return True
 
     def correct_offset_from_landmarks(self):
-        """The icons seen at the previous stop that are still on screen tell exactly how far the
-        map moved: every same-kind pair votes for a displacement, the biggest cluster wins. If
-        it disagrees with what the drag measurement (or assumption) produced, the offsets are
-        corrected, so the same resource is never memorized twice."""
-        if not self.prev_landmarks or self.prev_offset is None or not self.last_landmarks:
+        """After a drag that could not be measured: the icons seen at the previous stop that are
+        still on screen tell how far the map moved. Every same-kind pair votes for a
+        displacement, the biggest cluster wins, and the offsets are corrected by it, so that the
+        same resource is not memorized twice. The 3-point boxes (ZBox) have no vote: their
+        template matches the teal ones too, the map is full of those, a cell apart, and any two
+        pair up, so that a wrong displacement gets more votes than the right one (16 against
+        the few in the overlap of two stops). The other kinds are few on a screen: one pair is
+        enough, as it always was for them. A drag that was measured is exact to a pixel and is
+        not corrected."""
+        if not self.unmeasured or not self.prev_landmarks or self.prev_offset is None or not self.last_landmarks:
             return False
         assumed = (self.offset[0] - self.prev_offset[0], self.offset[1] - self.prev_offset[1])
         votes = []
         for pk, px, py in self.prev_landmarks:
+            if pk.split("[")[0] == "ZBox":
+                continue
             for ck, cx, cy in self.last_landmarks:
                 if pk == ck:
-                    votes.append((cx - px, cy - py, pk))
+                    votes.append((cx - px, cy - py))
         best, best_n = None, 0
-        for vx, vy, _ in votes:
-            n = sum(1 for ox, oy, _ in votes if abs(ox - vx) < 8 and abs(oy - vy) < 8)
+        for vx, vy in votes:
+            n = sum(1 for ox, oy in votes if abs(ox - vx) < 8 and abs(oy - vy) < 8)
             if n > best_n:
                 best, best_n = (vx, vy), n
         if best is None:
-            return False
-        rare = any(k != "ZBox" for ox, oy, k in votes if abs(ox - best[0]) < 8 and abs(oy - best[1]) < 8)
-        if best_n < 2 and not rare:
             return False
         step_x, step_y = self.drag_steps() or (400, 600)
         if abs(best[0]) > 1.3 * step_x or abs(best[1]) > 1.3 * step_y:
@@ -2174,30 +2417,45 @@ class ZoneExplore:
 
     def navigate_to(self, spot):
         """Drag until the memorized spot is near the center of the map area, switching zone and
-        re-anchoring at the top-left corner first when needed."""
+        re-anchoring at the home corner first when needed. One axis at a time, in steps no
+        longer than the sweep's: those can be measured. (A drag across most of the screen in
+        both directions leaves nothing of either measuring area in both captures; two of them
+        were "assumed", and the spots that followed were not where the offsets said.)"""
         if spot.zone is not None and spot.zone != self.zone:
             if not self.switch_zone(spot.zone):
                 return False
-            steps = self.drag_steps()
-            if steps is None:
+            self.adrift = True                  # (another map: anchored anew below)
+        if self.adrift:
+            corner = self.home_corner()
+            if corner is None:
                 return False
-            self.go_to_corner(steps[0], steps[1])
+            self.go_to_corner(*corner)
         region = self.map_region()
-        if region is None:
+        steps = self.drag_steps()
+        if region is None or steps is None:
             return False
         cx, cy = (region[0] + region[2]) / 2, (region[1] + region[3]) / 2
+        base = self.anchor("ZBase")
+        stuck = set()                           # axes along which the map cannot move further
         for _ in range(DRAG_LAYOUT["max_drags"]):
+            self.anchor_half()
             sx, sy = self.to_screen(spot.mx, spot.my)
-            dx, dy = cx - sx, cy - sy
-            if abs(dx) < 15 and abs(dy) < 15:
-                return True
-            r = self.drag_map(dx, dy)
+            ax = cx
+            if base is not None and sy - base.y < CHAT_LINE["y1"]:      # the map's first row
+                ax = min((base.x + dx for dx in CHAT_LINE["aims"]), key=lambda x: abs(x - sx))
+            want = {"y": cy - sy, "x": ax - sx}
+            todo = [a for a in ("y", "x") if abs(want[a]) >= 15 and a not in stuck]
+            if not todo:
+                # (at an edge of the map the spot cannot be centred; on screen is enough)
+                return region[0] < sx < region[2] and region[1] < sy < region[3]
+            axis = todo[0]
+            step = steps[1] if axis == "y" else steps[0]
+            d = max(-step, min(step, want[axis]))
+            r = self.drag_map(d if axis == "x" else 0, d if axis == "y" else 0)
             if r == "fail":
                 return False
             if r == "edge":
-                # the map cannot move further; fine if the spot is already on screen
-                sx, sy = self.to_screen(spot.mx, spot.my)
-                return region[0] < sx < region[2] and region[1] < sy < region[3]
+                stuck.add(axis)
         return False
 
     def verify_spot(self, spot):
@@ -2247,9 +2505,12 @@ class ZoneExplore:
         all spots. The central zone is the main one; outer zones are only surveyed while at least
         MIN_IDLE_FOR_OTHER_ZONES ships are idle."""
         now = time.time()
-        for name in ZONES:
+        for name in self.zones:
+            if self.stop_requested:
+                break
             entry = self.zone_spots.get(name)
-            if entry and now - entry["time"] < SURVEY_TTL:
+            ttl = HALF_RESURVEY if self.half and entry and not entry["spots"] else SURVEY_TTL
+            if entry and now - entry["time"] < ttl:
                 continue
             if name != "central":
                 n, _ = self.can_dispatch()
@@ -2265,7 +2526,11 @@ class ZoneExplore:
                 else:
                     continue
             self.spots = []
-            if not self.sweep(self.survey_screen):
+            self.zone_spots.pop(name, None)     # (expired: not to be used if this sweep comes to nothing)
+            if not self.sweep(self.survey_screen) or self.stop_requested:
+                continue                        # (a sweep cut short by a stop is no survey)
+            if self.adrift:
+                log(f"Zone {name}: the survey lost its position at a dispatch; it is made again next round")
                 continue
             self.zone_spots[name] = {"time": time.time(), "spots": list(self.spots)}
             log(f"Zone {name}: {len(self.spots)} spot(s) memorized")
@@ -2283,6 +2548,8 @@ class ZoneExplore:
             + (f" ... {len(self.spots)} total" if len(self.spots) > 10 else ""))
         sent = 0
         for spot in list(self.spots):
+            if self.stop_requested:
+                break
             n, allow_buy = self.can_dispatch()
             if n <= 0:
                 log("No idle ship or no usable action left")
@@ -2300,23 +2567,51 @@ class ZoneExplore:
             near = self.verify_spot(spot)
             if not near:
                 log(f"{spot.kind} no longer at {spot.zone}({spot.mx:.0f},{spot.my:.0f}) -> zone memory invalidated")
+                if not self.adrift and not self.unmeasured:
+                    # taken by someone, or seen by the survey through something that lay over it:
+                    # the survey that follows must not bring it back, round after round. (Only
+                    # with every drag since the corner measured: else the view may be elsewhere)
+                    self.missed.append((spot.zone, spot.mx, spot.my, time.time()))
                 self.spots = [s for s in self.spots if s.zone != spot.zone]
                 self.zone_spots.pop(spot.zone, None)
                 self.rescan_needed = True
                 continue
             if self.dispatch(near[0], allow_buy=allow_buy):
                 sent += 1
+            elif self.no_action:
+                break                           # (the spots stay for when an action has regrown)
             self.spots.remove(spot)
             self.forget_spot(spot)
             pause(2)
         log(f"Dispatched {sent} fleet(s) this round")
         return True
 
+    def open_map(self):
+        """The zone map with nothing on top: a dialog or a page of 星际探险 closed, or the map
+        entered from the game's main page (the dice board, a dice run stopped). False from any
+        other screen; None, with nothing tapped, while a dice run is visiting another planet
+        (a page with the run's text or 回家 and without 星际探险): the visit is the user's, and
+        the main page comes back when it is over."""
+        if self.on_map():
+            return True
+        self.invalidate_shot()
+        gs = self.shot()[1]
+        if self.visible("ZStarExplore", gs):
+            log("Main screen -> 星际探险")
+            return self.enter_zone_explore() and (self.on_map() or self.close_popup())
+        if self.seen("ZAutoThrowing", "ZWbHome", gs=gs) is not None:
+            log("The dice run is visiting another planet: it is left alone, the map is entered once the "
+                "main page is back")
+            return None
+        if self.close_popup():
+            return True
+        log("Not on the zone map, and on no page that leads to it")
+        return False
+
     def single_round(self):
-        if not self.on_map():
-            log("Not on the map page")
-            if not self.close_popup():
-                return False
+        opened = self.open_map()
+        if not opened:
+            return opened is None               # (waiting for a visit to end is no failure)
         self.calibrate_scale()
         self.ensure_zoom()
         self.prune_visited()
@@ -2335,11 +2630,9 @@ class ZoneExplore:
             log("No idle ship" + (" (dry run continues anyway)" if self.dry_run else ""))
             if not self.dry_run:
                 return True
-        actions = self.read_actions()
-        if actions and actions[0] <= 0 and (not ACTION_BUY_ENABLED or self.packs_bought >= MAX_PACKS_PER_RUN):
-            log("No free actions left and buying is off -> wait for regeneration")
-            if not self.dry_run:
-                return True
+        self.read_actions()
+        if not self.dry_run and self.actions_out():
+            return True
         if not SWEEP_ENABLED:
             return self.process_screen() or True
         if DISPATCH_MODE != "survey":
@@ -2358,19 +2651,49 @@ class ZoneExplore:
             log("Memorized resources disappeared -> rescanning")
         return True
 
+    def stop_dice_run(self, key="ZStarExplore"):
+        """The game's own dice run ("自动投掷中...") swallows a tap and ends by it. It is ended by
+        taps on `key`: a button of the main page that the caller is about to press anyway and
+        that lies in a bottom corner (星际探险, 星际玩法). Never by a tap on the run's text or on
+        the board: when a run ends for want of dice the 更多骰子 popup opens there, 购买 34 px
+        from the text's centre, and a tap sent a moment before lands on it; the bottom corners
+        are outside that popup, a tap there only closes it. (Its own empty spot, beside the
+        board, does not end a run.) The board takes no tap in some moments of a throw, one tap
+        in two was lost: it is repeated until the text is gone. True when no run is on (any
+        more); the last tap may already have opened what `key` opens."""
+        end = time.time() + DICE_STOP_WAIT
+        first = True
+        while True:
+            self.invalidate_shot()
+            gs = self.shot()[1]
+            if not self.visible("ZAutoThrowing", gs) or self.visible("ZMoreDice", gs):
+                return True                     # (with the popup: the dice ran out, the text is fading)
+            if time.time() >= end:
+                log("The dice run did not stop")
+                return False
+            c = get_center_with_path(single_find_map[key], gs, MATCH_TH)
+            if c is None:
+                pause(0.5)
+                continue
+            if first:
+                log("The dice are being thrown automatically: stopping that")
+                first = False
+            self.click(c.x, c.y, DICE_STOP_RETAP, "stop the dice run", force=True)
+
     def enter_zone_explore(self):
-        """From the main (dice) page: close the dice popup and click 星际探险 until the map shows."""
+        """From the main (dice) page: stop a dice run, close the dice popup and click 星际探险
+        until the map shows."""
+        self.stop_dice_run()
         for _ in range(3):
-            c = get_center("ZMoreDice", "Single")    # not cached; None once the popup is gone
+            gs = self.shot()[1]
+            c = get_center_with_path(single_find_map["ZMoreDice"], gs, MATCH_TH)   # None once the popup is gone
             if c is None:
                 break
             self.click(c.x + MORE_DICE_LAYOUT["close_dx"], c.y + MORE_DICE_LAYOUT["close_dy"], 1.5,
                        "close dice popup", force=True)
-        # navigation, harmless: a dry run clicks it too
-        if not self.click_button("ZStarExplore", 3, force=True):
-            log("星际探险 button not found")
-            return False
-        if self.wait_for("ZExplore", 15):
+        # navigation, harmless: a dry run clicks it too. Pressed again when the map does not show:
+        # right after a dice run was stopped the board is still moving and the tap is lost
+        if self.press("ZStarExplore", "星际探险", appears="ZExplore") or self.wait_for("ZExplore", 8):
             log("Entered zone explore")
             return True
         log("Map page did not appear after 星际探险 (screenshot the page that opened)")
@@ -2391,10 +2714,11 @@ class ZoneExplore:
                         log("Too many failures, trying to recover")
                         self.close_popup()
                         self.fails = 0
-                    if self.dry_run:
+                    if self.dry_run or self.stop_requested:
                         return
                     log(f"Sleep {POLL_SECONDS}s")
-                    time.sleep(POLL_SECONDS)
+                    if not self.nap(POLL_SECONDS):
+                        return
                     continue
                 if single_find("ZMoreDice"):
                     log("Dice ran out -> entering 星际探险")
@@ -2423,26 +2747,45 @@ class ZoneExplore:
                     log("Unknown page, waiting")
             except Exception as e:
                 log(f"Monitor error: {e}")
-            time.sleep(MONITOR_POLL)
+            if not self.nap(MONITOR_POLL):
+                return
 
     def run(self):
+        """Round after round until a stop is requested (a dry run: one round)."""
         while True:
             self.rounds += 1
             log(f"=== round {self.rounds} ===")
             try:
                 ok = self.single_round()
-            except Exception as e:
-                log(f"Round error: {e}")
+            except AdbLost as e:
+                # the device dropped out and is back: not a failure of the round, which starts
+                # again (a tap that may not have arrived is not repeated blindly: the pages are
+                # closed, and the next round looks first)
+                log(f"adb: a tap or drag {e}; the round starts again")
+                try:
+                    self.close_popup()
+                except Exception:
+                    log("Closing the pages after that failed too:\n" + traceback.format_exc())
+                self.adrift = True
+                if self.dry_run or not self.nap(ADB_LOST_WAIT):
+                    return
+                continue
+            except Exception:
+                log("Round error:\n" + traceback.format_exc())
                 ok = False
             self.fails = 0 if ok else self.fails + 1
-            if self.fails >= 5:
+            if self.fails >= 5 and not self.stop_requested:
                 log("Too many failures, trying to recover")
-                self.close_popup()
+                try:
+                    self.close_popup()
+                except Exception:
+                    log("The recovery failed too:\n" + traceback.format_exc())
                 self.fails = 0
-            if self.dry_run:
+            if self.dry_run or self.stop_requested:
                 return
             log(f"Sleep {POLL_SECONDS}s")
-            time.sleep(POLL_SECONDS)
+            if not self.nap(POLL_SECONDS):
+                return
 
     def click_test(self):
         """Click 50% then 75% on the zoom bar and report whether the game reacted."""
@@ -2478,7 +2821,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry", action="store_true", help="Drag and detect only, no dispatch clicks")
     parser.add_argument("--drag-test", action="store_true", help="One drag each way, print the measured movement")
-    parser.add_argument("--click-test", action="store_true", help="Click 50% then 75% on the zoom bar")
+    parser.add_argument("--click-test", action="store_true", help="Click 50%% then 75%% on the zoom bar")
     parser.add_argument("--boost-test", type=int, metavar="SHIP",
                         help="Open the boost dialog of ship 1-5 (with --dry: stop before 使用)")
     parser.add_argument("--debug-shots", action="store_true",
@@ -2488,23 +2831,54 @@ if __name__ == "__main__":
     parser.add_argument("-m", "--monitor", action="store_true",
                         help="Watch the dice run; enter 星际探险 when the dice run out, then dispatch fleets")
     parser.add_argument("--delay", type=int, default=3, help="Seconds to switch to the game window")
+    parser.add_argument("--half", choices=("left", "right"),
+                        help="The simple search: the central zone only, and of its map only this half (the one "
+                             "the account's fortress stands in: right for 星炽要塞, left for 铸械要塞); "
+                             "no outer zone is visited")
+    parser.add_argument("--pace", type=float, default=None,
+                        help="Multiply the fixed waits for the game by this (default 1; "
+                             f"{PHONE_PACE} when the script runs on the phone itself)")
+    parser.add_argument("--adb", metavar="SERIAL",
+                        help="Play on an Android device over adb instead of the emulator window, e.g. "
+                             "127.0.0.1:5555 (inside the cloud phone, see cloudphone/)")
     args = parser.parse_args()
+    device = None
+    if args.adb:
+        from adb_device import AdbDevice
+        from click import use_device
+        device = AdbDevice(args.adb)
+        use_device(device)                  # before ZoneExplore: it keeps pyautogui.screenshot
+        if args.pace is None and device.shared:     # (on the phone itself: it answers faster)
+            args.pace = PHONE_PACE
+    if args.pace is not None:
+        if not 0.2 <= args.pace <= 3:
+            parser.error("--pace is a factor between 0.2 and 3")
+        PACE = args.pace
+        log(f"Pace {args.pace:g}: fixed waits for the game times that")
     time.sleep(args.delay)
     if args.debug_shots:
         DEBUG_SHOT_DIR = os.path.join(os.path.dirname(single_find_map["ZBase"]), "debug")
-    z = ZoneExplore(dry_run=args.dry)
-    if args.click_test:
-        z.click_test()
-    elif args.boost_test:
-        z.boost_ship(args.boost_test)
-    elif args.zone_test:
-        z.calibrate_scale()
-        z.zone = z.read_zone()
-        log(f"Current zone: {z.zone}")
-        log(f"switch_zone({args.zone_test}) -> {z.switch_zone(args.zone_test)}; now on zone {z.zone}")
-    elif args.monitor:
-        z.monitor()
-    elif args.drag_test:
-        z.drag_test()
-    else:
-        z.run()
+    z = ZoneExplore(dry_run=args.dry, half=args.half)
+    signal.signal(signal.SIGTERM, z.on_term)
+    try:
+        if args.click_test:
+            z.click_test()
+        elif args.boost_test:
+            z.boost_ship(args.boost_test)
+        elif args.zone_test:
+            z.calibrate_scale()
+            z.zone = z.read_zone()
+            log(f"Current zone: {z.zone}")
+            log(f"switch_zone({args.zone_test}) -> {z.switch_zone(args.zone_test)}; now on zone {z.zone}")
+        elif args.monitor:
+            z.monitor()
+        elif args.drag_test:
+            z.drag_test()
+        else:
+            z.run()
+    finally:
+        if device is not None:
+            device.show_overlay()           # (the panel's bubble back, whatever ended the run)
+    if z.stop_requested:
+        log("Stopped on request: nothing is half done")
+        sys.exit(143)                       # (ended by a SIGTERM, as a kill would: callers tell it from a finish)
